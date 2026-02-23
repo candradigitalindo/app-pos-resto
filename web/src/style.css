@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * {
+    pointer-events: auto !important;
+    -webkit-touch-callout: auto !important;
+    -webkit-user-select: auto !important;
+  }
+
+  body {
+    @apply bg-white text-slate-900;
+    min-height: 100vh;
+    pointer-events: auto !important;
+    touch-action: auto !important;
+    -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+  }
+
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    cursor: pointer !important;
+    pointer-events: auto !important;
+    touch-action: manipulation !important;
+    -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+  }
+
+  button:disabled {
+    cursor: not-allowed !important;
+  }
+  
+  input,
+  select,
+  textarea {
+    cursor: text !important;
+  }
+}
+
+@layer components {
+  .page-shell {
+    @apply min-h-screen bg-transparent;
+    pointer-events: auto !important;
+  }
+
+  .page-container {
+    @apply mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8;
+    pointer-events: auto !important;
+  }
+
+  .card {
+    @apply rounded-2xl border border-slate-100 bg-white p-6 shadow-soft;
+    pointer-events: auto !important;
+  }
+
+  .card-header {
+    @apply mb-4 flex items-center justify-between;
+  }
+
+  .title-lg {
+    @apply text-2xl font-semibold text-slate-900;
+  }
+
+  .subtitle {
+    @apply text-sm text-slate-500;
+  }
+
+  .btn-primary {
+    @apply inline-flex cursor-pointer items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 active:scale-95 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    pointer-events: auto !important;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  }
+
+  .btn-secondary {
+    @apply inline-flex cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-all duration-200 hover:bg-slate-50 hover:border-slate-300 hover:shadow-md hover:-translate-y-0.5 active:scale-95 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0;
+    pointer-events: auto !important;
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition;
+  }
+
+  .input:focus {
+    border-color: #10b981;
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold;
+    background-color: #d1fae5;
+    color: #065f46;
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "Nusantara POS",
+  "short_name": "POS",
+  "description": "Point of Sale System - Nusantara",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#10b981",
+  "orientation": "any"
+}

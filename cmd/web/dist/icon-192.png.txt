@@ -1,0 +1,2 @@
+# Placeholder - gunakan icon 192x192 untuk PWA
+# Buat file icon-192.png dengan logo POS
