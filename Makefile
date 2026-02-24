@@ -1,4 +1,4 @@
-.PHONY: build-frontend build-backend build-all run dev dev-backend dev-frontend clean install
+.PHONY: build-frontend build-backend build-all run dev dev-backend dev-frontend clean install build-installer-windows
 
 # Build frontend Vue.js
 build-frontend:
@@ -12,26 +12,31 @@ build-frontend:
 # Build Go backend with embedded frontend
 build-backend: build-frontend
 	@echo "🔨 Building Go backend with embedded frontend..."
-	go build -ldflags="-s -w" -o pos-app cmd/main.go
+	go build -ldflags="-s -w" -o pos-app ./cmd
 	@echo "✅ Backend built successfully!"
 	@echo "📦 Single binary created: pos-app"
 
 # Build for Windows
 build-windows: build-frontend
 	@echo "🔨 Building for Windows..."
-	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o pos-app.exe cmd/main.go
+	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o pos-app.exe ./cmd
 	@echo "✅ Windows build complete: pos-app.exe"
+
+build-installer-windows: build-windows
+	@echo "📦 Building Windows installer..."
+	makensis installer/pos-app.nsi
+	@echo "✅ Windows installer created: pos-app-setup.exe"
 
 # Build for macOS
 build-macos: build-frontend
 	@echo "🔨 Building for macOS..."
-	GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o pos-app-macos cmd/main.go
+	GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o pos-app-macos ./cmd
 	@echo "✅ macOS build complete: pos-app-macos"
 
 # Build for Linux
 build-linux: build-frontend
 	@echo "🔨 Building for Linux..."
-	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o pos-app-linux cmd/main.go
+	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o pos-app-linux ./cmd
 	@echo "✅ Linux build complete: pos-app-linux"
 
 # Build all platforms
@@ -55,7 +60,7 @@ dev:
 
 dev-backend:
 	@echo "🔧 Starting Go backend..."
-	go run cmd/main.go
+	go run ./cmd
 
 dev-frontend:
 	@echo "🔧 Starting Vue.js frontend..."
@@ -65,7 +70,7 @@ dev-frontend:
 clean:
 	@echo "🧹 Cleaning build artifacts..."
 	rm -rf web/dist
-	rm -f pos-app pos-app.exe pos-app-macos pos-app-linux
+	rm -f pos-app pos-app.exe pos-app-macos pos-app-linux pos-app-setup.exe
 	rm -rf bin/
 	@echo "✅ Clean complete!"
 

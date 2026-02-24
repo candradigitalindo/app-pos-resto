@@ -5,12 +5,20 @@ import (
 	"database/sql"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func NewDatabase(dbPath string) (*sql.DB, error) {
+	dbDir := filepath.Dir(dbPath)
+	if dbDir != "." && dbDir != "" {
+		if err := os.MkdirAll(dbDir, 0o755); err != nil {
+			return nil, err
+		}
+	}
+
 	// Create database file if it doesn't exist
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		file, err := os.Create(dbPath)
@@ -21,7 +29,7 @@ func NewDatabase(dbPath string) (*sql.DB, error) {
 	}
 
 	// Add busy timeout and other pragmas to prevent database locks
-	db, err := sql.Open("sqlite3", dbPath+"?_busy_timeout=10000&_journal_mode=WAL&_synchronous=NORMAL")
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err
 	}
@@ -32,6 +40,16 @@ func NewDatabase(dbPath string) (*sql.DB, error) {
 
 	// Test connection
 	if err := db.Ping(); err != nil {
+		return nil, err
+	}
+
+	if _, err := db.Exec("PRAGMA busy_timeout = 10000"); err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec("PRAGMA synchronous = NORMAL"); err != nil {
 		return nil, err
 	}
 

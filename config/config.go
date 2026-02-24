@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -26,9 +27,13 @@ func LoadConfig() *Config {
 	loadDotEnv(".env")
 	syncEnabled, _ := strconv.ParseBool(getEnv("SYNC_ENABLED", "false"))
 	syncInterval, _ := strconv.Atoi(getEnv("SYNC_INTERVAL_MINUTES", "5"))
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = defaultDBPath()
+	}
 
 	return &Config{
-		DBPath:     getEnv("DB_PATH", "./pos.db"),
+		DBPath:     dbPath,
 		ServerPort: getEnv("SERVER_PORT", "8080"),
 		JWTSecret:  getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
 		Timezone:   getEnv("TIMEZONE", "Asia/Jakarta"),
@@ -90,4 +95,12 @@ func getEnv(key, defaultValue string) string {
 
 func (c *Config) GetDBPath() string {
 	return c.DBPath
+}
+
+func defaultDBPath() string {
+	configDir, err := os.UserConfigDir()
+	if err == nil && configDir != "" {
+		return filepath.Join(configDir, "POSApp", "pos.db")
+	}
+	return "./pos.db"
 }

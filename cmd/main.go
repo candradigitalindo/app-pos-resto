@@ -61,9 +61,14 @@ func getLocalIP() string {
 	}
 	for _, addr := range addrs {
 		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String()
+			ip := ipnet.IP.To4()
+			if ip == nil {
+				continue
 			}
+			if !ip.IsPrivate() {
+				continue
+			}
+			return ip.String()
 		}
 	}
 	return ""
@@ -124,6 +129,10 @@ func customHTTPErrorHandler(c *echo.Context, err error) {
 }
 
 func main() {
+	if prepareLaunch() {
+		return
+	}
+
 	// Load configuration
 	cfg := config.LoadConfig()
 	location, err := time.LoadLocation(cfg.Timezone)

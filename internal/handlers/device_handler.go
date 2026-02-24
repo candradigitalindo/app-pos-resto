@@ -40,9 +40,14 @@ func (h *DeviceHandler) getLocalIP() (string, error) {
 
 	for _, addr := range addrs {
 		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
-			if ipNet.IP.To4() != nil {
-				return ipNet.IP.String(), nil
+			ip := ipNet.IP.To4()
+			if ip == nil {
+				continue
 			}
+			if !ip.IsPrivate() {
+				continue
+			}
+			return ip.String(), nil
 		}
 	}
 

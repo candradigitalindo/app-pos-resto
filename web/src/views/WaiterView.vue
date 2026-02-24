@@ -379,8 +379,9 @@
                     </div>
                     
                     <!-- Search Results Dropdown -->
-                    <div 
-                      v-if="item.showResults && item.searchQuery.length > 0" 
+                    <div
+                      v-if="item.showResults && item.searchQuery.length > 0"
+                      @mousedown.prevent
                       class="absolute z-10 mt-1 w-full max-h-60 overflow-y-auto rounded-xl border-2 border-emerald-200 bg-white shadow-xl"
                     >
                       <div v-if="getFilteredProducts(item.searchQuery).length === 0" class="p-4 text-center text-sm text-slate-500">
@@ -390,7 +391,7 @@
                         v-for="product in getFilteredProducts(item.searchQuery)"
                         :key="product.id"
                         type="button"
-                        @click="selectProduct(index, product)"
+                        @mousedown.prevent="selectProduct(index, product)"
                         class="w-full p-3 text-left transition hover:bg-emerald-50 border-b border-slate-100 last:border-b-0"
                       >
                         <div class="flex items-center justify-between">
@@ -731,6 +732,7 @@
 
                   <div
                     v-if="item.showResults && item.searchQuery.length > 0"
+                    @mousedown.prevent
                     class="absolute z-10 mt-1 w-full max-h-60 overflow-y-auto rounded-xl border-2 border-emerald-200 bg-white shadow-xl"
                   >
                     <div v-if="getFilteredProducts(item.searchQuery).length === 0" class="p-4 text-center text-sm text-slate-500">
@@ -740,7 +742,7 @@
                       v-for="product in getFilteredProducts(item.searchQuery)"
                       :key="product.id"
                       type="button"
-                      @click="selectProductAdd(index, product)"
+                      @mousedown.prevent="selectProductAdd(index, product)"
                       class="w-full p-3 text-left transition hover:bg-emerald-50 border-b border-slate-100 last:border-b-0"
                     >
                       <div class="flex items-center justify-between">
