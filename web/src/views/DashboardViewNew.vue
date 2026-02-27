@@ -257,7 +257,7 @@ const chartData = ref([])
 const maxRevenue = ref(0)
 const isLoading = ref(false)
 const hoveredPoint = ref(null)
-const netRevenue = computed(() => analytics.value.total_revenue - analytics.value.void_total - analytics.value.cancelled_total)
+const netRevenue = computed(() => analytics.value.total_revenue)
 
 const formatRupiah = (amount) => {
   return new Intl.NumberFormat('id-ID', {

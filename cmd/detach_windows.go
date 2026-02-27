@@ -19,6 +19,9 @@ func prepareLaunch() bool {
 			break
 		}
 	}
+	if !autostart {
+		return false
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return false
@@ -32,9 +35,6 @@ func prepareLaunch() bool {
 	if err := cmd.Start(); err != nil {
 		return false
 	}
-	if autostart {
-		os.Exit(0)
-	}
-	select {}
+	os.Exit(0)
 	return true
 }
