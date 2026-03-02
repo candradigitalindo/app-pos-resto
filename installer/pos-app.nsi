@@ -2,7 +2,7 @@
 !define APP_NAME "POS App"
 !define APP_REGKEY "Software\POSApp"
 !define APP_UNINSTALL "Software\Microsoft\Windows\CurrentVersion\Uninstall\POSApp"
-!define APP_ICON "..\mobile_cashier\windows\runner\resources\app_icon.ico"
+!define APP_ICON "app_icon.ico"
 Name "${APP_NAME}"
 OutFile "pos-app-setup.exe"
 InstallDir "$PROGRAMFILES64\POSApp"

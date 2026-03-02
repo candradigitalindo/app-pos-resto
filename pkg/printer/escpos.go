@@ -120,25 +120,6 @@ func FormatItemRow(name string, qty, price, total int, width int) string {
 	return row
 }
 
-func FormatItemRowBill(name string, qty, price, total int, width int) string {
-	nameWidth, qtyWidth, priceWidth, totalWidth := GetItemColumnWidths(width)
-
-	if len(name) > nameWidth {
-		name = name[:nameWidth-2] + ".."
-	}
-
-	qtyStr := fmt.Sprintf("%dx", qty)
-	priceStr := FormatNumber(price)
-	totalStr := FormatNumber(total)
-
-	row := PadRight(name, nameWidth)
-	row += PadLeft(qtyStr, qtyWidth)
-	row += PadLeft(priceStr, priceWidth)
-	row += PadLeft(totalStr, totalWidth)
-
-	return row
-}
-
 // FormatNumber formats number with thousand separator
 func FormatNumber(n int) string {
 	s := ""

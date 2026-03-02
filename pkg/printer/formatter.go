@@ -711,7 +711,7 @@ func (f *PrintFormatter) writeItemsBill(buf *bytes.Buffer, items []ReceiptItem) 
 	buf.Write(ESC_NEWLINE)
 
 	for _, item := range items {
-		row := FormatItemRowBill(item.Name, item.Quantity, item.Price, item.Total, f.charLimit)
+		row := FormatItemRow(item.Name, item.Quantity, item.Price, item.Total, f.charLimit)
 		buf.WriteString(row)
 		buf.Write(ESC_NEWLINE)
 	}

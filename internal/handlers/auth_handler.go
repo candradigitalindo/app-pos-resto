@@ -603,32 +603,7 @@ func (h *AuthHandler) HandleActivateUser(c *echo.Context) error {
 	return SuccessResponse(c, "User berhasil diaktifkan", nil)
 }
 
-// HandleDeleteUser - Admin/Manager only - untuk menonaktifkan user
+// HandleDeleteUser redirects to HandleDeactivateUser (soft delete)
 func (h *AuthHandler) HandleDeleteUser(c *echo.Context) error {
-	claims, err := middleware.GetUserFromContext(c)
-	if err != nil {
-		return UnauthorizedResponse(c, err.Error())
-	}
-
-	userID := (*c).Param("id")
-	if userID == "" {
-		return BadRequestResponse(c, "User ID tidak valid")
-	}
-	if userID == claims.UserID {
-		return BadRequestResponse(c, "Tidak dapat menonaktifkan akun diri sendiri")
-	}
-
-	_, err = h.queries.GetUserByID((*c).Request().Context(), userID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return NotFoundResponse(c, "User tidak ditemukan")
-		}
-		return InternalErrorResponse(c, "Gagal mendapatkan data user")
-	}
-
-	if err := h.queries.DeactivateUser((*c).Request().Context(), userID); err != nil {
-		return InternalErrorResponse(c, "Gagal menonaktifkan user")
-	}
-
-	return SuccessResponse(c, "User berhasil dinonaktifkan", nil)
+	return h.HandleDeactivateUser(c)
 }

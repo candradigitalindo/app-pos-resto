@@ -1,6 +1,6 @@
 <template>
   <div class="page-shell">
-    <div class="page-container space-y-4 sm:space-y-6 pb-24 sm:pb-6">
+    <div class="page-container space-y-4 sm:space-y-6 pb-24 lg:pb-6">
       <!-- Header -->
       <div class="card">
         <div class="flex items-center justify-between">
@@ -518,6 +518,8 @@ import { useAuthStore } from '../stores/auth'
 import api from '../services/api'
 import DataTable from '../components/DataTable.vue'
 import PrinterManagement from '../components/PrinterManagement.vue'
+import { formatDateTime } from '../utils/date'
+import { formatNumber } from '../utils/currency'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -1011,23 +1013,7 @@ const handlePrinterError = (message) => {
   }, 3000)
 }
 
-const formatDateTime = (dateString) => {
-  if (!dateString) return '-'
-
-  const date = new Date(dateString)
-  return date.toLocaleDateString('id-ID', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
-}
-
-const formatRupiah = (value) => {
-  const amount = Number(value || 0)
-  return new Intl.NumberFormat('id-ID').format(amount)
-}
+const formatRupiah = formatNumber
 
 const formatChargeValue = (charge) => {
   if (charge.charge_type === 'percentage') {

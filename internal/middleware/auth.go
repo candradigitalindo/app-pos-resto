@@ -13,8 +13,8 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// APIResponse struktur standar untuk response
-type APIResponse struct {
+// authErrorPayload is the response structure for auth middleware errors
+type authErrorPayload struct {
 	Success bool        `json:"success"`
 	Message string      `json:"message"`
 	Data    interface{} `json:"data,omitempty"`
@@ -22,7 +22,7 @@ type APIResponse struct {
 
 // errorResponse helper untuk response error
 func errorResponse(c *echo.Context, status int, message string) error {
-	return c.JSON(status, APIResponse{
+	return c.JSON(status, authErrorPayload{
 		Success: false,
 		Message: message,
 		Data:    nil,

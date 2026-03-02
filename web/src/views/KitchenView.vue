@@ -105,6 +105,8 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import api, { subscribeRealtime } from '../services/api'
 import { useAuthStore } from '../stores/auth'
+import { getItemStatusText, getOrderStatusText, itemStatusClass, orderStatusClass, destinationClass } from '../utils/status'
+import { formatDateTime } from '../utils/date'
 
 const authStore = useAuthStore()
 
@@ -173,60 +175,6 @@ const handleRealtimeEvent = async (event) => {
   ) {
     await fetchOrders()
   }
-}
-
-const getItemStatusText = (status) => {
-  const map = {
-    pending: 'Pending',
-    cooking: 'Diproses',
-    ready: 'Siap',
-    served: 'Disajikan'
-  }
-  return map[status] || status
-}
-
-const getOrderStatusText = (status) => {
-  const map = {
-    cooking: 'Diproses',
-    ready: 'Siap',
-    served: 'Disajikan'
-  }
-  return map[status] || status
-}
-
-const itemStatusClass = (status) => {
-  const classes = {
-    pending: 'bg-amber-100 text-amber-700',
-    cooking: 'bg-blue-100 text-blue-700',
-    ready: 'bg-emerald-100 text-emerald-700',
-    served: 'bg-slate-100 text-slate-600'
-  }
-  return classes[status] || 'bg-slate-100 text-slate-600'
-}
-
-const orderStatusClass = (status) => {
-  const classes = {
-    cooking: 'bg-blue-100 text-blue-700',
-    ready: 'bg-emerald-100 text-emerald-700',
-    served: 'bg-slate-100 text-slate-600'
-  }
-  return classes[status] || 'bg-slate-100 text-slate-600'
-}
-
-const destinationClass = (destination) => {
-  return destination === 'kitchen' ? 'bg-orange-100 text-orange-700' : 'bg-purple-100 text-purple-700'
-}
-
-const formatDateTime = (dateString) => {
-  if (!dateString) return '-'
-  const date = new Date(dateString)
-  return date.toLocaleDateString('id-ID', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
 }
 
 onMounted(() => {

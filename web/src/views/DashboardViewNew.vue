@@ -129,62 +129,129 @@
         </div>
       </div>
 
-      <div class="card">
-        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div class="card overflow-hidden">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
           <div>
             <h3 class="text-lg font-semibold text-slate-900">Penjualan {{ periodLabel }}</h3>
-            <p class="subtitle">{{ activePeriod === 'daily' ? 'Penjualan per Jam' : 'Penjualan Harian' }}</p>
+            <p class="text-sm text-slate-500">{{ activePeriod === 'daily' ? 'Penjualan per Jam' : 'Penjualan Harian' }}</p>
           </div>
-          <span class="badge">Total Penjualan</span>
+          <div class="flex items-center gap-2">
+            <span class="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
+              <span class="w-3 h-0.5 rounded-full bg-emerald-500"></span>
+              Total Penjualan
+            </span>
+          </div>
         </div>
-        <div class="mt-6 grid gap-4 lg:grid-cols-[auto,1fr]">
-          <div class="hidden sm:flex flex-col gap-3 text-xs text-slate-500">
-            <span v-for="(label, i) in yAxisLabels" :key="i">{{ label }}</span>
+
+        <!-- Chart Container -->
+        <div class="relative" ref="chartContainer">
+          <!-- Y-axis labels -->
+          <div class="absolute left-0 top-0 bottom-8 flex flex-col justify-between text-[10px] sm:text-xs text-slate-400 font-medium z-10 pr-2">
+            <span v-for="(label, i) in yAxisLabels" :key="i" class="leading-none">{{ label }}</span>
           </div>
-          <div class="overflow-x-auto">
-            <div class="min-w-[640px] lg:min-w-0">
-              <div class="relative h-56 sm:h-64 lg:h-72 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <svg
-                  viewBox="0 0 800 200"
-                  class="h-full w-full"
-                  @mousemove="handleChartHover"
-                  @mouseleave="clearChartHover"
-                >
-                  <path v-if="chartPath" :d="chartPath" fill="none" stroke="#10B981" stroke-width="3" />
-                  <line
-                    v-if="hoveredPoint"
-                    :x1="hoveredPoint.x"
-                    :x2="hoveredPoint.x"
-                    y1="0"
-                    y2="200"
-                    stroke="#10B981"
-                    stroke-width="1"
-                    stroke-dasharray="4 4"
-                    opacity="0.5"
-                  />
-                  <circle
-                    v-if="hoveredPoint"
-                    :cx="hoveredPoint.x"
-                    :cy="hoveredPoint.y"
-                    r="5"
-                    fill="#10B981"
-                    stroke="white"
-                    stroke-width="2"
-                  />
-                </svg>
-                <div
+
+          <!-- Chart area -->
+          <div class="ml-10 sm:ml-14">
+            <div class="relative h-48 sm:h-56 lg:h-64 w-full">
+              <!-- Grid lines -->
+              <div class="absolute inset-0 flex flex-col justify-between pointer-events-none">
+                <div v-for="i in 5" :key="i" class="border-b border-dashed border-slate-100 w-full" :class="i === 5 ? 'border-slate-200' : ''"></div>
+              </div>
+
+              <!-- SVG Chart -->
+              <svg
+                class="absolute inset-0 w-full h-full"
+                :viewBox="`0 0 ${svgWidth} ${svgHeight}`"
+                preserveAspectRatio="none"
+                @mousemove="handleChartHover"
+                @touchmove.prevent="handleChartTouch"
+                @mouseleave="clearChartHover"
+                @touchend="clearChartHover"
+              >
+                <defs>
+                  <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#10B981" stop-opacity="0.3" />
+                    <stop offset="50%" stop-color="#10B981" stop-opacity="0.1" />
+                    <stop offset="100%" stop-color="#10B981" stop-opacity="0.02" />
+                  </linearGradient>
+                  <filter id="glow">
+                    <feGaussianBlur stdDeviation="2" result="blur" />
+                    <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                  </filter>
+                </defs>
+
+                <!-- Area fill -->
+                <path v-if="chartAreaPath" :d="chartAreaPath" fill="url(#chartGradient)" />
+
+                <!-- Line -->
+                <path v-if="chartPath" :d="chartPath" fill="none" stroke="#10B981" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" />
+
+                <!-- Hover line -->
+                <line
                   v-if="hoveredPoint"
-                  class="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg"
-                  :style="{ left: `${hoveredPoint.offsetX}px`, top: `${hoveredPoint.offsetY}px` }"
-                >
-                  <div class="font-semibold text-slate-700">{{ hoveredPoint.label }}</div>
-                  <div class="font-bold text-emerald-600">{{ formatRupiah(hoveredPoint.revenue) }}</div>
+                  :x1="hoveredPoint.x"
+                  :x2="hoveredPoint.x"
+                  y1="0"
+                  :y2="svgHeight"
+                  stroke="#10B981"
+                  stroke-width="1"
+                  stroke-dasharray="4 4"
+                  opacity="0.4"
+                  vector-effect="non-scaling-stroke"
+                />
+
+                <!-- Data points on hover -->
+                <circle
+                  v-if="hoveredPoint"
+                  :cx="hoveredPoint.x"
+                  :cy="hoveredPoint.y"
+                  r="5"
+                  fill="#10B981"
+                  stroke="white"
+                  stroke-width="2"
+                  filter="url(#glow)"
+                  vector-effect="non-scaling-stroke"
+                />
+              </svg>
+
+              <!-- Hover Tooltip -->
+              <div
+                v-if="hoveredPoint"
+                class="pointer-events-none absolute z-20 transition-all duration-100"
+                :style="tooltipStyle"
+              >
+                <div class="rounded-xl border border-emerald-100 bg-white/95 backdrop-blur-sm px-3 py-2 shadow-lg shadow-emerald-500/10 whitespace-nowrap">
+                  <div class="text-[10px] font-medium text-slate-400">{{ hoveredPoint.label }}</div>
+                  <div class="text-sm font-bold text-emerald-600">{{ formatRupiah(hoveredPoint.revenue) }}</div>
                 </div>
               </div>
-              <div class="mt-3 flex justify-between text-xs text-slate-500">
-                <span v-for="(label, i) in xAxisLabels" :key="i">{{ label }}</span>
-              </div>
             </div>
+
+            <!-- X-axis labels -->
+            <div class="flex justify-between mt-2 overflow-hidden">
+              <span
+                v-for="(label, i) in xAxisLabelsFiltered"
+                :key="i"
+                class="text-[9px] sm:text-[10px] lg:text-xs text-slate-400 font-medium truncate text-center"
+                :style="{ width: `${100 / xAxisLabelsFiltered.length}%` }"
+              >{{ label }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Summary stats below chart -->
+        <div v-if="chartData.length > 0 && !isLoading" class="mt-4 pt-4 border-t border-slate-100 grid grid-cols-3 gap-3">
+          <div class="text-center">
+            <p class="text-[10px] sm:text-xs text-slate-400 font-medium">Tertinggi</p>
+            <p class="text-xs sm:text-sm font-bold text-emerald-600 mt-0.5">{{ formatRupiah(chartMax) }}</p>
+          </div>
+          <div class="text-center">
+            <p class="text-[10px] sm:text-xs text-slate-400 font-medium">Rata-rata</p>
+            <p class="text-xs sm:text-sm font-bold text-slate-700 mt-0.5">{{ formatRupiah(chartAvg) }}</p>
+          </div>
+          <div class="text-center">
+            <p class="text-[10px] sm:text-xs text-slate-400 font-medium">Terendah</p>
+            <p class="text-xs sm:text-sm font-bold text-slate-400 mt-0.5">{{ formatRupiah(chartMin) }}</p>
           </div>
         </div>
       </div>
@@ -197,6 +264,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import api from '../services/api'
+import { formatRupiah } from '../utils/currency'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -257,15 +325,12 @@ const chartData = ref([])
 const maxRevenue = ref(0)
 const isLoading = ref(false)
 const hoveredPoint = ref(null)
+const chartContainer = ref(null)
 const netRevenue = computed(() => analytics.value.total_revenue)
 
-const formatRupiah = (amount) => {
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    minimumFractionDigits: 0
-  }).format(amount)
-}
+const svgWidth = 1000
+const svgHeight = 300
+const svgPadding = { top: 10, bottom: 10, left: 0, right: 0 }
 
 const formatAdditionalChargeLabel = (item) => {
   if (!item) return ''
@@ -299,28 +364,29 @@ const formatDateInput = (date) => {
 }
 
 const chartPath = computed(() => {
-  if (chartData.value.length === 0 || maxRevenue.value === 0) return ''
+  if (chartData.value.length === 0) return ''
 
-  const width = 800
-  const height = 200
-  const padding = 20
-  const dataPoints = chartData.value.length
-  const stepX = dataPoints > 1 ? (width - padding * 2) / (dataPoints - 1) : 0
+  const max = maxRevenue.value || 1
+  const points = chartData.value.length
+  const usableW = svgWidth - svgPadding.left - svgPadding.right
+  const usableH = svgHeight - svgPadding.top - svgPadding.bottom
+  const stepX = points > 1 ? usableW / (points - 1) : 0
 
-  let path = ''
+  return chartData.value.map((point, i) => {
+    const x = svgPadding.left + (i * stepX)
+    const y = svgPadding.top + usableH - ((point.revenue / max) * usableH)
+    return `${i === 0 ? 'M' : 'L'} ${x} ${y}`
+  }).join(' ')
+})
 
-  chartData.value.forEach((point, index) => {
-    const x = padding + (index * stepX)
-    const y = height - padding - ((point.revenue / maxRevenue.value) * (height - padding * 2))
-
-    if (index === 0) {
-      path = `M ${x} ${y}`
-    } else {
-      path += ` L ${x} ${y}`
-    }
-  })
-
-  return path
+const chartAreaPath = computed(() => {
+  if (!chartPath.value) return ''
+  const points = chartData.value.length
+  const usableW = svgWidth - svgPadding.left - svgPadding.right
+  const stepX = points > 1 ? usableW / (points - 1) : 0
+  const lastX = svgPadding.left + ((points - 1) * stepX)
+  const firstX = svgPadding.left
+  return `${chartPath.value} L ${lastX} ${svgHeight} L ${firstX} ${svgHeight} Z`
 })
 
 const getPointLabel = (point) => {
@@ -332,17 +398,17 @@ const getPointLabel = (point) => {
 }
 
 const chartPoints = computed(() => {
-  if (chartData.value.length === 0 || maxRevenue.value === 0) return []
+  if (chartData.value.length === 0) return []
 
-  const width = 800
-  const height = 200
-  const padding = 20
-  const dataPoints = chartData.value.length
-  const stepX = dataPoints > 1 ? (width - padding * 2) / (dataPoints - 1) : 0
+  const max = maxRevenue.value || 1
+  const points = chartData.value.length
+  const usableW = svgWidth - svgPadding.left - svgPadding.right
+  const usableH = svgHeight - svgPadding.top - svgPadding.bottom
+  const stepX = points > 1 ? usableW / (points - 1) : 0
 
   return chartData.value.map((point, index) => {
-    const x = padding + (index * stepX)
-    const y = height - padding - ((point.revenue / maxRevenue.value) * (height - padding * 2))
+    const x = svgPadding.left + (index * stepX)
+    const y = svgPadding.top + usableH - ((point.revenue / max) * usableH)
     return {
       x,
       y,
@@ -354,43 +420,86 @@ const chartPoints = computed(() => {
 
 const handleChartHover = (event) => {
   if (chartPoints.value.length === 0) return
-  const rect = event.currentTarget.getBoundingClientRect()
+  const svg = event.currentTarget
+  const rect = svg.getBoundingClientRect()
   const x = event.clientX - rect.left
-  const scaleX = 800 / rect.width
+  const scaleX = svgWidth / rect.width
   const chartX = x * scaleX
 
   let closest = chartPoints.value[0]
-  let closestIndex = 0
   let closestDistance = Math.abs(chartPoints.value[0].x - chartX)
 
-  chartPoints.value.forEach((point, index) => {
+  chartPoints.value.forEach((point) => {
     const distance = Math.abs(point.x - chartX)
     if (distance < closestDistance) {
       closest = point
-      closestIndex = index
       closestDistance = distance
     }
   })
 
-  const offsetX = (closest.x / 800) * rect.width
-  const offsetY = (closest.y / 200) * rect.height
-  hoveredPoint.value = { ...closest, index: closestIndex, offsetX, offsetY }
+  // Calculate pixel position for tooltip
+  const pxX = (closest.x / svgWidth) * rect.width
+  const pxY = (closest.y / svgHeight) * rect.height
+
+  hoveredPoint.value = { ...closest, pxX, pxY }
 }
+
+const handleChartTouch = (event) => {
+  if (event.touches.length === 0) return
+  const touch = event.touches[0]
+  const svg = event.currentTarget
+  const rect = svg.getBoundingClientRect()
+  const fakeEvent = { currentTarget: svg, clientX: touch.clientX, clientY: touch.clientY }
+  handleChartHover(fakeEvent)
+}
+
+const tooltipStyle = computed(() => {
+  if (!hoveredPoint.value || !chartContainer.value) return {}
+  const containerW = chartContainer.value?.querySelector('.relative')?.offsetWidth || 300
+  const pxX = hoveredPoint.value.pxX || 0
+  const pxY = hoveredPoint.value.pxY || 0
+
+  // Flip tooltip to right if too close to left edge
+  const flipX = pxX < 80
+  const left = flipX ? `${pxX + 12}px` : `${pxX - 12}px`
+  const transform = flipX ? 'translateY(-100%)' : 'translate(-100%, -100%)'
+
+  return {
+    left,
+    top: `${pxY - 8}px`,
+    transform
+  }
+})
+
+const chartMax = computed(() => Math.max(...chartData.value.map(d => d.revenue || 0), 0))
+const chartMin = computed(() => {
+  const revenues = chartData.value.map(d => d.revenue || 0)
+  return revenues.length > 0 ? Math.min(...revenues) : 0
+})
+const chartAvg = computed(() => {
+  if (chartData.value.length === 0) return 0
+  const total = chartData.value.reduce((sum, d) => sum + (d.revenue || 0), 0)
+  return total / chartData.value.length
+})
 
 const clearChartHover = () => {
   hoveredPoint.value = null
 }
 
 const yAxisLabels = computed(() => {
-  if (maxRevenue.value === 0) return ['0', '1 jt', '2 jt', '3 jt', '4 jt']
-
   const max = maxRevenue.value
+  if (max === 0) return ['0', '0', '0', '0', '0']
+
   const formatShort = (amount) => {
-    if (amount >= 1000000) return (amount / 1000000).toFixed(1) + ' jt'
+    if (amount >= 1000000) {
+      const v = amount / 1000000
+      return v % 1 === 0 ? v.toFixed(0) + ' jt' : v.toFixed(1) + ' jt'
+    }
     if (amount >= 1000) return (amount / 1000).toFixed(0) + ' rb'
     return amount.toFixed(0)
   }
   
+  // Top to bottom: max → 0
   return [
     formatShort(max),
     formatShort(max * 0.75),
@@ -404,18 +513,24 @@ const xAxisLabels = computed(() => {
   if (chartData.value.length === 0) return []
 
   if (activePeriod.value === 'daily') {
-    // Show all hours from the data
     return chartData.value.map((d) => d.time_label + ':00')
   }
 
-  const totalPoints = chartData.value.length
-  const step = Math.ceil(totalPoints / 10)
-  return chartData.value
-    .filter((_, i) => i % step === 0)
-    .map((d) => {
-      const date = new Date(d.time_label)
-      return `${date.getDate()}/${date.getMonth() + 1}`
-    })
+  return chartData.value.map((d) => {
+    const date = new Date(d.time_label)
+    return `${date.getDate()}/${date.getMonth() + 1}`
+  })
+})
+
+// Adaptive filtered labels for display (avoid crowding)
+const xAxisLabelsFiltered = computed(() => {
+  const labels = xAxisLabels.value
+  if (labels.length <= 8) return labels
+
+  // Show roughly 6-10 labels evenly
+  const targetCount = window.innerWidth < 640 ? 6 : window.innerWidth < 1024 ? 8 : 12
+  const step = Math.ceil(labels.length / targetCount)
+  return labels.filter((_, i) => i % step === 0 || i === labels.length - 1)
 })
 
 const updateDateRange = () => {
@@ -520,22 +635,4 @@ const handleLogout = async () => {
   await authStore.logout()
   router.push('/login')
 }
-
-onMounted(() => {
-  updateDateRange()
-  fetchAnalytics()
-  fetchChartData()
-})
 </script>
-
-<style scoped>
-/* Pulse Animation */
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}
-</style>

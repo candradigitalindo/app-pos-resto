@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen pb-20 lg:pb-6">
+  <div class="min-h-screen pb-24 lg:pb-6">
     <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <!-- Header Card -->
       <div class="mb-6 overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-500 p-6 shadow-xl">
@@ -387,6 +387,7 @@ import CategoryModal from '../components/CategoryModal.vue'
 import DataTable from '../components/DataTable.vue'
 import Pagination from '../components/Pagination.vue'
 import { useNotification } from '../composables/useNotification'
+import { formatNumber } from '../utils/currency'
 
 const router = useRouter()
 const { created, updated, deleted, error, confirm } = useNotification()
@@ -534,12 +535,7 @@ const getCategoryName = (categoryId) => {
   return category ? category.name : 'Tanpa Kategori'
 }
 
-const formatRupiah = (amount) => {
-  return new Intl.NumberFormat('id-ID', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0
-  }).format(amount)
-}
+const formatRupiah = formatNumber
 
 const formatPriceInput = (event) => {
   let value = event.target.value.replace(/[^\d]/g, '')

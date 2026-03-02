@@ -3,6 +3,16 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import api, { subscribeRealtime } from '../services/api'
 import { useAuthStore } from '../stores/auth'
 import { useNotification } from './useNotification'
+import { formatCurrency as _formatCurrency } from '../utils/currency'
+import { formatTime as _formatTime, formatDateTime as _formatDateTime } from '../utils/date'
+import {
+  getPaymentMethodText,
+  getOrderStatusText,
+  getPaymentStatusText,
+  getItemStatusText,
+  orderStatusClass as _orderStatusClass,
+  itemStatusClass
+} from '../utils/status'
 
 export function useCashierView() {
   const loading = ref(false)
@@ -354,13 +364,7 @@ export function useCashierView() {
     return user?.full_name || 'Kasir'
   })
 
-  const formatCurrency = (value) => {
-    return new Intl.NumberFormat('id-ID', {
-      style: 'currency',
-      currency: 'IDR',
-      minimumFractionDigits: 0
-    }).format(value || 0)
-  }
+  const formatCurrency = _formatCurrency
 
   const formatReceiptNumber = (value) => {
     return new Intl.NumberFormat('id-ID', {
@@ -614,22 +618,9 @@ export function useCashierView() {
     return digits.slice(0, 4)
   }
 
-  const formatTime = (dateString) => {
-    if (!dateString) return '-'
-    const date = new Date(dateString)
-    return date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
-  }
+  const formatTime = _formatTime
 
-  const formatDateTime = (dateString) => {
-    if (!dateString) return '-'
-    const date = new Date(dateString)
-    return date.toLocaleString('id-ID', {
-      day: '2-digit',
-      month: 'short',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
-  }
+  const formatDateTime = _formatDateTime
 
   const formatDateInput = (date) => {
     const target = new Date(date)
@@ -727,16 +718,6 @@ export function useCashierView() {
     return classes[method] || 'bg-slate-100 text-slate-800'
   }
 
-  const getPaymentMethodText = (method) => {
-    const texts = {
-      cash: 'Tunai',
-      card: 'Kartu',
-      qris: 'QRIS',
-      transfer: 'Transfer'
-    }
-    return texts[method] || method
-  }
-
   const getTransactionStatusText = (status) => {
     if (status === 'cancelled') return 'BATAL'
     return 'PAID'
@@ -747,37 +728,7 @@ export function useCashierView() {
     return 'bg-emerald-100 text-emerald-800'
   }
 
-  const getOrderStatusText = (status) => {
-    const texts = {
-      pending: 'Menunggu',
-      cooking: 'Diproses',
-      ready: 'Siap',
-      served: 'Tersaji',
-      cancelled: 'Batal'
-    }
-    return texts[status] || status || '-'
-  }
-
-  const getOrderStatusClass = (status) => {
-    const classes = {
-      pending: 'bg-amber-100 text-amber-700',
-      cooking: 'bg-blue-100 text-blue-700',
-      ready: 'bg-emerald-100 text-emerald-700',
-      served: 'bg-slate-100 text-slate-600',
-      cancelled: 'bg-red-100 text-red-700'
-    }
-    return classes[status] || 'bg-slate-100 text-slate-600'
-  }
-
-  const getPaymentStatusText = (status) => {
-    const texts = {
-      unpaid: 'Belum Lunas',
-      partial: 'Sebagian',
-      paid: 'Lunas',
-      cancelled: 'Batal'
-    }
-    return texts[status] || status || '-'
-  }
+  const getOrderStatusClass = _orderStatusClass
 
   const getPaymentStatusClass = (status) => {
     const classes = {
@@ -1125,26 +1076,6 @@ export function useCashierView() {
     } finally {
       loadingOrderDetail.value = false
     }
-  }
-
-  const getItemStatusText = (status) => {
-    const map = {
-      pending: 'Pending',
-      cooking: 'Diproses',
-      ready: 'Siap',
-      served: 'Disajikan'
-    }
-    return map[status] || status
-  }
-
-  const itemStatusClass = (status) => {
-    const classes = {
-      pending: 'bg-amber-100 text-amber-700',
-      cooking: 'bg-blue-100 text-blue-700',
-      ready: 'bg-emerald-100 text-emerald-700',
-      served: 'bg-slate-100 text-slate-600'
-    }
-    return classes[status] || 'bg-slate-100 text-slate-600'
   }
 
   const canEditItem = (item) => item.item_status === 'pending'

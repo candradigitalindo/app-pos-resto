@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen pb-20 lg:pb-6">
+  <div class="min-h-screen pb-24 lg:pb-6">
     <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <!-- Header Card -->
       <div class="mb-6 overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-500 p-6 shadow-xl">

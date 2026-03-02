@@ -846,6 +846,8 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import api, { subscribeRealtime } from '../services/api'
 import { useNotification } from '../composables/useNotification'
+import { formatNumber } from '../utils/currency'
+import { getOrderStatusText, getItemStatusText, orderStatusClass, itemStatusClass, destinationClass } from '../utils/status'
 
 const { success: showSuccess, error: showError } = useNotification()
 
@@ -1351,10 +1353,7 @@ const getStatusText = (status) => {
   return map[status] || status
 }
 
-const formatCurrency = (value) => {
-  if (!value) return '0'
-  return new Intl.NumberFormat('id-ID').format(value)
-}
+const formatCurrency = formatNumber
 
 const getSpendPerPax = (order) => {
   const pax = order?.pax || 0
@@ -1372,50 +1371,6 @@ const getGapValue = (order) => {
 
 const getGapClass = (order) => {
   return getSpendGap(order) > 0 ? 'text-red-600 bg-red-50' : 'text-emerald-700 bg-emerald-50'
-}
-
-const getOrderStatusText = (status) => {
-  const map = {
-    pending: 'Pending',
-    confirmed: 'Dikonfirmasi',
-    completed: 'Selesai',
-    cancelled: 'Dibatalkan'
-  }
-  return map[status] || status
-}
-
-const getItemStatusText = (status) => {
-  const map = {
-    pending: 'Pending',
-    preparing: 'Diproses',
-    ready: 'Siap',
-    served: 'Disajikan'
-  }
-  return map[status] || status
-}
-
-const orderStatusClass = (status) => {
-  const classes = {
-    pending: 'bg-amber-100 text-amber-700',
-    confirmed: 'bg-blue-100 text-blue-700',
-    completed: 'bg-emerald-100 text-emerald-700',
-    cancelled: 'bg-red-100 text-red-700'
-  }
-  return classes[status] || 'bg-slate-100 text-slate-600'
-}
-
-const itemStatusClass = (status) => {
-  const classes = {
-    pending: 'bg-amber-100 text-amber-700',
-    preparing: 'bg-blue-100 text-blue-700',
-    ready: 'bg-emerald-100 text-emerald-700',
-    served: 'bg-slate-100 text-slate-600'
-  }
-  return classes[status] || 'bg-slate-100 text-slate-600'
-}
-
-const destinationClass = (destination) => {
-  return destination === 'kitchen' ? 'bg-orange-100 text-orange-700' : 'bg-purple-100 text-purple-700'
 }
 
 const handleRealtimeEvent = async (event) => {

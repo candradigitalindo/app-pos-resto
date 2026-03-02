@@ -46,13 +46,6 @@ func (b *socketBroadcaster) Emit(event string, payload map[string]interface{}) {
 	b.server.BroadcastToNamespace("/", event, payload)
 }
 
-// APIResponse struktur standar untuk response
-type APIResponse struct {
-	Success bool        `json:"success"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
-}
-
 // getLocalIP gets the local IP address for LAN access
 func getLocalIP() string {
 	addrs, err := net.InterfaceAddrs()
@@ -113,7 +106,7 @@ func customHTTPErrorHandler(c *echo.Context, err error) {
 	log.Printf("Response: code=%d, message=%s", code, message)
 
 	// Create response
-	response := APIResponse{
+	response := handlers.APIResponse{
 		Success: false,
 		Message: message,
 	}
