@@ -965,8 +965,32 @@ const saveCloudConfig = async () => {
     if (response.data.success) {
       successMessage.value = 'Konfigurasi cloud berhasil disimpan'
       isEditingCloud.value = false
+
+      // Auto-verify cloud connection and update outlet info
+      if (config.value.cloud_api_url) {
+        try {
+          successMessage.value = 'Konfigurasi disimpan. Menghubungkan ke cloud...'
+          const testResp = await api.post('/config/outlet/test')
+          if (testResp.data.success && testResp.data.connected) {
+            const outletData = testResp.data.data
+            if (outletData && outletData.updated) {
+              successMessage.value = `Terhubung ke cloud! Informasi outlet diperbarui: ${outletData.outlet_name} (${outletData.outlet_code})`
+            } else if (outletData) {
+              successMessage.value = `Terhubung ke cloud: ${outletData.outlet_name} (${outletData.outlet_code})`
+            } else {
+              successMessage.value = 'Terhubung ke cloud berhasil'
+            }
+          } else if (testResp.data.error) {
+            errorMessage.value = testResp.data.error
+          }
+        } catch (testErr) {
+          // Don't override success - config was saved, cloud test is bonus
+          console.warn('Cloud test failed:', testErr)
+        }
+      }
+
       await fetchConfig()
-      setTimeout(() => { successMessage.value = '' }, 3000)
+      setTimeout(() => { successMessage.value = '' }, 5000)
     }
   } catch (error) {
     errorMessage.value = 'Gagal menyimpan konfigurasi cloud: ' + (error.response?.data?.error || error.message)

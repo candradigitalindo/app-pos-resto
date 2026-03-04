@@ -24,13 +24,15 @@ type TransactionHandler struct {
 	transactionService services.TransactionService
 	queries            *db.Queries
 	db                 *sql.DB
+	syncRepo           repositories.SyncRepository
 }
 
-func NewTransactionHandler(transactionService services.TransactionService, queries *db.Queries, sqlDB *sql.DB) *TransactionHandler {
+func NewTransactionHandler(transactionService services.TransactionService, queries *db.Queries, sqlDB *sql.DB, syncRepo repositories.SyncRepository) *TransactionHandler {
 	return &TransactionHandler{
 		transactionService: transactionService,
 		queries:            queries,
 		db:                 sqlDB,
+		syncRepo:           syncRepo,
 	}
 }
 
@@ -430,6 +432,8 @@ func (h *TransactionHandler) OpenCashierShift(c *echo.Context) error {
 		return InternalErrorResponse(c, "Gagal mengambil data shift kasir")
 	}
 
+	h.enqueueCashierShiftSync(ctx, shift)
+
 	return CreatedResponse(c, "Shift kasir dibuka", cashierShiftToResponse(shift))
 }
 
@@ -523,6 +527,7 @@ func (h *TransactionHandler) CloseCashierShift(c *echo.Context) error {
 	}
 
 	h.enqueueCloseShiftReceipt(ctx, openShift, summary, voidSummary, cancelSummary, openShift.ID, cashMovements.CashIn, cashMovements.CashOut)
+	h.enqueueCashierShiftSync(ctx, shift)
 
 	shiftResponse := cashierShiftToResponse(shift)
 	shiftResponse["cash_movements"] = cashMovements
@@ -691,6 +696,12 @@ func (h *TransactionHandler) HandoverCashierShift(c *echo.Context) error {
 
 	h.enqueueHandoverReceipt(ctx, openShift, nextUser, summary, voidSummary, cancelSummary, shiftID, cashMovements.CashIn, cashMovements.CashOut)
 
+	// Sync both the closed old shift and the new open shift
+	if closedShift, err := h.getCashierShiftByID(ctx, openShift.ID); err == nil {
+		h.enqueueCashierShiftSync(ctx, closedShift)
+	}
+	h.enqueueCashierShiftSync(ctx, newShift)
+
 	token, err := middleware.GenerateToken(&nextUser)
 	if err != nil {
 		return InternalErrorResponse(c, "Gagal generate token kasir baru")
@@ -762,6 +773,7 @@ func (h *TransactionHandler) CreateCashMovement(c *echo.Context) error {
 	} else {
 		h.enqueueCashOutReceipt(ctx, openShift, movementID, req.Name, req.Note, req.Amount)
 	}
+	h.enqueueCashMovementSync(ctx, movementID, openShift.ID, req.Type, req.Amount, req.Name, req.Note)
 
 	cashMovements, err := h.getShiftCashMovements(ctx, openShift.ID)
 	if err != nil {
@@ -973,6 +985,80 @@ func (h *TransactionHandler) enqueueCashOutReceipt(ctx context.Context, openShif
 		PrinterID: printerID,
 		Data:      string(payloadJSON),
 	})
+}
+
+func (h *TransactionHandler) enqueueCashierShiftSync(ctx context.Context, shift *cashierShiftRow) {
+	if h.syncRepo == nil || shift == nil {
+		return
+	}
+	openedBy := ""
+	if shift.OpenedByName.Valid {
+		openedBy = shift.OpenedByName.String
+	}
+	payload := map[string]interface{}{
+		"local_id":          shift.ID,
+		"opened_by":         openedBy,
+		"opened_at":         shift.OpenedAt.UTC().Format(time.RFC3339),
+		"opening_cash":      shift.OpeningCash,
+		"status":            shift.Status,
+		"closed_at":         nil,
+		"closed_by":         nil,
+		"closing_cash":      nil,
+		"closing_card":      nil,
+		"closing_qris":      nil,
+		"closing_transfer":  nil,
+		"carry_over_cash":   nil,
+		"previous_shift_id": nil,
+		"handover_to":       nil,
+		"notes":             nil,
+	}
+	if shift.ClosedAt.Valid {
+		payload["closed_at"] = shift.ClosedAt.Time.UTC().Format(time.RFC3339)
+	}
+	if shift.ClosedByName.Valid {
+		payload["closed_by"] = shift.ClosedByName.String
+	}
+	if shift.ClosingCash.Valid {
+		payload["closing_cash"] = shift.ClosingCash.Float64
+	}
+	if shift.ClosingCard.Valid {
+		payload["closing_card"] = shift.ClosingCard.Float64
+	}
+	if shift.ClosingQris.Valid {
+		payload["closing_qris"] = shift.ClosingQris.Float64
+	}
+	if shift.ClosingTransfer.Valid {
+		payload["closing_transfer"] = shift.ClosingTransfer.Float64
+	}
+	if shift.CarryOverCash.Valid {
+		payload["carry_over_cash"] = shift.CarryOverCash.Float64
+	}
+	if shift.PreviousShift.Valid {
+		payload["previous_shift_id"] = shift.PreviousShift.String
+	}
+	if shift.HandoverTo.Valid {
+		payload["handover_to"] = shift.HandoverTo.String
+	}
+	if shift.Notes.Valid {
+		payload["notes"] = shift.Notes.String
+	}
+	_ = h.syncRepo.EnqueueSync(ctx, "cashier_shift", shift.ID, "upsert", payload)
+}
+
+func (h *TransactionHandler) enqueueCashMovementSync(ctx context.Context, movementID, shiftID, movementType string, amount float64, counterpartName, note string) {
+	if h.syncRepo == nil {
+		return
+	}
+	payload := map[string]interface{}{
+		"local_id":         movementID,
+		"shift_id":         shiftID,
+		"movement_type":    movementType,
+		"amount":           amount,
+		"counterpart_name": counterpartName,
+		"note":             note,
+		"created_at":       time.Now().UTC().Format(time.RFC3339),
+	}
+	_ = h.syncRepo.EnqueueSync(ctx, "cashier_cash_movement", movementID, "upsert", payload)
 }
 
 func (h *TransactionHandler) getReceiptPrinterID(ctx context.Context) (string, bool) {

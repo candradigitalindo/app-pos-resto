@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -22,6 +23,12 @@ type Client struct {
 
 // NewClient creates a new cloud API client
 func NewClient(baseURL, apiKey, outletID, outletCode string) *Client {
+	// Normalize baseURL: remove trailing slash and /api/v1 suffix
+	// because all endpoint methods already append /api/v1/...
+	baseURL = strings.TrimRight(baseURL, "/")
+	baseURL = strings.TrimSuffix(baseURL, "/api/v1")
+	baseURL = strings.TrimSuffix(baseURL, "/api/v1/")
+
 	return &Client{
 		baseURL:    baseURL,
 		apiKey:     apiKey,

@@ -3,19 +3,26 @@ package handlers
 import (
 	"backend/internal/models"
 	"backend/internal/repositories"
+	"backend/internal/services"
 	"backend/internal/workers"
 	"backend/pkg/utils"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/labstack/echo/v5"
 )
 
 type ConfigHandler struct {
-	syncRepo   repositories.SyncRepository
-	syncWorker *workers.SyncWorker
+	syncRepo    repositories.SyncRepository
+	syncWorker  *workers.SyncWorker
+	syncService services.SyncService
 }
 
 func NewConfigHandler(syncRepo repositories.SyncRepository) *ConfigHandler {
@@ -28,6 +35,11 @@ func NewConfigHandler(syncRepo repositories.SyncRepository) *ConfigHandler {
 // SetSyncWorker sets the sync worker instance (called after worker is created)
 func (h *ConfigHandler) SetSyncWorker(worker *workers.SyncWorker) {
 	h.syncWorker = worker
+}
+
+// SetSyncService sets the sync service instance for cloud client refresh
+func (h *ConfigHandler) SetSyncService(svc services.SyncService) {
+	h.syncService = svc
 }
 
 // GetOutletConfig returns current outlet configuration
@@ -159,6 +171,13 @@ func (h *ConfigHandler) UpdateOutletConfig(c *echo.Context) error {
 	// Update sync worker if sync_enabled changed
 	if req.SyncEnabled != nil && h.syncWorker != nil {
 		h.syncWorker.SetEnabled(*req.SyncEnabled)
+	}
+
+	// Reload cloud client if cloud config was changed
+	if h.syncService != nil && (req.CloudAPIURL != "" || req.CloudAPIKey != "" || req.OutletID != "") {
+		if err := h.syncService.ReloadCloudClient((*c).Request().Context()); err != nil {
+			log.Printf("Warning: failed to reload cloud client: %v", err)
+		}
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
@@ -474,36 +493,169 @@ func (h *ConfigHandler) DeleteAdditionalCharge(c *echo.Context) error {
 	})
 }
 
-// TestCloudConnection tests connection to cloud API
+// TestCloudConnection tests connection to cloud API and fetches outlet info
 func (h *ConfigHandler) TestCloudConnection(c *echo.Context) error {
 	config, err := h.syncRepo.GetOutletConfig((*c).Request().Context())
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "Failed to get outlet config: " + err.Error(),
+		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+			"success": false,
+			"error":   "Failed to get outlet config: " + err.Error(),
 		})
 	}
 
 	if config == nil {
-		return c.JSON(http.StatusNotFound, map[string]string{
-			"error": "Outlet configuration not found",
+		return c.JSON(http.StatusNotFound, map[string]interface{}{
+			"success": false,
+			"error":   "Outlet configuration not found",
 		})
 	}
 
 	if config.CloudAPIURL == "" || config.CloudAPIKey == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": "Cloud API URL and API Key must be configured",
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{
+			"success": false,
+			"error":   "Cloud API URL dan API Key harus diisi terlebih dahulu",
 		})
 	}
 
-	// TODO: Implement actual ping test to cloud
-	// For now, just return config status
+	// Step 1: Ping cloud API to check connectivity
+	cloudURL := strings.TrimRight(config.CloudAPIURL, "/")
+	pingURL := cloudURL + "/api/v1/ping"
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+
+	pingResp, err := httpClient.Get(pingURL)
+	if err != nil {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success":   false,
+			"connected": false,
+			"error":     "Tidak dapat terhubung ke server cloud: " + err.Error(),
+		})
+	}
+	pingResp.Body.Close()
+
+	if pingResp.StatusCode != 200 {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success":   false,
+			"connected": false,
+			"error":     fmt.Sprintf("Server cloud merespon dengan status %d", pingResp.StatusCode),
+		})
+	}
+
+	// Step 2: Find outlet ID by trying to authenticate with the API key
+	// We need to discover the outlet ID. Try the stored outlet_id first,
+	// or use a known approach.
+	outletID := config.OutletID
+	if outletID == "" {
+		// No outlet ID stored - can't proceed
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success":   true,
+			"connected": true,
+			"error":     "Terhubung ke cloud, tapi Outlet ID belum diisi. Masukkan Outlet ID yang terdaftar di cloud.",
+		})
+	}
+
+	// Step 3: Get outlet info from cloud API
+	infoURL := cloudURL + "/api/v1/outlets/" + outletID + "/info"
+	req2, _ := http.NewRequest("GET", infoURL, nil)
+	req2.Header.Set("Authorization", "Bearer "+config.CloudAPIKey)
+
+	infoResp, err := httpClient.Do(req2)
+	if err != nil {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success":   false,
+			"connected": true,
+			"error":     "Terhubung ke cloud tapi gagal mengambil info outlet: " + err.Error(),
+		})
+	}
+	defer infoResp.Body.Close()
+
+	body, _ := io.ReadAll(infoResp.Body)
+
+	if infoResp.StatusCode == 401 || infoResp.StatusCode == 403 {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success":   false,
+			"connected": true,
+			"error":     "API Key tidak valid atau outlet tidak aktif. Periksa kembali API Key Anda.",
+		})
+	}
+
+	if infoResp.StatusCode != 200 {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success":   false,
+			"connected": true,
+			"error":     fmt.Sprintf("Gagal mengambil info outlet (status %d)", infoResp.StatusCode),
+		})
+	}
+
+	// Parse cloud response
+	var cloudResp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			ID        string `json:"id"`
+			Code      string `json:"code"`
+			Name      string `json:"name"`
+			Address   string `json:"address"`
+			IsActive  bool   `json:"is_active"`
+			CreatedAt string `json:"created_at"`
+			UpdatedAt string `json:"updated_at"`
+		} `json:"data"`
+		Error string `json:"error"`
+	}
+
+	if err := json.Unmarshal(body, &cloudResp); err != nil {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success":   false,
+			"connected": true,
+			"error":     "Respon cloud tidak valid: " + err.Error(),
+		})
+	}
+
+	if !cloudResp.Success {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"success":   false,
+			"connected": true,
+			"error":     "Cloud error: " + cloudResp.Error,
+		})
+	}
+
+	// Step 4: Auto-update local outlet info from cloud data
+	updated := false
+	if cloudResp.Data.Name != "" && cloudResp.Data.Name != config.OutletName {
+		config.OutletName = cloudResp.Data.Name
+		updated = true
+	}
+	if cloudResp.Data.Code != "" && cloudResp.Data.Code != config.OutletCode {
+		config.OutletCode = cloudResp.Data.Code
+		updated = true
+	}
+	if cloudResp.Data.Address != "" && cloudResp.Data.Address != config.OutletAddress {
+		config.OutletAddress = cloudResp.Data.Address
+		updated = true
+	}
+	if cloudResp.Data.ID != "" && cloudResp.Data.ID != config.OutletID {
+		config.OutletID = cloudResp.Data.ID
+		updated = true
+	}
+
+	if updated {
+		if err := h.syncRepo.UpdateOutletConfig((*c).Request().Context(), config); err != nil {
+			log.Printf("Warning: failed to auto-update outlet info from cloud: %v", err)
+		} else {
+			log.Printf("Outlet info updated from cloud: name=%s code=%s", config.OutletName, config.OutletCode)
+		}
+	}
+
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"success": true,
-		"message": "Configuration is valid (actual connection test coming in Phase 2)",
+		"success":   true,
+		"connected": true,
+		"message":   "Berhasil terhubung ke cloud",
 		"data": map[string]interface{}{
-			"cloud_api_url": config.CloudAPIURL,
-			"outlet_code":   config.OutletCode,
-			"configured":    true,
+			"outlet_id":   cloudResp.Data.ID,
+			"outlet_code": cloudResp.Data.Code,
+			"outlet_name": cloudResp.Data.Name,
+			"address":     cloudResp.Data.Address,
+			"is_active":   cloudResp.Data.IsActive,
+			"updated":     updated,
 		},
 	})
 }

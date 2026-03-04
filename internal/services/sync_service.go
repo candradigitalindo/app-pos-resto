@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -35,6 +36,10 @@ type SyncService interface {
 
 	// Conflict resolution
 	ResolveConflict(ctx context.Context, entityType, entityID, strategy string) error
+
+	// Cloud client management
+	UpdateCloudClient(client *cloudapi.Client)
+	ReloadCloudClient(ctx context.Context) error
 }
 
 type syncService struct {
@@ -48,6 +53,153 @@ func NewSyncService(syncRepo repositories.SyncRepository, cloudClient *cloudapi.
 		syncRepo:    syncRepo,
 		cloudClient: cloudClient,
 		db:          db,
+	}
+}
+
+// UpdateCloudClient replaces the cloud API client (called when config changes)
+func (s *syncService) UpdateCloudClient(client *cloudapi.Client) {
+	s.cloudClient = client
+	log.Println("Cloud API client updated")
+}
+
+// ReloadCloudClient reloads the cloud client from database config
+func (s *syncService) ReloadCloudClient(ctx context.Context) error {
+	config, err := s.syncRepo.GetOutletConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	if config == nil || config.CloudAPIURL == "" || config.CloudAPIKey == "" {
+		return fmt.Errorf("cloud config not configured")
+	}
+	s.cloudClient = cloudapi.NewClient(config.CloudAPIURL, config.CloudAPIKey, config.OutletID, config.OutletCode)
+	return nil
+}
+
+// isCloudReachable does a fast health check before attempting sync.
+// Returns false if cloud is unreachable — avoids wasting resources.
+func (s *syncService) isCloudReachable(ctx context.Context) bool {
+	if s.cloudClient == nil {
+		return false
+	}
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := s.cloudClient.Ping(pingCtx); err != nil {
+		log.Printf("☁️  Cloud unreachable: %v", err)
+		return false
+	}
+	return true
+}
+
+// enrichOrderPayload adds order_items to an order sync payload
+func (s *syncService) enrichOrderPayload(ctx context.Context, data map[string]interface{}) {
+	orderID := getString(data, "id")
+	if orderID == "" {
+		orderID = getString(data, "local_id")
+	}
+	if orderID == "" {
+		return
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT oi.id, oi.product_name, oi.qty, oi.price, oi.destination, oi.item_status,
+		       COALESCE(c.name, '') AS category
+		FROM order_items oi
+		LEFT JOIN products p ON p.name = oi.product_name
+		LEFT JOIN categories c ON c.id = p.category_id
+		WHERE oi.order_id = ?
+	`, orderID)
+	if err != nil {
+		log.Printf("Failed to query order_items for %s: %v", orderID, err)
+		return
+	}
+	defer rows.Close()
+
+	var items []map[string]interface{}
+	for rows.Next() {
+		var id, productName, destination, itemStatus, category string
+		var qty int
+		var price float64
+		if err := rows.Scan(&id, &productName, &qty, &price, &destination, &itemStatus, &category); err != nil {
+			continue
+		}
+		items = append(items, map[string]interface{}{
+			"product_name": productName,
+			"category":     category,
+			"qty":          qty,
+			"price":        price,
+			"subtotal":     price * float64(qty),
+			"destination":  destination,
+			"status":       itemStatus,
+		})
+	}
+
+	if len(items) > 0 {
+		data["items"] = items
+	}
+}
+
+// enrichTransactionPayload adds transaction_items to a transaction sync payload
+func (s *syncService) enrichTransactionPayload(ctx context.Context, data map[string]interface{}) {
+	txID := getString(data, "id")
+	if txID == "" {
+		txID = getString(data, "local_id")
+	}
+	if txID == "" {
+		return
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ti.id, ti.product_id, COALESCE(p.name, ''), ti.quantity, ti.price
+		FROM transaction_items ti
+		LEFT JOIN products p ON p.id = ti.product_id
+		WHERE ti.transaction_id = ?
+	`, txID)
+	if err != nil {
+		log.Printf("Failed to query transaction_items for %s: %v", txID, err)
+		return
+	}
+	defer rows.Close()
+
+	var items []map[string]interface{}
+	for rows.Next() {
+		var id, productID, productName string
+		var quantity int
+		var price float64
+		if err := rows.Scan(&id, &productID, &productName, &quantity, &price); err != nil {
+			continue
+		}
+		items = append(items, map[string]interface{}{
+			"id":           id,
+			"product_id":   productID,
+			"product_name": productName,
+			"quantity":     quantity,
+			"price":        price,
+			"subtotal":     price * float64(quantity),
+		})
+	}
+
+	if len(items) > 0 {
+		data["items"] = items
+	}
+
+	// Juga tambahkan cash_amount & change_amount jika belum ada — query dari transactions
+	if _, ok := data["cash_amount"]; !ok {
+		var cashAmount, changeAmount float64
+		err := s.db.QueryRowContext(ctx, `
+			SELECT COALESCE(
+				(SELECT SUM(amount) FROM payments WHERE order_id = (SELECT order_id FROM transactions WHERE id = ?)), 0
+			)`, txID).Scan(&cashAmount)
+		if err == nil && cashAmount > 0 {
+			data["cash_amount"] = cashAmount
+			totalAmount := getFloat64(data, "total_amount")
+			if totalAmount > 0 {
+				changeAmount = cashAmount - totalAmount
+				if changeAmount < 0 {
+					changeAmount = 0
+				}
+			}
+			data["change_amount"] = changeAmount
+		}
 	}
 }
 
@@ -69,7 +221,17 @@ func (s *syncService) PushPendingData(ctx context.Context) error {
 		log.Printf("Failed to create sync log: %v", err)
 	}
 
-	// Get pending items
+	// Health check: skip sync jika cloud unreachable
+	if !s.isCloudReachable(ctx) {
+		msg := "Cloud unreachable, skipping push cycle"
+		log.Println("☁️  " + msg)
+		if logID > 0 {
+			s.syncRepo.UpdateSyncLog(ctx, logID, "skipped", 0, msg, time.Since(startTime).Milliseconds())
+		}
+		return nil // BUKAN error — POS tetap berjalan normal
+	}
+
+	// Get pending items (skip items yang terlalu sering gagal — exponential backoff)
 	pendingItems, err := s.syncRepo.GetPendingSync(ctx, 100) // Batch of 100
 	if err != nil {
 		errMsg := fmt.Sprintf("Failed to get pending sync: %v", err)
@@ -87,13 +249,38 @@ func (s *syncService) PushPendingData(ctx context.Context) error {
 		return nil
 	}
 
-	log.Printf("Processing %d pending sync items", len(pendingItems))
+	// Filter: skip items dengan retry_count tinggi (exponential backoff)
+	var filteredItems []models.SyncQueue
+	for _, item := range pendingItems {
+		if item.RetryCount >= 3 {
+			// Item sudah gagal 3x, skip dulu — akan di-retry via RetryFailed manual
+			continue
+		}
+		filteredItems = append(filteredItems, item)
+	}
 
-	// Convert to cloud sync items
+	if len(filteredItems) == 0 {
+		log.Println("All pending items exceeded retry limit, skipping")
+		if logID > 0 {
+			s.syncRepo.UpdateSyncLog(ctx, logID, "skipped", 0, "All items exceeded retry limit", time.Since(startTime).Milliseconds())
+		}
+		return nil
+	}
+
+	log.Printf("Processing %d pending sync items (filtered from %d)", len(filteredItems), len(pendingItems))
+
+	// Convert to cloud sync items — SKIP transaction_item (akan di-bundle ke parent)
 	var cloudItems []models.CloudSyncItem
 	itemMap := make(map[int64]models.SyncQueue) // Map queue ID to item for later update
+	var skippedTransactionItemIDs []int64       // IDs of transaction_item entries to mark success
 
-	for _, item := range pendingItems {
+	for _, item := range filteredItems {
+		// Skip transaction_item — akan di-bundle ke parent transaction
+		if item.EntityType == "transaction_item" {
+			skippedTransactionItemIDs = append(skippedTransactionItemIDs, item.ID)
+			continue
+		}
+
 		// Mark as processing
 		if err := s.syncRepo.MarkSyncProcessing(ctx, item.ID); err != nil {
 			log.Printf("Failed to mark item %d as processing: %v", item.ID, err)
@@ -108,6 +295,14 @@ func (s *syncService) PushPendingData(ctx context.Context) error {
 			continue
 		}
 
+		// === ENRICHMENT: bundle child items ke parent ===
+		switch item.EntityType {
+		case "order":
+			s.enrichOrderPayload(ctx, data)
+		case "transaction":
+			s.enrichTransactionPayload(ctx, data)
+		}
+
 		cloudItems = append(cloudItems, models.CloudSyncItem{
 			EntityType: item.EntityType,
 			Operation:  item.Operation,
@@ -117,10 +312,15 @@ func (s *syncService) PushPendingData(ctx context.Context) error {
 		itemMap[item.ID] = item
 	}
 
+	// Mark skipped transaction_item entries as success (sudah di-bundle)
+	for _, id := range skippedTransactionItemIDs {
+		s.syncRepo.MarkSyncSuccess(ctx, id, "bundled")
+	}
+
 	if len(cloudItems) == 0 {
 		log.Println("No valid items to sync")
 		if logID > 0 {
-			s.syncRepo.UpdateSyncLog(ctx, logID, "failed", 0, "No valid items", time.Since(startTime).Milliseconds())
+			s.syncRepo.UpdateSyncLog(ctx, logID, "success", 0, "No valid items (all bundled)", time.Since(startTime).Milliseconds())
 		}
 		return nil
 	}
@@ -132,7 +332,7 @@ func (s *syncService) PushPendingData(ctx context.Context) error {
 		errMsg := fmt.Sprintf("Failed to push to cloud: %v", err)
 		log.Println(errMsg)
 
-		// Mark all as failed
+		// Mark all as failed (increment retry_count)
 		for id := range itemMap {
 			s.syncRepo.MarkSyncFailed(ctx, id, errMsg)
 		}
@@ -148,38 +348,52 @@ func (s *syncService) PushPendingData(ctx context.Context) error {
 	successCount := 0
 	failedCount := 0
 
+	// Build entityID → queueIDs map agar semua duplikat untuk entity sama ditangani
+	entityQueueMap := make(map[string][]int64) // "entityType:entityID" → [queueID1, queueID2, ...]
+	for id, item := range itemMap {
+		key := item.EntityType + ":" + item.EntityID
+		entityQueueMap[key] = append(entityQueueMap[key], id)
+	}
+
 	for _, result := range cloudResp.Data.Results {
-		// Find corresponding queue item
-		var queueID int64
-		for id, item := range itemMap {
-			var data map[string]interface{}
-			json.Unmarshal([]byte(item.Payload), &data)
-			if localID, ok := data["id"].(string); ok && localID == result.LocalID {
-				queueID = id
+		// Find ALL corresponding queue items by local_id
+		var matchedIDs []int64
+		for key, ids := range entityQueueMap {
+			parts := strings.SplitN(key, ":", 2)
+			entityID := ""
+			if len(parts) == 2 {
+				entityID = parts[1]
+			}
+			if entityID == result.LocalID {
+				matchedIDs = ids
 				break
 			}
 		}
 
-		if queueID == 0 {
+		if len(matchedIDs) == 0 {
 			log.Printf("Could not find queue item for local_id: %s", result.LocalID)
 			continue
 		}
 
 		if result.Status == "success" {
-			// Mark as synced
-			if err := s.syncRepo.MarkSyncSuccess(ctx, queueID, result.CloudID); err != nil {
-				log.Printf("Failed to mark sync success for queue %d: %v", queueID, err)
+			// Mark ALL entries for this entity as success
+			for _, qid := range matchedIDs {
+				if err := s.syncRepo.MarkSyncSuccess(ctx, qid, result.CloudID); err != nil {
+					log.Printf("Failed to mark sync success for queue %d: %v", qid, err)
+				}
 			}
 
-			// Update entity version if exists
-			item := itemMap[queueID]
-			s.syncRepo.MarkEntitySynced(ctx, item.EntityType, item.EntityID, 1)
+			// Update entity version
+			firstItem := itemMap[matchedIDs[0]]
+			s.syncRepo.MarkEntitySynced(ctx, firstItem.EntityType, firstItem.EntityID, 1)
 
 			successCount++
 		} else {
-			// Mark as failed
-			if err := s.syncRepo.MarkSyncFailed(ctx, queueID, result.Error); err != nil {
-				log.Printf("Failed to mark sync failed for queue %d: %v", queueID, err)
+			// Mark ALL entries for this entity as failed
+			for _, qid := range matchedIDs {
+				if err := s.syncRepo.MarkSyncFailed(ctx, qid, result.Error); err != nil {
+					log.Printf("Failed to mark sync failed for queue %d: %v", qid, err)
+				}
 			}
 			failedCount++
 		}
@@ -189,6 +403,9 @@ func (s *syncService) PushPendingData(ctx context.Context) error {
 
 	// Update last sync timestamp
 	s.syncRepo.UpdateLastSync(ctx)
+
+	// Cleanup: hapus entry success yang sudah lama (> 24 jam) agar tidak menumpuk
+	s.cleanupOldSyncEntries(ctx)
 
 	// Update sync log
 	status := "success"
@@ -205,6 +422,23 @@ func (s *syncService) PushPendingData(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// cleanupOldSyncEntries menghapus entry sync_queue yang sudah success/bundled
+// agar tidak menumpuk di database lokal (performance SQLite)
+func (s *syncService) cleanupOldSyncEntries(ctx context.Context) {
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM sync_queue
+		WHERE status IN ('success', 'bundled')
+		AND processed_at < datetime('now', '-24 hours')
+	`)
+	if err != nil {
+		log.Printf("Failed to cleanup old sync entries: %v", err)
+		return
+	}
+	if rows, _ := result.RowsAffected(); rows > 0 {
+		log.Printf("🧹 Cleaned up %d old sync entries", rows)
+	}
 }
 
 // PushEntity pushes a single entity to cloud
@@ -415,10 +649,10 @@ func (s *syncService) ProcessCloudDelete(ctx context.Context, data map[string]in
 }
 
 func (s *syncService) upsertCategoryFromCloud(ctx context.Context, data map[string]interface{}) error {
-	cloudID := getString(data, "cloud_id")
-	localID := getString(data, "local_id")
+	// Di cloud, id == local_id == POS category id (ID sama di kedua sistem)
+	localID := getString(data, "id")
 	if localID == "" {
-		localID = getString(data, "id")
+		localID = getString(data, "local_id")
 	}
 
 	name := getString(data, "name")
@@ -430,51 +664,142 @@ func (s *syncService) upsertCategoryFromCloud(ctx context.Context, data map[stri
 	printerID := getString(data, "printer_id")
 	version := getInt64(data, "version")
 
-	if cloudID != "" {
-		existingID, err := s.findLocalIDByCloudID(ctx, "categories", cloudID)
+	// Cloud id = POS id, jadi cloud_id = id itu sendiri
+	cloudID := localID
+
+	// Cari kategori lokal by id (karena id sama di POS dan cloud)
+	if localID != "" && len(localID) == 26 {
+		exists, err := s.entityExists(ctx, "categories", localID)
 		if err != nil {
 			return err
 		}
-		if existingID != "" {
+		if exists {
+			goto doUpsert
+		}
+	}
+
+	// Fallback: cari by nama (kategori punya nama unik)
+	{
+		var existingID string
+		err := s.db.QueryRowContext(ctx, "SELECT id FROM categories WHERE name = ? LIMIT 1", name).Scan(&existingID)
+		if err == nil && existingID != "" {
 			localID = existingID
 		}
 	}
 
-	if localID == "" {
+	// Generate ULID baru jika tidak ada ID valid
+	if localID == "" || len(localID) != 26 {
 		localID = utils.GenerateULID()
+		cloudID = localID
 	}
 
+doUpsert:
 	exists, err := s.entityExists(ctx, "categories", localID)
 	if err != nil {
 		return err
 	}
 
 	nullDesc := toNullString(description)
-	nullPrinterID := toNullString(printerID)
 	nullCloudID := toNullString(cloudID)
 
+	// Jika kategori baru dan belum ada printer_id, auto-assign berdasarkan destination produk
+	if !exists && printerID == "" {
+		printerID = s.resolvePrinterForCategory(ctx, name)
+	}
+
+	// Untuk update, JANGAN timpa printer_id yang sudah di-set lokal
+	// (cloud tidak tahu soal printer lokal)
 	if exists {
 		_, err = s.db.ExecContext(ctx, `
 			UPDATE categories
-			SET name = ?, description = ?, printer_id = ?, cloud_id = COALESCE(?, cloud_id),
+			SET name = ?, description = ?, cloud_id = COALESCE(?, cloud_id),
 			    version = COALESCE(?, version), sync_status = 'synced', last_synced_at = CURRENT_TIMESTAMP
 			WHERE id = ?
-		`, name, nullDesc, nullPrinterID, nullCloudID, nullableInt64(version), localID)
+		`, name, nullDesc, nullCloudID, nullableInt64(version), localID)
+		if err != nil {
+			return err
+		}
+		// Hapus entry sync_queue pending agar tidak push-back ke cloud (cegah feedback loop)
+		_, _ = s.db.ExecContext(ctx, `
+			DELETE FROM sync_queue
+			WHERE entity_type = 'category' AND entity_id = ? AND status = 'pending'
+		`, localID)
+		return nil
+	}
+
+	nullPrinterID := toNullString(printerID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
 
-	_, err = s.db.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO categories (id, name, description, printer_id, cloud_id, version, sync_status, last_synced_at, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, 'synced', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, localID, name, nullDesc, nullPrinterID, nullCloudID, nullableInt64(version))
-	return err
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// Hapus entry sync_queue pending agar tidak push-back ke cloud (cegah feedback loop)
+	_, _ = tx.ExecContext(ctx, `
+		DELETE FROM sync_queue
+		WHERE entity_type = 'category' AND entity_id = ? AND status = 'pending'
+	`, localID)
+
+	return tx.Commit()
+}
+
+// resolvePrinterForCategory mencari printer yang cocok untuk kategori baru dari cloud.
+// Mapping: nama kategori "Makanan" → kitchen, "Minuman"/"Dessert" → bar.
+// Jika ada destination dari produk cloud, gunakan itu.
+func (s *syncService) resolvePrinterForCategory(ctx context.Context, categoryName string) string {
+	// Map nama kategori → printer_type
+	printerType := ""
+	nameLower := strings.ToLower(categoryName)
+	switch {
+	case strings.Contains(nameLower, "makan") || strings.Contains(nameLower, "food") || strings.Contains(nameLower, "snack"):
+		printerType = "kitchen"
+	case strings.Contains(nameLower, "minum") || strings.Contains(nameLower, "drink") || strings.Contains(nameLower, "beverage"):
+		printerType = "bar"
+	case strings.Contains(nameLower, "dessert") || strings.Contains(nameLower, "kue"):
+		printerType = "kitchen"
+	default:
+		printerType = "kitchen" // default ke dapur
+	}
+
+	// Cari printer aktif yang cocok
+	var foundPrinterID string
+	err := s.db.QueryRowContext(ctx,
+		"SELECT id FROM printers WHERE printer_type = ? AND is_active = 1 ORDER BY name LIMIT 1",
+		printerType,
+	).Scan(&foundPrinterID)
+
+	if err == nil && foundPrinterID != "" {
+		log.Printf("Auto-assigned printer %s (type=%s) untuk kategori '%s'", foundPrinterID, printerType, categoryName)
+		return foundPrinterID
+	}
+
+	// Fallback: cari printer aktif apapun
+	err = s.db.QueryRowContext(ctx,
+		"SELECT id FROM printers WHERE is_active = 1 ORDER BY name LIMIT 1",
+	).Scan(&foundPrinterID)
+
+	if err == nil && foundPrinterID != "" {
+		log.Printf("Auto-assigned fallback printer %s untuk kategori '%s'", foundPrinterID, categoryName)
+		return foundPrinterID
+	}
+
+	log.Printf("Tidak ada printer aktif untuk kategori '%s', printer_id akan NULL", categoryName)
+	return ""
 }
 
 func (s *syncService) upsertProductFromCloud(ctx context.Context, data map[string]interface{}) error {
-	cloudID := getString(data, "cloud_id")
-	localID := getString(data, "local_id")
+	// Di cloud, id == local_id == POS product id (ID sama di kedua sistem)
+	localID := getString(data, "id")
 	if localID == "" {
-		localID = getString(data, "id")
+		localID = getString(data, "local_id")
 	}
 
 	name := getString(data, "name")
@@ -482,54 +807,72 @@ func (s *syncService) upsertProductFromCloud(ctx context.Context, data map[strin
 		return fmt.Errorf("product name is required")
 	}
 
-	code := getString(data, "code")
-	description := getString(data, "description")
+	// Cloud tidak punya code/description, jadi tidak diubah dari data lokal
 	price := getFloat64(data, "price")
 	stock := getInt64(data, "stock")
 	categoryID := getString(data, "category_id")
 	if categoryID == "" {
 		categoryID = getString(data, "category_cloud_id")
 	}
-	if categoryID != "" {
-		if mappedID, err := s.findLocalIDByCloudID(ctx, "categories", categoryID); err == nil && mappedID != "" {
-			categoryID = mappedID
-		}
-	}
+	// category_id di cloud = POS category id (sudah sama), tidak perlu mapping
 	version := getInt64(data, "version")
 
-	if cloudID != "" {
-		existingID, err := s.findLocalIDByCloudID(ctx, "products", cloudID)
+	// Cloud id = POS id
+	cloudID := localID
+
+	// Cari produk lokal by id (karena id sama di POS dan cloud)
+	if localID != "" && len(localID) == 26 {
+		exists, err := s.entityExists(ctx, "products", localID)
 		if err != nil {
 			return err
 		}
-		if existingID != "" {
+		if exists {
+			goto doUpsert
+		}
+	}
+
+	// Fallback: cari by nama
+	{
+		var existingID string
+		err := s.db.QueryRowContext(ctx, "SELECT id FROM products WHERE name = ? LIMIT 1", name).Scan(&existingID)
+		if err == nil && existingID != "" {
 			localID = existingID
 		}
 	}
 
-	if localID == "" {
+	// Generate ULID baru jika tidak ada ID valid
+	if localID == "" || len(localID) != 26 {
 		localID = utils.GenerateULID()
+		cloudID = localID
 	}
 
+doUpsert:
 	exists, err := s.entityExists(ctx, "products", localID)
 	if err != nil {
 		return err
 	}
 
-	nullCode := toNullString(code)
-	nullDesc := toNullString(description)
 	nullCategoryID := toNullString(categoryID)
 	nullCloudID := toNullString(cloudID)
 
 	if exists {
+		// Update produk tapi JANGAN ubah code dan description (tidak ada di cloud)
 		_, err = s.db.ExecContext(ctx, `
 			UPDATE products
-			SET name = ?, code = ?, description = ?, price = ?, stock = ?, category_id = ?,
+			SET name = ?, price = ?, stock = ?, category_id = ?,
 			    cloud_id = COALESCE(?, cloud_id), version = COALESCE(?, version),
 			    sync_status = 'synced', last_synced_at = CURRENT_TIMESTAMP
 			WHERE id = ?
-		`, name, nullCode, nullDesc, price, stock, nullCategoryID, nullCloudID, nullableInt64(version), localID)
-		return err
+		`, name, price, stock, nullCategoryID, nullCloudID, nullableInt64(version), localID)
+		if err != nil {
+			return err
+		}
+		// Hapus entry sync_queue pending agar tidak push-back ke cloud (cegah feedback loop)
+		_, _ = s.db.ExecContext(ctx, `
+			DELETE FROM sync_queue
+			WHERE entity_type = 'product' AND entity_id = ? AND status = 'pending'
+		`, localID)
+		return nil
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -538,9 +881,9 @@ func (s *syncService) upsertProductFromCloud(ctx context.Context, data map[strin
 	}
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO products (id, name, code, description, price, stock, category_id, cloud_id, version, sync_status, last_synced_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, localID, name, nullCode, nullDesc, price, stock, nullCategoryID, nullCloudID, nullableInt64(version))
+		INSERT INTO products (id, name, price, stock, category_id, cloud_id, version, sync_status, last_synced_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'synced', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, localID, name, price, stock, nullCategoryID, nullCloudID, nullableInt64(version))
 	if err != nil {
 		tx.Rollback()
 		return err

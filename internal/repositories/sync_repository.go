@@ -52,11 +52,18 @@ func NewSyncRepository(db *sql.DB) SyncRepository {
 }
 
 // EnqueueSync adds a new sync operation to queue
+// Menghapus entry pending lama untuk entity yang sama agar tidak ada duplikat
 func (r *syncRepositoryImpl) EnqueueSync(ctx context.Context, entityType, entityID, operation string, payload interface{}) error {
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
+
+	// Hapus entry pending lama untuk entity yang sama — hanya simpan yang terbaru
+	_, _ = r.db.ExecContext(ctx, `
+		DELETE FROM sync_queue 
+		WHERE entity_type = ? AND entity_id = ? AND status = 'pending'
+	`, entityType, entityID)
 
 	query := `
 		INSERT INTO sync_queue (entity_type, entity_id, operation, payload, status, retry_count, max_retries)
@@ -72,13 +79,19 @@ func (r *syncRepositoryImpl) EnqueueSync(ctx context.Context, entityType, entity
 }
 
 // GetPendingSync retrieves pending sync operations
+// Hanya mengambil entry TERBARU per entity untuk menghindari duplikat push
 func (r *syncRepositoryImpl) GetPendingSync(ctx context.Context, limit int) ([]models.SyncQueue, error) {
 	query := `
-		SELECT id, entity_type, entity_id, operation, payload, status, retry_count, 
-		       max_retries, error_message, created_at, processed_at, synced_at
-		FROM sync_queue
-		WHERE status = 'pending' AND retry_count < max_retries
-		ORDER BY created_at ASC
+		SELECT sq.id, sq.entity_type, sq.entity_id, sq.operation, sq.payload, sq.status, sq.retry_count, 
+		       sq.max_retries, sq.error_message, sq.created_at, sq.processed_at, sq.synced_at
+		FROM sync_queue sq
+		INNER JOIN (
+			SELECT entity_type, entity_id, MAX(id) AS max_id
+			FROM sync_queue
+			WHERE status = 'pending' AND retry_count < max_retries
+			GROUP BY entity_type, entity_id
+		) latest ON sq.id = latest.max_id
+		ORDER BY sq.created_at ASC
 		LIMIT ?
 	`
 
@@ -92,16 +105,20 @@ func (r *syncRepositoryImpl) GetPendingSync(ctx context.Context, limit int) ([]m
 	for rows.Next() {
 		var item models.SyncQueue
 		var processedAt, syncedAt sql.NullTime
+		var errorMessage sql.NullString
 
 		err := rows.Scan(
 			&item.ID, &item.EntityType, &item.EntityID, &item.Operation, &item.Payload,
-			&item.Status, &item.RetryCount, &item.MaxRetries, &item.ErrorMessage,
+			&item.Status, &item.RetryCount, &item.MaxRetries, &errorMessage,
 			&item.CreatedAt, &processedAt, &syncedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan sync queue: %w", err)
 		}
 
+		if errorMessage.Valid {
+			item.ErrorMessage = errorMessage.String
+		}
 		if processedAt.Valid {
 			item.ProcessedAt = &processedAt.Time
 		}
@@ -188,16 +205,20 @@ func (r *syncRepositoryImpl) GetFailedSync(ctx context.Context) ([]models.SyncQu
 	for rows.Next() {
 		var item models.SyncQueue
 		var processedAt, syncedAt sql.NullTime
+		var errorMessage sql.NullString
 
 		err := rows.Scan(
 			&item.ID, &item.EntityType, &item.EntityID, &item.Operation, &item.Payload,
-			&item.Status, &item.RetryCount, &item.MaxRetries, &item.ErrorMessage,
+			&item.Status, &item.RetryCount, &item.MaxRetries, &errorMessage,
 			&item.CreatedAt, &processedAt, &syncedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan sync queue: %w", err)
 		}
 
+		if errorMessage.Valid {
+			item.ErrorMessage = errorMessage.String
+		}
 		if processedAt.Valid {
 			item.ProcessedAt = &processedAt.Time
 		}

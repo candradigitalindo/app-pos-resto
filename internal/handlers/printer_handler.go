@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"backend/internal/db"
 	"backend/internal/repositories"
 	"backend/internal/services"
 	"backend/pkg/printer"
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -121,6 +123,7 @@ func (h *PrinterHandler) CreatePrinter(c *echo.Context) error {
 		return InternalErrorResponse(c, "Gagal membuat printer: "+err.Error())
 	}
 
+	h.enqueuePrinterSync((*c).Request().Context(), printer, "upsert")
 	return CreatedResponse(c, "Printer berhasil ditambahkan", printer)
 }
 
@@ -211,13 +214,22 @@ func (h *PrinterHandler) UpdatePrinter(c *echo.Context) error {
 	}
 
 	printer, _ := h.printerService.GetPrinterByID((*c).Request().Context(), id)
+	if printer != nil {
+		h.enqueuePrinterSync((*c).Request().Context(), printer, "upsert")
+	}
 	return SuccessResponse(c, "Printer berhasil diupdate", printer)
 }
 
 func (h *PrinterHandler) DeletePrinter(c *echo.Context) error {
 	id := c.Param("id")
+	ctx := (*c).Request().Context()
 
-	if err := h.printerService.DeletePrinter((*c).Request().Context(), id); err != nil {
+	// Enqueue delete sync before removing from DB
+	if p, err := h.printerService.GetPrinterByID(ctx, id); err == nil && p != nil {
+		h.enqueuePrinterSync(ctx, p, "delete")
+	}
+
+	if err := h.printerService.DeletePrinter(ctx, id); err != nil {
 		return InternalErrorResponse(c, "Gagal menghapus printer: "+err.Error())
 	}
 
@@ -237,7 +249,28 @@ func (h *PrinterHandler) TogglePrinter(c *echo.Context) error {
 	}
 
 	printer, _ := h.printerService.GetPrinterByID((*c).Request().Context(), id)
+	if printer != nil {
+		h.enqueuePrinterSync((*c).Request().Context(), printer, "upsert")
+	}
 	return SuccessResponse(c, "Status printer berhasil diubah", printer)
+}
+
+func (h *PrinterHandler) enqueuePrinterSync(ctx context.Context, p *db.Printer, operation string) {
+	if h.syncRepo == nil || p == nil {
+		return
+	}
+	isDeleted := operation == "delete"
+	payload := map[string]interface{}{
+		"local_id":     p.ID,
+		"name":         p.Name,
+		"ip_address":   p.IpAddress,
+		"port":         p.Port,
+		"printer_type": p.PrinterType,
+		"paper_size":   p.PaperSize,
+		"is_active":    p.IsActive == 1,
+		"is_deleted":   isDeleted,
+	}
+	_ = h.syncRepo.EnqueueSync(ctx, "printer", p.ID, operation, payload)
 }
 
 // TestPrintHandler sends a test receipt to the printer

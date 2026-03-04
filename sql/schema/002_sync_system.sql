@@ -207,15 +207,19 @@ BEGIN
         'create',
         json_object(
             'id', NEW.id,
-            'order_id', NEW.id,
+            'local_id', NEW.id,
             'table_number', NEW.table_number,
+            'customer_name', NEW.customer_name,
             'total_amount', NEW.total_amount,
             'paid_amount', NEW.paid_amount,
             'pax', NEW.pax,
             'basket_size', NEW.basket_size,
+            'status', NEW.order_status,
             'order_status', NEW.order_status,
             'payment_status', NEW.payment_status,
-            'created_by', NEW.created_by
+            'created_by', NEW.created_by,
+            'created_at', NEW.created_at,
+            'updated_at', NEW.updated_at
         )
     );
 END;
@@ -237,15 +241,19 @@ BEGIN
         'update',
         json_object(
             'id', NEW.id,
-            'order_id', NEW.id,
+            'local_id', NEW.id,
             'table_number', NEW.table_number,
+            'customer_name', NEW.customer_name,
             'total_amount', NEW.total_amount,
             'paid_amount', NEW.paid_amount,
             'pax', NEW.pax,
             'basket_size', NEW.basket_size,
+            'status', NEW.order_status,
             'order_status', NEW.order_status,
             'payment_status', NEW.payment_status,
             'created_by', NEW.created_by,
+            'created_at', NEW.created_at,
+            'updated_at', NEW.updated_at,
             'voided_at', NEW.voided_at,
             'voided_by', NEW.voided_by,
             'void_reason', NEW.void_reason
@@ -268,10 +276,13 @@ BEGIN
         'create',
         json_object(
             'id', NEW.id,
+            'local_id', NEW.id,
             'order_id', NEW.order_id,
             'total_amount', NEW.total_amount,
             'payment_method', NEW.payment_method,
+            'created_at', NEW.transaction_date,
             'transaction_date', NEW.transaction_date,
+            'cashier_name', NEW.created_by,
             'created_by', NEW.created_by,
             'cancelled_at', NEW.cancelled_at,
             'cancelled_by', NEW.cancelled_by,
@@ -297,10 +308,13 @@ BEGIN
         'update',
         json_object(
             'id', NEW.id,
+            'local_id', NEW.id,
             'order_id', NEW.order_id,
             'total_amount', NEW.total_amount,
             'payment_method', NEW.payment_method,
+            'created_at', NEW.transaction_date,
             'transaction_date', NEW.transaction_date,
+            'cashier_name', NEW.created_by,
             'created_by', NEW.created_by,
             'cancelled_at', NEW.cancelled_at,
             'cancelled_by', NEW.cancelled_by,

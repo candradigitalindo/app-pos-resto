@@ -4,6 +4,8 @@ import (
 	"backend/internal/db"
 	"backend/internal/repositories"
 	"context"
+	"database/sql"
+	"log"
 	"time"
 )
 
@@ -32,15 +34,21 @@ type TransactionWithItems struct {
 type transactionService struct {
 	transactionRepo repositories.TransactionRepository
 	productRepo     repositories.ProductRepository
+	syncRepo        repositories.SyncRepository
+	db              *sql.DB
 }
 
 func NewTransactionService(
 	transactionRepo repositories.TransactionRepository,
 	productRepo repositories.ProductRepository,
+	syncRepo repositories.SyncRepository,
+	db *sql.DB,
 ) TransactionService {
 	return &transactionService{
 		transactionRepo: transactionRepo,
 		productRepo:     productRepo,
+		syncRepo:        syncRepo,
+		db:              db,
 	}
 }
 
@@ -60,6 +68,9 @@ func (s *transactionService) CreateTransaction(ctx context.Context, orderID stri
 		}
 	}
 
+	// Enqueue to sync_queue for cloud push
+	s.enqueueTransactionSync(ctx, transaction, createdBy)
+
 	return transaction, nil
 }
 
@@ -69,7 +80,44 @@ func (s *transactionService) CreateTransactionForOrder(ctx context.Context, orde
 	if err != nil {
 		return nil, err
 	}
+
+	// Enqueue to sync_queue for cloud push
+	s.enqueueTransactionSync(ctx, transaction, createdBy)
+
 	return transaction, nil
+}
+
+// enqueueTransactionSync adds a completed transaction to the sync_queue.
+func (s *transactionService) enqueueTransactionSync(ctx context.Context, transaction *db.Transaction, createdBy string) {
+	if s.syncRepo == nil {
+		return
+	}
+
+	// Lookup cashier full name
+	cashierName := createdBy
+	if s.db != nil && createdBy != "" {
+		var fullName string
+		err := s.db.QueryRowContext(ctx, `SELECT full_name FROM users WHERE id = ?`, createdBy).Scan(&fullName)
+		if err == nil && fullName != "" {
+			cashierName = fullName
+		}
+	}
+
+	payload := map[string]interface{}{
+		"id":             transaction.ID,
+		"local_id":       transaction.ID,
+		"order_id":       transaction.OrderID,
+		"total_amount":   transaction.TotalAmount,
+		"payment_method": transaction.PaymentMethod,
+		"cashier_name":   cashierName,
+		"created_at":     transaction.CreatedAt.UTC().Format(time.RFC3339),
+	}
+
+	if err := s.syncRepo.EnqueueSync(ctx, "transaction", transaction.ID, "create", payload); err != nil {
+		log.Printf("[sync] Failed to enqueue transaction %s: %v", transaction.ID, err)
+	} else {
+		log.Printf("[sync] Transaction %s enqueued for cloud push", transaction.ID)
+	}
 }
 
 func (s *transactionService) GetTransactionByID(ctx context.Context, id string) (*TransactionWithItems, error) {

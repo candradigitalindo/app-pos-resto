@@ -198,7 +198,8 @@ func main() {
 	}))
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: []string{"*"},
-		AllowMethods: []string{"GET", "PUT", "POST", "DELETE"},
+		AllowMethods: []string{"GET", "PUT", "POST", "DELETE", "OPTIONS", "PATCH"},
+		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization},
 	}))
 
 	// Initialize repositories
@@ -255,7 +256,7 @@ func main() {
 	// Initialize services
 	productService := services.NewProductService(productRepo)
 	categoryService := services.NewCategoryService(categoryRepo)
-	transactionService := services.NewTransactionService(transactionRepo, productRepo)
+	transactionService := services.NewTransactionService(transactionRepo, productRepo, syncRepo, sqlDB)
 	orderService := services.NewOrderService(orderRepo)
 	tableService := services.NewTableService(tableRepo)
 	printerService := services.NewPrinterService(printerRepo)
@@ -265,7 +266,7 @@ func main() {
 	authHandler := handlers.NewAuthHandler(sqlDB)
 	productHandler := handlers.NewProductHandler(productService)
 	categoryHandler := handlers.NewCategoryHandler(categoryService)
-	transactionHandler := handlers.NewTransactionHandler(transactionService, queries, sqlDB)
+	transactionHandler := handlers.NewTransactionHandler(transactionService, queries, sqlDB, syncRepo)
 	socketBroadcaster := &socketBroadcaster{server: socketServer}
 	orderHandler := handlers.NewOrderHandler(orderService, transactionService, customerService, queries, sqlDB, socketBroadcaster)
 	tableHandler := handlers.NewTableHandler(tableService, queries)
@@ -309,6 +310,7 @@ func main() {
 
 		// Set sync worker to config handler for real-time control
 		configHandler.SetSyncWorker(syncWorker)
+		configHandler.SetSyncService(syncService)
 	}
 
 	// Initialize print worker - get outlet config from database
@@ -483,15 +485,29 @@ func main() {
 
 	log.Println("LAN device sync endpoints registered")
 
-	// Sync routes - Admin only
+	// Sync routes - Admin only (always register to avoid 405)
+	syncGroup := protected.Group("/sync", authmw.AdminOnly())
 	if syncHandler != nil {
-		syncGroup := protected.Group("/sync", authmw.AdminOnly())
 		syncGroup.GET("/status", syncHandler.GetSyncStatus)
 		syncGroup.POST("/trigger", syncHandler.TriggerSync)
 		syncGroup.GET("/logs", syncHandler.GetSyncLogs)
 		syncGroup.GET("/failed", syncHandler.GetFailedSync)
 		syncGroup.POST("/retry/:id", syncHandler.RetrySync)
 		log.Println("Sync management endpoints registered")
+	} else {
+		// Register placeholder endpoints when sync is not configured
+		syncNotConfigured := func(c *echo.Context) error {
+			return c.JSON(http.StatusServiceUnavailable, handlers.APIResponse{
+				Success: false,
+				Error:   "Cloud sync belum dikonfigurasi. Silakan isi URL API & API Key di halaman Settings > Sinkronisasi Cloud",
+			})
+		}
+		syncGroup.GET("/status", syncNotConfigured)
+		syncGroup.POST("/trigger", syncNotConfigured)
+		syncGroup.GET("/logs", syncNotConfigured)
+		syncGroup.GET("/failed", syncNotConfigured)
+		syncGroup.POST("/retry/:id", syncNotConfigured)
+		log.Println("Sync endpoints registered (not configured - placeholder)")
 	}
 
 	// Webhook routes - Public (verified via signature)

@@ -4,16 +4,20 @@ import (
 	"backend/internal/services"
 	"context"
 	"log"
+	"sync"
 	"time"
 )
 
 // SyncWorker handles background synchronization
 type SyncWorker struct {
-	syncService services.SyncService
-	interval    time.Duration
-	stopChan    chan struct{}
-	isRunning   bool
-	enabled     bool
+	syncService      services.SyncService
+	interval         time.Duration
+	stopChan         chan struct{}
+	isRunning        bool
+	enabled          bool
+	syncMu           sync.Mutex // Mencegah concurrent sync (background + manual trigger)
+	consecutiveFails int        // Counter untuk exponential backoff saat offline
+	maxBackoffMins   int        // Batas atas backoff (default 30 menit)
 }
 
 // NewSyncWorker creates a new sync worker
@@ -23,11 +27,13 @@ func NewSyncWorker(syncService services.SyncService, intervalMinutes int, enable
 	}
 
 	return &SyncWorker{
-		syncService: syncService,
-		interval:    time.Duration(intervalMinutes) * time.Minute,
-		stopChan:    make(chan struct{}),
-		isRunning:   false,
-		enabled:     enabled,
+		syncService:      syncService,
+		interval:         time.Duration(intervalMinutes) * time.Minute,
+		stopChan:         make(chan struct{}),
+		isRunning:        false,
+		enabled:          enabled,
+		consecutiveFails: 0,
+		maxBackoffMins:   30,
 	}
 }
 
@@ -66,17 +72,36 @@ func (w *SyncWorker) run() {
 	// Initial sync on startup
 	w.performSync()
 
-	ticker := time.NewTicker(w.interval)
-	defer ticker.Stop()
-
 	for {
+		// Dynamic interval: saat offline, gunakan backoff agar tidak spam
+		currentInterval := w.getNextInterval()
+
 		select {
-		case <-ticker.C:
+		case <-time.After(currentInterval):
 			w.performSync()
 		case <-w.stopChan:
 			return
 		}
 	}
+}
+
+// getNextInterval menghitung interval berikutnya berdasarkan consecutive fails
+// Saat online: gunakan interval normal (default 5 menit)
+// Saat offline: eksponensial backoff (5 → 10 → 20 → 30 menit max)
+func (w *SyncWorker) getNextInterval() time.Duration {
+	if w.consecutiveFails <= 0 {
+		return w.interval
+	}
+
+	// Eksponensial backoff: interval * 2^fails, cap di maxBackoffMins
+	backoff := w.interval * time.Duration(1<<uint(w.consecutiveFails))
+	maxBackoff := time.Duration(w.maxBackoffMins) * time.Minute
+	if backoff > maxBackoff {
+		backoff = maxBackoff
+	}
+
+	log.Printf("⏳ Next sync in %v (consecutive fails: %d)", backoff, w.consecutiveFails)
+	return backoff
 }
 
 // performSync executes the sync operations
@@ -86,21 +111,50 @@ func (w *SyncWorker) performSync() {
 		return
 	}
 
+	// Mutex: mencegah concurrent sync (background tick + manual TriggerSync)
+	if !w.syncMu.TryLock() {
+		log.Println("⏳ Sync already in progress, skipping this cycle")
+		return
+	}
+	defer w.syncMu.Unlock()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
+	// Reload cloud client config from DB before each sync
+	if err := w.syncService.ReloadCloudClient(ctx); err != nil {
+		log.Printf("⚠️  Failed to reload cloud config: %v", err)
+		w.consecutiveFails++
+		return
+	}
+
 	log.Println("🔄 === Background Sync Started ===")
 	startTime := time.Now()
+	hadError := false
 
 	// Push pending data to cloud
 	if err := w.syncService.PushPendingData(ctx); err != nil {
 		log.Printf("❌ Error pushing data to cloud: %v", err)
+		hadError = true
 	}
 
-	// Pull updates from cloud (since last sync)
-	since := time.Now().Add(-w.interval * 2) // Pull last 2 intervals worth of data
-	if err := w.syncService.PullUpdates(ctx, since); err != nil {
-		log.Printf("❌ Error pulling updates from cloud: %v", err)
+	// Pull updates from cloud (since last sync) — hanya jika push berhasil
+	if !hadError {
+		since := time.Now().Add(-w.interval * 2) // Pull last 2 intervals worth of data
+		if err := w.syncService.PullUpdates(ctx, since); err != nil {
+			log.Printf("❌ Error pulling updates from cloud: %v", err)
+			hadError = true
+		}
+	}
+
+	// Update backoff counter
+	if hadError {
+		w.consecutiveFails++
+	} else {
+		if w.consecutiveFails > 0 {
+			log.Println("✅ Cloud connection restored!")
+		}
+		w.consecutiveFails = 0
 	}
 
 	duration := time.Since(startTime)
