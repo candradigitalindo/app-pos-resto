@@ -1,0 +1,1 @@
+function i(e,n={}){if(!e)return"-";try{const t=new Date(e);return isNaN(t.getTime())?"-":new Intl.DateTimeFormat("id-ID",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",...n}).format(t)}catch{return"-"}}function r(e){return i(e,{day:void 0,month:void 0,year:void 0})}export{r as a,i as f};
