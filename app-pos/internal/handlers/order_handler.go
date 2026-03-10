@@ -73,6 +73,7 @@ type CreateOrderRequest struct {
 	Pax           int64                         `json:"pax"`
 	Items         []repositories.OrderItemInput `json:"items"`
 	PrinterID     string                        `json:"printer_id,omitempty"`
+	WaiterName    string                        `json:"waiter_name,omitempty"`
 }
 
 type CreateOrderResponse struct {
@@ -81,7 +82,8 @@ type CreateOrderResponse struct {
 }
 
 type AddOrderItemsRequest struct {
-	Items []repositories.OrderItemInput `json:"items"`
+	Items      []repositories.OrderItemInput `json:"items"`
+	WaiterName string                        `json:"waiter_name,omitempty"`
 }
 
 func toOrderResponse(order *db.Order, waiterName string, mergedFromTableNumber string) map[string]interface{} {
@@ -149,6 +151,13 @@ func toOrderResponseForCashier(order *db.Order, waiterName string, mergedFromTab
 }
 
 func (h *OrderHandler) getWaiterName(ctx context.Context, order *db.Order) string {
+	// Try reading from waiter_name column first
+	var waiterName string
+	_ = h.db.QueryRowContext(ctx, "SELECT COALESCE(waiter_name, '') FROM orders WHERE id = ?", order.ID).Scan(&waiterName)
+	if waiterName != "" {
+		return waiterName
+	}
+	// Fallback to user lookup
 	if order.CreatedBy.Valid && order.CreatedBy.String != "" {
 		user, err := h.queries.GetUserByID(ctx, order.CreatedBy.String)
 		if err == nil {
@@ -238,6 +247,7 @@ func (h *OrderHandler) HandleCreateOrder(c *echo.Context) error {
 		Items:         req.Items,
 		PrinterID:     req.PrinterID,
 		CreatedBy:     createdBy,
+		WaiterName:    req.WaiterName,
 	})
 	if err != nil {
 		return InternalErrorResponse(c, "Gagal membuat order: "+err.Error())
@@ -275,7 +285,7 @@ func (h *OrderHandler) HandleAddItemsToOrder(c *echo.Context) error {
 		req.Items[i] = item
 	}
 
-	if err := h.service.AddItemsToOrder((*c).Request().Context(), orderID, req.Items); err != nil {
+	if err := h.service.AddItemsToOrder((*c).Request().Context(), orderID, req.Items, req.WaiterName); err != nil {
 		if err == sql.ErrNoRows {
 			return NotFoundResponse(c, "Order tidak ditemukan")
 		}
@@ -318,7 +328,7 @@ func (h *OrderHandler) HandleAddItemsToOrderByTable(c *echo.Context) error {
 		return InternalErrorResponse(c, "Gagal mengambil order aktif: "+err.Error())
 	}
 
-	if err := h.service.AddItemsToOrder((*c).Request().Context(), order.ID, req.Items); err != nil {
+	if err := h.service.AddItemsToOrder((*c).Request().Context(), order.ID, req.Items, req.WaiterName); err != nil {
 		return InternalErrorResponse(c, "Gagal menambah item order: "+err.Error())
 	}
 

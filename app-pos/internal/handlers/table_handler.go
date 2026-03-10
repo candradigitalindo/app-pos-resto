@@ -3,6 +3,7 @@ package handlers
 import (
 	"backend/internal/db"
 	"backend/internal/services"
+	"database/sql"
 	"math"
 	"net/http"
 	"strings"
@@ -14,12 +15,14 @@ import (
 type TableHandler struct {
 	service services.TableService
 	queries *db.Queries
+	db      *sql.DB
 }
 
-func NewTableHandler(service services.TableService, queries *db.Queries) *TableHandler {
+func NewTableHandler(service services.TableService, queries *db.Queries, database *sql.DB) *TableHandler {
 	return &TableHandler{
 		service: service,
 		queries: queries,
+		db:      database,
 	}
 }
 
@@ -179,7 +182,8 @@ func (h *TableHandler) GetAllTables(c *echo.Context) error {
 				}
 			}
 			waiterName := ""
-			if order.CreatedBy.Valid && order.CreatedBy.String != "" {
+			_ = h.db.QueryRowContext((*c).Request().Context(), "SELECT COALESCE(waiter_name, '') FROM orders WHERE id = ?", order.ID).Scan(&waiterName)
+			if waiterName == "" && order.CreatedBy.Valid && order.CreatedBy.String != "" {
 				user, err := h.queries.GetUserByID((*c).Request().Context(), order.CreatedBy.String)
 				if err == nil {
 					waiterName = user.FullName

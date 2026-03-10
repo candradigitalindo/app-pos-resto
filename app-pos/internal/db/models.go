@@ -92,15 +92,18 @@ type OrderAdditionalCharge struct {
 }
 
 type OrderItem struct {
-	ID          string    `json:"id"`
-	OrderID     string    `json:"order_id"`
-	ProductName string    `json:"product_name"`
-	Qty         int64     `json:"qty"`
-	Price       float64   `json:"price"`
-	Destination string    `json:"destination"`
-	ItemStatus  string    `json:"item_status"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	OrderID      string    `json:"order_id"`
+	ProductName  string    `json:"product_name"`
+	Qty          int64     `json:"qty"`
+	Price        float64   `json:"price"`
+	Destination  string    `json:"destination"`
+	ItemStatus   string    `json:"item_status"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Notes        string    `json:"notes"`
+	WaiterName   string    `json:"waiter_name"`
+	IsAdditional int64     `json:"is_additional"`
 }
 
 type Payment struct {

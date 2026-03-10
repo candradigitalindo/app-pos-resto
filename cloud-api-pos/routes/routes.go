@@ -14,6 +14,11 @@ func Setup(app *fiber.App, cfg *config.Config) {
 	// Public
 	api.Get("/ping", handlers.Ping)
 
+	// Outlet self-discovery: GET /api/v1/outlet/me — returns outlet info from API key alone
+	api.Get("/outlet/me", middleware.AuthOutlet(), func(c *fiber.Ctx) error {
+		return handlers.GetOutletInfo(c)
+	})
+
 	// Outlet API (authenticated by API key)
 	outlet := api.Group("/outlets/:outletId", middleware.AuthOutlet(), middleware.RateLimiter(cfg))
 
@@ -65,9 +70,19 @@ func Setup(app *fiber.App, cfg *config.Config) {
 	admin.Get("/outlets", handlers.GetOutlets)
 	admin.Post("/outlets", handlers.CreateOutlet)
 	admin.Get("/outlets/:id", handlers.GetOutlet)
+	admin.Put("/outlets/:id", handlers.UpdateOutlet)
 	admin.Post("/outlets/:id/regenerate-key", handlers.RegenerateOutletAPIKey)
 	admin.Post("/outlets/:id/toggle", handlers.ToggleOutlet)
+	admin.Delete("/outlets/:id", handlers.DeleteOutlet)
 	admin.Get("/dashboard", handlers.GetDashboard)
+	admin.Get("/products", handlers.AdminGetProducts)
+	admin.Post("/products", handlers.AdminCreateProduct)
+	admin.Put("/products/:id", handlers.AdminUpdateProduct)
+	admin.Delete("/products/:id", handlers.AdminDeleteProduct)
+	admin.Get("/categories", handlers.AdminGetCategories)
+	admin.Post("/categories", handlers.AdminCreateCategory)
+	admin.Put("/categories/:id", handlers.AdminUpdateCategory)
+	admin.Delete("/categories/:id", handlers.AdminDeleteCategory)
 	admin.Get("/admins", handlers.GetAdmins)
 	admin.Post("/admins", handlers.CreateAdmin)
 }

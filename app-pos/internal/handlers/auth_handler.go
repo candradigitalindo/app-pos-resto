@@ -14,11 +14,13 @@ import (
 
 type AuthHandler struct {
 	queries *db.Queries
+	db      *sql.DB
 }
 
 func NewAuthHandler(dbConn *sql.DB) *AuthHandler {
 	return &AuthHandler{
 		queries: db.New(dbConn),
+		db:      dbConn,
 	}
 }
 
@@ -211,6 +213,54 @@ func (h *AuthHandler) HandleLogin(c *echo.Context) error {
 	})
 }
 
+// HandlePasscodeLogin - Quick login by PIN only (no username), for waiter quick access
+func (h *AuthHandler) HandlePasscodeLogin(c *echo.Context) error {
+	var req struct {
+		Pin string `json:"pin"`
+	}
+	if err := (*c).Bind(&req); err != nil {
+		return BadRequestResponse(c, "Body request tidak valid")
+	}
+
+	if len(req.Pin) != 4 {
+		return BadRequestResponse(c, "PIN harus 4 digit")
+	}
+
+	// Get all active users who can take orders
+	rows, err := h.db.QueryContext((*c).Request().Context(),
+		"SELECT id, username, password_hash, full_name, role, is_active, created_at, updated_at FROM users WHERE is_active = 1 AND role IN ('waiter','admin','manager')")
+	if err != nil {
+		return InternalErrorResponse(c, "Gagal mengambil data user")
+	}
+	defer rows.Close()
+
+	var matchedUser *db.User
+	for rows.Next() {
+		var u db.User
+		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.FullName, &u.Role, &u.IsActive, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			continue
+		}
+		if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.Pin)) == nil {
+			matchedUser = &u
+			break
+		}
+	}
+
+	if matchedUser == nil {
+		return UnauthorizedResponse(c, "PIN tidak ditemukan")
+	}
+
+	token, err := middleware.GenerateToken(matchedUser)
+	if err != nil {
+		return InternalErrorResponse(c, "Gagal generate token")
+	}
+
+	return SuccessResponse(c, "Login berhasil", AuthResponse{
+		Token: token,
+		User:  toUserResponse(matchedUser),
+	})
+}
+
 // HandleGetProfile - Get current user profile
 func (h *AuthHandler) HandleGetProfile(c *echo.Context) error {
 	claims, err := middleware.GetUserFromContext(c)
@@ -351,6 +401,33 @@ func (h *AuthHandler) HandleListUsers(c *echo.Context) error {
 
 	pagination := CalculatePagination(params.Page, params.PageSize, total)
 	return PaginatedSuccessResponse(c, "Data users berhasil diambil", userResponses, pagination)
+}
+
+// HandleListWaiters - Returns active users who can take orders (waiter, admin, manager)
+func (h *AuthHandler) HandleListWaiters(c *echo.Context) error {
+	users, err := h.queries.ListUsers((*c).Request().Context())
+	if err != nil {
+		return InternalErrorResponse(c, "Gagal mendapatkan daftar waiter")
+	}
+
+	type WaiterItem struct {
+		ID       string `json:"id"`
+		FullName string `json:"full_name"`
+		Role     string `json:"role"`
+	}
+
+	var waiters []WaiterItem
+	for _, u := range users {
+		if u.Role == "waiter" || u.Role == "admin" || u.Role == "manager" {
+			waiters = append(waiters, WaiterItem{
+				ID:       u.ID,
+				FullName: u.FullName,
+				Role:     u.Role,
+			})
+		}
+	}
+
+	return SuccessResponse(c, "Data waiter berhasil diambil", waiters)
 }
 
 // HandleGetUser - Admin/Manager only

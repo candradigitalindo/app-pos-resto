@@ -242,7 +242,7 @@ func (q *Queries) GetOrderAnalytics(ctx context.Context, arg GetOrderAnalyticsPa
 }
 
 const getOrderItems = `-- name: GetOrderItems :many
-SELECT id, order_id, product_name, qty, price, destination, item_status, created_at, updated_at FROM order_items
+SELECT id, order_id, product_name, qty, price, destination, item_status, created_at, updated_at, notes, waiter_name, is_additional FROM order_items
 WHERE order_id = ?
 ORDER BY created_at
 `
@@ -266,6 +266,9 @@ func (q *Queries) GetOrderItems(ctx context.Context, orderID string) ([]OrderIte
 			&i.ItemStatus,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Notes,
+			&i.WaiterName,
+			&i.IsAdditional,
 		); err != nil {
 			return nil, err
 		}

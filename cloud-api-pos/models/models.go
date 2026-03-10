@@ -9,6 +9,7 @@ type Outlet struct {
 	Code       string    `json:"code"`
 	Name       string    `json:"name"`
 	Address    string    `json:"address"`
+	Phone      string    `json:"phone"`
 	APIKey     string    `json:"api_key,omitempty"`
 	WebhookURL string    `json:"webhook_url"`
 	IsActive   bool      `json:"is_active"`
@@ -20,6 +21,14 @@ type CreateOutletRequest struct {
 	Code       string `json:"code"`
 	Name       string `json:"name"`
 	Address    string `json:"address"`
+	Phone      string `json:"phone"`
+	WebhookURL string `json:"webhook_url"`
+}
+
+type UpdateOutletRequest struct {
+	Name       string `json:"name"`
+	Address    string `json:"address"`
+	Phone      string `json:"phone"`
 	WebhookURL string `json:"webhook_url"`
 }
 
@@ -124,6 +133,8 @@ type PushProductRequest struct {
 	LocalID      string  `json:"local_id"`
 	OutletID     string  `json:"outlet_id"`
 	Name         string  `json:"name"`
+	Code         string  `json:"code"`
+	Description  string  `json:"description"`
 	CategoryID   string  `json:"category_id"`
 	CategoryName string  `json:"category_name"`
 	Price        float64 `json:"price"`
@@ -137,7 +148,10 @@ type CloudProduct struct {
 	ID           string    `json:"id"`
 	LocalID      string    `json:"local_id"`
 	OutletID     string    `json:"outlet_id"`
+	OutletName   string    `json:"outlet_name,omitempty"`
 	Name         string    `json:"name"`
+	Code         string    `json:"code"`
+	Description  string    `json:"description"`
 	CategoryID   string    `json:"category_id"`
 	CategoryName string    `json:"category_name"`
 	Price        float64   `json:"price"`
@@ -165,6 +179,7 @@ type CloudCategory struct {
 	ID         string    `json:"id"`
 	LocalID    string    `json:"local_id"`
 	OutletID   string    `json:"outlet_id"`
+	OutletName string    `json:"outlet_name,omitempty"`
 	Name       string    `json:"name"`
 	CodePrefix string    `json:"code_prefix"`
 	PrinterID  string    `json:"printer_id"`
@@ -173,6 +188,42 @@ type CloudCategory struct {
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 	SyncedAt   time.Time `json:"synced_at"`
+}
+
+// ── Admin CRUD Requests ─────────────────────────────────────
+
+type AdminCreateProductRequest struct {
+	OutletID     string  `json:"outlet_id"`
+	Name         string  `json:"name"`
+	Code         string  `json:"code"`
+	Description  string  `json:"description"`
+	CategoryID   string  `json:"category_id"`
+	CategoryName string  `json:"category_name"`
+	Price        float64 `json:"price"`
+	Stock        int     `json:"stock"`
+	Destination  string  `json:"destination"`
+}
+
+type AdminUpdateProductRequest struct {
+	Name         string  `json:"name"`
+	Code         string  `json:"code"`
+	Description  string  `json:"description"`
+	CategoryID   string  `json:"category_id"`
+	CategoryName string  `json:"category_name"`
+	Price        float64 `json:"price"`
+	Stock        int     `json:"stock"`
+	Destination  string  `json:"destination"`
+}
+
+type AdminCreateCategoryRequest struct {
+	OutletID   string `json:"outlet_id"`
+	Name       string `json:"name"`
+	CodePrefix string `json:"code_prefix"`
+}
+
+type AdminUpdateCategoryRequest struct {
+	Name       string `json:"name"`
+	CodePrefix string `json:"code_prefix"`
 }
 
 // ── Analytics ───────────────────────────────────────────────
@@ -325,14 +376,18 @@ type BatchSyncResponse struct {
 // ── Updates ─────────────────────────────────────────────────
 
 type UpdateEntity struct {
-	CloudID   string   `json:"cloud_id"`
-	LocalID   string   `json:"local_id"`
-	Name      string   `json:"name,omitempty"`
-	Price     *float64 `json:"price,omitempty"`
-	Stock     *int     `json:"stock,omitempty"`
-	Version   int      `json:"version"`
-	UpdatedAt string   `json:"updated_at"`
-	Action    string   `json:"action"`
+	CloudID      string   `json:"cloud_id"`
+	LocalID      string   `json:"local_id"`
+	Name         string   `json:"name,omitempty"`
+	Code         string   `json:"code,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	CategoryID   string   `json:"category_id,omitempty"`
+	CategoryName string   `json:"category_name,omitempty"`
+	Price        *float64 `json:"price,omitempty"`
+	Stock        *int     `json:"stock,omitempty"`
+	Version      int      `json:"version"`
+	UpdatedAt    string   `json:"updated_at"`
+	Action       string   `json:"action"`
 }
 
 type DeletedEntity struct {
@@ -408,17 +463,38 @@ type SyncLog struct {
 
 // ── Dashboard ───────────────────────────────────────────────
 
+// OutletDashboardRow holds per-outlet sales figures shown in the dashboard table.
+type OutletDashboardRow struct {
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	SalesDay        float64 `json:"sales_day"`
+	SalesDayPrev    float64 `json:"sales_day_prev"`
+	SalesWeek       float64 `json:"sales_week"`
+	SalesWeekPrev   float64 `json:"sales_week_prev"`
+	SalesMonth      float64 `json:"sales_month"`
+	SalesMonthPrev  float64 `json:"sales_month_prev"`
+	SalesCustom     float64 `json:"sales_custom"`
+	SalesCustomPrev float64 `json:"sales_custom_prev"`
+	LastSyncAt      *string `json:"last_sync_at"`
+}
+
 type DashboardStats struct {
-	TotalOutlets      int     `json:"total_outlets"`
-	ActiveOutlets     int     `json:"active_outlets"`
-	TotalOrders       int     `json:"total_orders"`
-	TotalTransactions int     `json:"total_transactions"`
-	TotalRevenue      float64 `json:"total_revenue"`
-	TodayOrders       int     `json:"today_orders"`
-	TodayRevenue      float64 `json:"today_revenue"`
-	TotalProducts     int     `json:"total_products"`
-	TotalSyncLogs     int     `json:"total_sync_logs"`
-	PendingConflicts  int     `json:"pending_conflicts"`
+	TotalOutlets          int                  `json:"total_outlets"`
+	ActiveOutlets         int                  `json:"active_outlets"`
+	TotalOrders           int                  `json:"total_orders"`
+	TotalTransactions     int                  `json:"total_transactions"`
+	TotalRevenue          float64              `json:"total_revenue"`
+	MonthTransactions     int                  `json:"month_transactions"`
+	MonthTransactionsPrev int                  `json:"month_transactions_prev"`
+	MonthRevenue          float64              `json:"month_revenue"`
+	MonthRevenuePrev      float64              `json:"month_revenue_prev"`
+	TodayOrders           int                  `json:"today_orders"`
+	TodayOrdersPrev       int                  `json:"today_orders_prev"`
+	TodayRevenue          float64              `json:"today_revenue"`
+	TotalProducts         int                  `json:"total_products"`
+	TotalSyncLogs         int                  `json:"total_sync_logs"`
+	PendingConflicts      int                  `json:"pending_conflicts"`
+	Outlets               []OutletDashboardRow `json:"outlets"`
 }
 
 // ── Admin ───────────────────────────────────────────────────

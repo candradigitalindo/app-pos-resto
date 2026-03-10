@@ -264,12 +264,12 @@ func main() {
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(sqlDB)
-	productHandler := handlers.NewProductHandler(productService)
+	productHandler := handlers.NewProductHandler(productService, sqlDB)
 	categoryHandler := handlers.NewCategoryHandler(categoryService)
 	transactionHandler := handlers.NewTransactionHandler(transactionService, queries, sqlDB, syncRepo)
 	socketBroadcaster := &socketBroadcaster{server: socketServer}
 	orderHandler := handlers.NewOrderHandler(orderService, transactionService, customerService, queries, sqlDB, socketBroadcaster)
-	tableHandler := handlers.NewTableHandler(tableService, queries)
+	tableHandler := handlers.NewTableHandler(tableService, queries, sqlDB)
 	printerHandler := handlers.NewPrinterHandler(printerService, syncRepo)
 	printHandler := handlers.NewPrintHandler(sqlDB)
 	customerHandler := handlers.NewCustomerHandler(customerService, orderService)
@@ -348,6 +348,7 @@ func main() {
 
 	// Public routes - No auth required
 	api.POST("/auth/login", authHandler.HandleLogin)
+	api.POST("/auth/passcode", authHandler.HandlePasscodeLogin)
 
 	// Protected routes - Require JWT
 	protected := api.Group("", authmw.JWTMiddleware())
@@ -359,6 +360,7 @@ func main() {
 
 	// User management routes - Admin/Manager only
 	protected.GET("/users", authHandler.HandleListUsers, authmw.ManagerOrAdmin())
+	protected.GET("/waiters", authHandler.HandleListWaiters) // Any authenticated user can fetch waiter list
 	protected.GET("/users/:id", authHandler.HandleGetUser, authmw.ManagerOrAdmin())
 	protected.PUT("/users/:id", authHandler.HandleUpdateUser, authmw.ManagerOrAdmin())
 	protected.DELETE("/users/:id", authHandler.HandleDeleteUser, authmw.ManagerOrAdmin())
@@ -395,6 +397,11 @@ func main() {
 	protected.POST("/products", productHandler.CreateProduct, authmw.ManagerOrAdmin())
 	protected.GET("/products", productHandler.GetAllProducts)
 	protected.GET("/products/:id", productHandler.GetProduct)
+	protected.GET("/products/:id/notes", productHandler.GetProductNotes)
+	protected.GET("/products/:id/addons", productHandler.GetProductAddons)
+	protected.POST("/products/:id/addons", productHandler.CreateProductAddon, authmw.ManagerOrAdmin())
+	protected.PUT("/products/addons/:addonId", productHandler.UpdateProductAddon, authmw.ManagerOrAdmin())
+	protected.DELETE("/products/addons/:addonId", productHandler.DeleteProductAddon, authmw.ManagerOrAdmin())
 	protected.PUT("/products/:id", productHandler.UpdateProduct, authmw.ManagerOrAdmin())
 	protected.DELETE("/products/:id", productHandler.DeleteProduct, authmw.AdminOnly())
 	protected.GET("/products/category/:categoryId", productHandler.GetProductsByCategory)

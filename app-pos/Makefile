@@ -3,10 +3,10 @@
 # Build frontend Vue.js
 build-frontend:
 	@echo "🔨 Building Vue.js frontend..."
-	cd web && npm run build
+	cd ui && npm run build
 	@echo "📦 Copying dist to cmd/web/dist..."
 	rm -rf cmd/web/dist
-	cp -r web/dist cmd/web/dist
+	cp -r ui/dist cmd/web/dist
 	@echo "✅ Frontend built successfully!"
 
 # Build Go backend with embedded frontend
@@ -64,12 +64,12 @@ dev-backend:
 
 dev-frontend:
 	@echo "🔧 Starting Vue.js frontend..."
-	cd web && npm run dev
+	cd ui && npm run dev
 
 # Clean build artifacts
 clean:
 	@echo "🧹 Cleaning build artifacts..."
-	rm -rf web/dist
+	rm -rf ui/dist
 	rm -f pos-app pos-app.exe pos-app-macos pos-app-linux pos-app-setup.exe
 	rm -rf bin/
 	@echo "✅ Clean complete!"
@@ -79,7 +79,7 @@ install:
 	@echo "📦 Installing Go dependencies..."
 	go mod download
 	@echo "📦 Installing Node dependencies..."
-	cd web && npm install
+	cd ui && npm install
 	@echo "✅ All dependencies installed!"
 
 # Run tests

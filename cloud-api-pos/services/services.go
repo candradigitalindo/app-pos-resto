@@ -104,12 +104,12 @@ func CreateOutlet(req models.CreateOutletRequest) (*models.Outlet, error) {
 	id := NewULID()
 
 	err := database.DB.QueryRow(
-		`INSERT INTO outlets (id, code, name, address, api_key, webhook_url)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, code, name, address, api_key, webhook_url, is_active, created_at, updated_at`,
-		id, req.Code, req.Name, req.Address, apiKey, req.WebhookURL,
+		`INSERT INTO outlets (id, code, name, address, phone, api_key, webhook_url)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, code, name, address, COALESCE(phone,''), api_key, COALESCE(webhook_url,''), is_active, created_at, updated_at`,
+		id, req.Code, req.Name, req.Address, req.Phone, apiKey, req.WebhookURL,
 	).Scan(&outlet.ID, &outlet.Code, &outlet.Name, &outlet.Address,
-		&outlet.APIKey, &outlet.WebhookURL, &outlet.IsActive,
+		&outlet.Phone, &outlet.APIKey, &outlet.WebhookURL, &outlet.IsActive,
 		&outlet.CreatedAt, &outlet.UpdatedAt)
 
 	if err != nil {
@@ -120,7 +120,7 @@ func CreateOutlet(req models.CreateOutletRequest) (*models.Outlet, error) {
 
 func GetOutlets() ([]models.Outlet, error) {
 	rows, err := database.DB.Query(
-		`SELECT id, code, name, address, webhook_url, is_active, created_at, updated_at
+		`SELECT id, code, name, COALESCE(address,''), COALESCE(phone,''), COALESCE(webhook_url,''), is_active, created_at, updated_at
 		FROM outlets ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -132,7 +132,7 @@ func GetOutlets() ([]models.Outlet, error) {
 	for rows.Next() {
 		var o models.Outlet
 		if err := rows.Scan(&o.ID, &o.Code, &o.Name, &o.Address,
-			&o.WebhookURL, &o.IsActive, &o.CreatedAt, &o.UpdatedAt); err != nil {
+			&o.Phone, &o.WebhookURL, &o.IsActive, &o.CreatedAt, &o.UpdatedAt); err != nil {
 			return nil, err
 		}
 		outlets = append(outlets, o)
@@ -146,10 +146,25 @@ func GetOutlets() ([]models.Outlet, error) {
 func GetOutlet(id string) (*models.Outlet, error) {
 	o := &models.Outlet{}
 	err := database.DB.QueryRow(
-		`SELECT TRIM(id), code, name, COALESCE(address,''), COALESCE(webhook_url,''), is_active, created_at, updated_at
+		`SELECT TRIM(id), code, name, COALESCE(address,''), COALESCE(phone,''), COALESCE(api_key,''), COALESCE(webhook_url,''), is_active, created_at, updated_at
 		FROM outlets WHERE TRIM(id) = $1`, strings.TrimSpace(id),
 	).Scan(&o.ID, &o.Code, &o.Name, &o.Address,
-		&o.WebhookURL, &o.IsActive, &o.CreatedAt, &o.UpdatedAt)
+		&o.Phone, &o.APIKey, &o.WebhookURL, &o.IsActive, &o.CreatedAt, &o.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+
+func UpdateOutlet(id string, req models.UpdateOutletRequest) (*models.Outlet, error) {
+	o := &models.Outlet{}
+	err := database.DB.QueryRow(
+		`UPDATE outlets SET name = $1, address = $2, phone = $3, webhook_url = $4, updated_at = NOW()
+		WHERE TRIM(id) = $5
+		RETURNING id, code, name, COALESCE(address,''), COALESCE(phone,''), COALESCE(api_key,''), COALESCE(webhook_url,''), is_active, created_at, updated_at`,
+		req.Name, req.Address, req.Phone, req.WebhookURL, strings.TrimSpace(id),
+	).Scan(&o.ID, &o.Code, &o.Name, &o.Address,
+		&o.Phone, &o.APIKey, &o.WebhookURL, &o.IsActive, &o.CreatedAt, &o.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -177,14 +192,52 @@ func ToggleOutlet(id string) (*models.Outlet, error) {
 	err := database.DB.QueryRow(
 		`UPDATE outlets SET is_active = NOT is_active, updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, code, name, address, webhook_url, is_active, created_at, updated_at`,
+		RETURNING id, code, name, COALESCE(address,''), COALESCE(phone,''), COALESCE(webhook_url,''), is_active, created_at, updated_at`,
 		id,
 	).Scan(&o.ID, &o.Code, &o.Name, &o.Address,
-		&o.WebhookURL, &o.IsActive, &o.CreatedAt, &o.UpdatedAt)
+		&o.Phone, &o.WebhookURL, &o.IsActive, &o.CreatedAt, &o.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	return o, nil
+}
+
+func DeleteOutlet(id string) error {
+	tx, err := database.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Delete related data in order
+	relatedTables := []string{
+		"cloud_cash_movements",
+		"cloud_cashier_shifts",
+		"sync_conflicts",
+		"sync_logs",
+		"cloud_analytics",
+		"cloud_printers",
+		"cloud_orders",
+		"cloud_transactions",
+		"cloud_products",
+		"cloud_categories",
+	}
+	for _, table := range relatedTables {
+		_, err := tx.Exec(fmt.Sprintf("DELETE FROM %s WHERE outlet_id = $1", table), strings.TrimSpace(id))
+		if err != nil {
+			return fmt.Errorf("failed to delete from %s: %w", table, err)
+		}
+	}
+
+	result, err := tx.Exec("DELETE FROM outlets WHERE TRIM(id) = $1", strings.TrimSpace(id))
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("outlet not found")
+	}
+	return tx.Commit()
 }
 
 // ── Order Service ───────────────────────────────────────────
@@ -351,12 +404,14 @@ func SaveProduct(outletID string, req models.PushProductRequest) (string, error)
 	// Gunakan POS local_id sebagai cloud id agar ID produk sama di POS dan Cloud
 	cloudID := req.LocalID
 	err := database.DB.QueryRow(
-		`INSERT INTO cloud_products (id, local_id, outlet_id, name, category_id,
+		`INSERT INTO cloud_products (id, local_id, outlet_id, name, code, description, category_id,
 			category_name, price, stock, destination, version, updated_at, synced_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
 		ON CONFLICT (outlet_id, local_id) DO UPDATE SET
 			id = EXCLUDED.id,
 			name = EXCLUDED.name,
+			code = EXCLUDED.code,
+			description = EXCLUDED.description,
 			category_id = EXCLUDED.category_id,
 			category_name = EXCLUDED.category_name,
 			price = EXCLUDED.price,
@@ -366,7 +421,7 @@ func SaveProduct(outletID string, req models.PushProductRequest) (string, error)
 			updated_at = EXCLUDED.updated_at,
 			synced_at = NOW()
 		RETURNING id`,
-		cloudID, cloudID, outletID, req.Name, req.CategoryID,
+		cloudID, cloudID, outletID, req.Name, nullStr(req.Code), req.Description, req.CategoryID,
 		req.CategoryName, req.Price, req.Stock, req.Destination,
 		req.Version, parseTime(req.UpdatedAt),
 	).Scan(&cloudID)
@@ -385,7 +440,8 @@ func GetProducts(outletID string, page, limit int) ([]models.CloudProduct, int, 
 	database.DB.QueryRow("SELECT COUNT(*) FROM cloud_products WHERE outlet_id = $1 AND is_deleted = false", outletID).Scan(&total)
 
 	rows, err := database.DB.Query(
-		`SELECT id, local_id, outlet_id, name, COALESCE(category_id,''),
+		`SELECT id, local_id, outlet_id, name, COALESCE(code,''), COALESCE(description,''),
+			COALESCE(category_id,''),
 			COALESCE(category_name,''), price, stock, COALESCE(destination,''),
 			is_deleted, version, created_at, updated_at, synced_at
 		FROM cloud_products WHERE outlet_id = $1 AND is_deleted = false
@@ -400,7 +456,7 @@ func GetProducts(outletID string, page, limit int) ([]models.CloudProduct, int, 
 	products := make([]models.CloudProduct, 0)
 	for rows.Next() {
 		var p models.CloudProduct
-		if err := rows.Scan(&p.ID, &p.LocalID, &p.OutletID, &p.Name,
+		if err := rows.Scan(&p.ID, &p.LocalID, &p.OutletID, &p.Name, &p.Code, &p.Description,
 			&p.CategoryID, &p.CategoryName, &p.Price, &p.Stock, &p.Destination,
 			&p.IsDeleted, &p.Version, &p.CreatedAt, &p.UpdatedAt, &p.SyncedAt); err != nil {
 			return nil, 0, err
@@ -413,6 +469,292 @@ func GetProducts(outletID string, page, limit int) ([]models.CloudProduct, int, 
 	return products, total, nil
 }
 
+// GetAllProducts fetches products across all outlets for admin view.
+// Pass empty outletID / search to skip those filters.
+func GetAllProducts(outletID, search string, page, limit int) ([]models.CloudProduct, int, error) {
+	offset := (page - 1) * limit
+
+	// ── dynamic WHERE ────────────────────────────────────────
+	conds := []string{"cp.is_deleted = false"}
+	args := []any{}
+	idx := 1
+
+	if outletID != "" {
+		conds = append(conds, fmt.Sprintf("cp.outlet_id = $%d", idx))
+		args = append(args, outletID)
+		idx++
+	}
+	if search != "" {
+		conds = append(conds, fmt.Sprintf("(cp.name ILIKE $%d OR cp.code ILIKE $%d OR cp.category_name ILIKE $%d)", idx, idx, idx))
+		args = append(args, "%"+search+"%")
+		idx++
+	}
+	whereSQL := "WHERE " + strings.Join(conds, " AND ")
+
+	// COUNT
+	var total int
+	database.DB.QueryRow(
+		fmt.Sprintf("SELECT COUNT(*) FROM cloud_products cp %s", whereSQL),
+		args...,
+	).Scan(&total)
+
+	// DATA
+	dataArgs := append(append([]any{}, args...), limit, offset)
+	dataQuery := fmt.Sprintf(
+		`SELECT cp.id, cp.local_id, cp.outlet_id, COALESCE(o.name,''),
+			cp.name, COALESCE(cp.code,''), COALESCE(cp.description,''),
+			COALESCE(cp.category_id,''), COALESCE(cp.category_name,''),
+			cp.price, cp.stock, COALESCE(cp.destination,''),
+			cp.is_deleted, cp.version, cp.created_at, cp.updated_at, cp.synced_at
+		FROM cloud_products cp
+		LEFT JOIN outlets o ON o.id = cp.outlet_id
+		%s ORDER BY o.name ASC, cp.name ASC LIMIT $%d OFFSET $%d`,
+		whereSQL, idx, idx+1,
+	)
+	rows, err := database.DB.Query(dataQuery, dataArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	products := make([]models.CloudProduct, 0)
+	for rows.Next() {
+		var p models.CloudProduct
+		if err := rows.Scan(&p.ID, &p.LocalID, &p.OutletID, &p.OutletName,
+			&p.Name, &p.Code, &p.Description, &p.CategoryID, &p.CategoryName, &p.Price, &p.Stock, &p.Destination,
+			&p.IsDeleted, &p.Version, &p.CreatedAt, &p.UpdatedAt, &p.SyncedAt); err != nil {
+			return nil, 0, err
+		}
+		products = append(products, p)
+	}
+	return products, total, rows.Err()
+}
+
+// GetAllCategories fetches categories across all outlets for admin view.
+// Pass empty outletID / search to skip those filters.
+func GetAllCategories(outletID, search string, page, limit int) ([]models.CloudCategory, int, error) {
+	offset := (page - 1) * limit
+
+	// ── dynamic WHERE ────────────────────────────────────────
+	conds := []string{"cc.is_deleted = false"}
+	args := []any{}
+	idx := 1
+
+	if outletID != "" {
+		conds = append(conds, fmt.Sprintf("cc.outlet_id = $%d", idx))
+		args = append(args, outletID)
+		idx++
+	}
+	if search != "" {
+		conds = append(conds, fmt.Sprintf("(cc.name ILIKE $%d OR cc.code_prefix ILIKE $%d)", idx, idx))
+		args = append(args, "%"+search+"%")
+		idx++
+	}
+	whereSQL := "WHERE " + strings.Join(conds, " AND ")
+
+	// COUNT
+	var total int
+	database.DB.QueryRow(
+		fmt.Sprintf("SELECT COUNT(*) FROM cloud_categories cc %s", whereSQL),
+		args...,
+	).Scan(&total)
+
+	// DATA
+	dataArgs := append(append([]any{}, args...), limit, offset)
+	dataQuery := fmt.Sprintf(
+		`SELECT cc.id, COALESCE(cc.local_id,''), cc.outlet_id, COALESCE(o.name,''),
+			cc.name, COALESCE(cc.code_prefix,''), COALESCE(cc.printer_id,''),
+			cc.is_deleted, cc.version, cc.created_at, cc.updated_at, cc.synced_at
+		FROM cloud_categories cc
+		LEFT JOIN outlets o ON o.id = cc.outlet_id
+		%s ORDER BY o.name ASC, cc.name ASC LIMIT $%d OFFSET $%d`,
+		whereSQL, idx, idx+1,
+	)
+	rows, err := database.DB.Query(dataQuery, dataArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	cats := make([]models.CloudCategory, 0)
+	for rows.Next() {
+		var cat models.CloudCategory
+		if err := rows.Scan(&cat.ID, &cat.LocalID, &cat.OutletID, &cat.OutletName,
+			&cat.Name, &cat.CodePrefix, &cat.PrinterID,
+			&cat.IsDeleted, &cat.Version, &cat.CreatedAt, &cat.UpdatedAt, &cat.SyncedAt); err != nil {
+			return nil, 0, err
+		}
+		cats = append(cats, cat)
+	}
+	return cats, total, rows.Err()
+}
+
+// ── Admin CRUD ──────────────────────────────────────────────
+
+func AdminCreateProduct(req models.AdminCreateProductRequest) (models.CloudProduct, error) {
+	if req.OutletID == "" || req.Name == "" {
+		return models.CloudProduct{}, fmt.Errorf("outlet_id and name are required")
+	}
+	id := ulid.Make().String()
+	now := time.Now()
+
+	// Resolve category_name dari category_id
+	if req.CategoryID != "" {
+		var catName string
+		err := database.DB.QueryRow(
+			"SELECT name FROM cloud_categories WHERE id = $1 AND is_deleted = false",
+			req.CategoryID,
+		).Scan(&catName)
+		if err == nil {
+			if req.CategoryName == "" {
+				req.CategoryName = catName
+			}
+		}
+	}
+
+	// Auto-generate product code dari huruf pertama nama produk
+	if req.Code == "" {
+		req.Code = generateProductCode(req.OutletID, req.Name)
+	}
+
+	_, err := database.DB.Exec(
+		`INSERT INTO cloud_products
+			(id, local_id, outlet_id, name, code, description, category_id, category_name,
+			 price, stock, destination, version, created_at, updated_at, synced_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1,$12,$13,$14)`,
+		id, id, req.OutletID, req.Name, nullStr(req.Code), req.Description, req.CategoryID, req.CategoryName,
+		req.Price, req.Stock, req.Destination, now, now, now,
+	)
+	if err != nil {
+		return models.CloudProduct{}, err
+	}
+	return models.CloudProduct{
+		ID: id, LocalID: id, OutletID: req.OutletID,
+		Name: req.Name, Code: req.Code, Description: req.Description,
+		CategoryID: req.CategoryID, CategoryName: req.CategoryName,
+		Price: req.Price, Stock: req.Stock, Destination: req.Destination,
+		Version: 1, CreatedAt: now, UpdatedAt: now, SyncedAt: now,
+	}, nil
+}
+
+func AdminUpdateProduct(id string, req models.AdminUpdateProductRequest) error {
+	// Resolve category_name dari category_id
+	if req.CategoryID != "" {
+		var catName string
+		err := database.DB.QueryRow(
+			"SELECT name FROM cloud_categories WHERE id = $1 AND is_deleted = false",
+			req.CategoryID,
+		).Scan(&catName)
+		if err == nil {
+			if req.CategoryName == "" {
+				req.CategoryName = catName
+			}
+		}
+	}
+
+	// Auto-generate product code dari huruf pertama nama produk
+	if req.Code == "" && req.Name != "" {
+		var outletID string
+		database.DB.QueryRow("SELECT outlet_id FROM cloud_products WHERE id = $1", id).Scan(&outletID)
+		if outletID != "" {
+			req.Code = generateProductCode(outletID, req.Name)
+		}
+	}
+
+	result, err := database.DB.Exec(
+		`UPDATE cloud_products
+		SET name=$1, code=$2, description=$3, category_id=$4, category_name=$5,
+		    price=$6, stock=$7, destination=$8,
+		    updated_at=NOW(), version=version+1
+		WHERE id=$9 AND is_deleted=false`,
+		req.Name, nullStr(req.Code), req.Description, req.CategoryID, req.CategoryName,
+		req.Price, req.Stock, req.Destination, id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("product not found")
+	}
+	return nil
+}
+
+func AdminDeleteProduct(id string) error {
+	result, err := database.DB.Exec(
+		`UPDATE cloud_products SET is_deleted=true, updated_at=NOW() WHERE id=$1 AND is_deleted=false`, id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("product not found")
+	}
+	return nil
+}
+
+func AdminCreateCategory(req models.AdminCreateCategoryRequest) (models.CloudCategory, error) {
+	if req.OutletID == "" || req.Name == "" {
+		return models.CloudCategory{}, fmt.Errorf("outlet_id and name are required")
+	}
+	id := ulid.Make().String()
+	now := time.Now()
+	cp := req.CodePrefix
+	if cp == "" {
+		cp = generateCategoryCodePrefix(req.Name)
+	}
+	_, err := database.DB.Exec(
+		`INSERT INTO cloud_categories
+			(id, local_id, outlet_id, name, code_prefix, version, created_at, updated_at, synced_at)
+		VALUES ($1,$2,$3,$4,$5,1,$6,$7,$8)`,
+		id, id, req.OutletID, req.Name, cp, now, now, now,
+	)
+	if err != nil {
+		return models.CloudCategory{}, err
+	}
+	return models.CloudCategory{
+		ID: id, LocalID: id, OutletID: req.OutletID,
+		Name: req.Name, CodePrefix: cp,
+		Version: 1, CreatedAt: now, UpdatedAt: now, SyncedAt: now,
+	}, nil
+}
+
+func AdminUpdateCategory(id string, req models.AdminUpdateCategoryRequest) error {
+	cp := req.CodePrefix
+	if cp == "" && req.Name != "" {
+		cp = generateCategoryCodePrefix(req.Name)
+	}
+	result, err := database.DB.Exec(
+		`UPDATE cloud_categories
+		SET name=$1, code_prefix=$2, updated_at=NOW(), version=version+1
+		WHERE id=$3 AND is_deleted=false`,
+		req.Name, cp, id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("category not found")
+	}
+	return nil
+}
+
+func AdminDeleteCategory(id string) error {
+	result, err := database.DB.Exec(
+		`UPDATE cloud_categories SET is_deleted=true, updated_at=NOW() WHERE id=$1 AND is_deleted=false`, id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("category not found")
+	}
+	return nil
+}
+
 func DeleteProduct(outletID, localID string) error {
 	_, err := database.DB.Exec(
 		`UPDATE cloud_products SET is_deleted = true, updated_at = NOW()
@@ -423,6 +765,43 @@ func DeleteProduct(outletID, localID string) error {
 }
 
 // ── Category Service ────────────────────────────────────────
+
+// generateProductCode membuat kode produk dari huruf pertama nama produk.
+// Jika kode sudah ada, tambahkan nomor urut: N, N1, N2, dst.
+func generateProductCode(outletID, productName string) string {
+	name := strings.TrimSpace(productName)
+	if name == "" {
+		name = "P"
+	}
+	// Ambil huruf pertama (uppercase)
+	firstLetter := strings.ToUpper(string([]rune(name)[0]))
+
+	// Cek apakah kode "X" sudah ada
+	var count int
+	database.DB.QueryRow(
+		`SELECT COUNT(*) FROM cloud_products
+		WHERE outlet_id = $1 AND code = $2 AND is_deleted = false`,
+		outletID, firstLetter,
+	).Scan(&count)
+
+	if count == 0 {
+		return firstLetter
+	}
+
+	// Cari nomor urut tertinggi: X1, X2, X3, ...
+	var maxNum int
+	database.DB.QueryRow(
+		`SELECT COALESCE(MAX(
+			CAST(SUBSTRING(code FROM $1) AS INTEGER)
+		), 0) FROM cloud_products
+		WHERE outlet_id = $2 AND code ~ $3 AND is_deleted = false`,
+		fmt.Sprintf("^%s(\\d+)$", firstLetter),
+		outletID,
+		fmt.Sprintf("^%s\\d+$", firstLetter),
+	).Scan(&maxNum)
+
+	return fmt.Sprintf("%s%d", firstLetter, maxNum+1)
+}
 
 // generateCategoryCodePrefix membuat kode prefix dari huruf pertama setiap kata
 // (logika sama seperti generateProductCode di local POS)
@@ -969,7 +1348,9 @@ func GetUpdatesSince(outletID, since string) (*models.UpdatesResponse, error) {
 
 	// Updated products
 	rows, err := database.DB.Query(
-		`SELECT id, local_id, name, price, stock, version, updated_at::text
+		`SELECT id, local_id, name, COALESCE(code,''), COALESCE(description,''),
+			COALESCE(category_id,''), COALESCE(category_name,''),
+			price, stock, version, updated_at::text
 		FROM cloud_products
 		WHERE outlet_id = $1 AND updated_at > $2 AND is_deleted = false
 		ORDER BY updated_at ASC`,
@@ -983,7 +1364,9 @@ func GetUpdatesSince(outletID, since string) (*models.UpdatesResponse, error) {
 		var e models.UpdateEntity
 		var price float64
 		var stock int
-		if err := rows.Scan(&e.CloudID, &e.LocalID, &e.Name, &price, &stock, &e.Version, &e.UpdatedAt); err != nil {
+		if err := rows.Scan(&e.CloudID, &e.LocalID, &e.Name, &e.Code, &e.Description,
+			&e.CategoryID, &e.CategoryName,
+			&price, &stock, &e.Version, &e.UpdatedAt); err != nil {
 			return nil, err
 		}
 		e.Price = &price
@@ -1161,7 +1544,10 @@ func GetSyncLogs(outletID string, limit int) ([]models.SyncLog, error) {
 
 // ── Dashboard Service ───────────────────────────────────────
 
-func GetDashboardStats() (*models.DashboardStats, error) {
+// GetDashboardStats returns aggregated stats.
+// dateFrom / dateTo (YYYY-MM-DD) are optional; when supplied the per-outlet
+// custom-range columns are populated.  Empty strings mean "no custom range".
+func GetDashboardStats(dateFrom, dateTo string) (*models.DashboardStats, error) {
 	stats := &models.DashboardStats{}
 
 	queries := []struct {
@@ -1173,7 +1559,20 @@ func GetDashboardStats() (*models.DashboardStats, error) {
 		{"SELECT COUNT(*) FROM cloud_orders", &stats.TotalOrders},
 		{"SELECT COUNT(*) FROM cloud_transactions", &stats.TotalTransactions},
 		{"SELECT COALESCE(SUM(total_amount),0) FROM cloud_transactions", &stats.TotalRevenue},
+		// monthly
+		{`SELECT COUNT(*) FROM cloud_transactions
+			 WHERE created_at >= date_trunc('month', CURRENT_TIMESTAMP)`, &stats.MonthTransactions},
+		{`SELECT COUNT(*) FROM cloud_transactions
+			 WHERE created_at >= date_trunc('month', CURRENT_TIMESTAMP) - INTERVAL '1 month'
+			   AND created_at <  date_trunc('month', CURRENT_TIMESTAMP)`, &stats.MonthTransactionsPrev},
+		{`SELECT COALESCE(SUM(total_amount),0) FROM cloud_transactions
+			 WHERE created_at >= date_trunc('month', CURRENT_TIMESTAMP)`, &stats.MonthRevenue},
+		{`SELECT COALESCE(SUM(total_amount),0) FROM cloud_transactions
+			 WHERE created_at >= date_trunc('month', CURRENT_TIMESTAMP) - INTERVAL '1 month'
+			   AND created_at <  date_trunc('month', CURRENT_TIMESTAMP)`, &stats.MonthRevenuePrev},
+		// today
 		{"SELECT COUNT(*) FROM cloud_orders WHERE created_at::date = CURRENT_DATE", &stats.TodayOrders},
+		{"SELECT COUNT(*) FROM cloud_orders WHERE created_at::date = CURRENT_DATE - 1", &stats.TodayOrdersPrev},
 		{"SELECT COALESCE(SUM(total_amount),0) FROM cloud_transactions WHERE created_at::date = CURRENT_DATE", &stats.TodayRevenue},
 		{"SELECT COUNT(*) FROM cloud_products WHERE is_deleted = false", &stats.TotalProducts},
 		{"SELECT COUNT(*) FROM sync_logs", &stats.TotalSyncLogs},
@@ -1184,6 +1583,82 @@ func GetDashboardStats() (*models.DashboardStats, error) {
 		if err := database.DB.QueryRow(q.query).Scan(q.dest); err != nil {
 			return nil, fmt.Errorf("dashboard query failed: %w", err)
 		}
+	}
+
+	// ── Per-outlet sales summary ─────────────────────────────
+	// Two query variants:
+	//   a) standard  – no parameters, custom columns are always 0
+	//   b) range     – two date parameters, custom columns populated
+	const outletBase = `
+		SELECT
+			o.id,
+			o.name,
+			COALESCE(SUM(CASE WHEN t.created_at::date = CURRENT_DATE
+				THEN t.total_amount ELSE 0 END), 0)                                       AS sales_day,
+			COALESCE(SUM(CASE WHEN t.created_at::date = CURRENT_DATE - INTERVAL '1 day'
+				THEN t.total_amount ELSE 0 END), 0)                                       AS sales_day_prev,
+			COALESCE(SUM(CASE WHEN t.created_at >= date_trunc('week', CURRENT_TIMESTAMP)
+				THEN t.total_amount ELSE 0 END), 0)                                       AS sales_week,
+			COALESCE(SUM(CASE WHEN t.created_at >= date_trunc('week', CURRENT_TIMESTAMP) - INTERVAL '7 days'
+				AND t.created_at < date_trunc('week', CURRENT_TIMESTAMP)
+				THEN t.total_amount ELSE 0 END), 0)                                       AS sales_week_prev,
+			COALESCE(SUM(CASE WHEN t.created_at >= date_trunc('month', CURRENT_TIMESTAMP)
+				THEN t.total_amount ELSE 0 END), 0)                                       AS sales_month,
+			COALESCE(SUM(CASE WHEN t.created_at >= date_trunc('month', CURRENT_TIMESTAMP) - INTERVAL '1 month'
+				AND t.created_at < date_trunc('month', CURRENT_TIMESTAMP)
+				THEN t.total_amount ELSE 0 END), 0)                                       AS sales_month_prev`
+
+	const outletStdTail = `,
+			0::float8                                                                     AS sales_custom,
+			0::float8                                                                     AS sales_custom_prev,
+			TO_CHAR(MAX(t.synced_at), 'YYYY-MM-DD"T"HH24:MI:SS"Z"')                    AS last_sync_at
+		FROM outlets o
+		LEFT JOIN cloud_transactions t ON t.outlet_id = o.id
+		WHERE o.is_active = true
+		GROUP BY o.id, o.name
+		ORDER BY sales_month DESC`
+
+	const outletRangeTail = `,
+			COALESCE(SUM(CASE WHEN t.created_at::date >= $1::date AND t.created_at::date <= $2::date
+				THEN t.total_amount ELSE 0 END), 0)                                       AS sales_custom,
+			COALESCE(SUM(CASE WHEN t.created_at::date >= $1::date - ($2::date - $1::date + 1)
+				AND t.created_at::date < $1::date
+				THEN t.total_amount ELSE 0 END), 0)                                       AS sales_custom_prev,
+			TO_CHAR(MAX(t.synced_at), 'YYYY-MM-DD"T"HH24:MI:SS"Z"')                    AS last_sync_at
+		FROM outlets o
+		LEFT JOIN cloud_transactions t ON t.outlet_id = o.id
+		WHERE o.is_active = true
+		GROUP BY o.id, o.name
+		ORDER BY sales_month DESC`
+
+	var (
+		rows    *sql.Rows
+		rowsErr error
+	)
+	if dateFrom != "" && dateTo != "" {
+		rows, rowsErr = database.DB.Query(outletBase+outletRangeTail, dateFrom, dateTo)
+	} else {
+		rows, rowsErr = database.DB.Query(outletBase + outletStdTail)
+	}
+	if rowsErr != nil {
+		return nil, fmt.Errorf("dashboard outlet query failed: %w", rowsErr)
+	}
+	defer rows.Close()
+
+	stats.Outlets = []models.OutletDashboardRow{}
+	for rows.Next() {
+		var row models.OutletDashboardRow
+		if err := rows.Scan(
+			&row.ID, &row.Name,
+			&row.SalesDay, &row.SalesDayPrev,
+			&row.SalesWeek, &row.SalesWeekPrev,
+			&row.SalesMonth, &row.SalesMonthPrev,
+			&row.SalesCustom, &row.SalesCustomPrev,
+			&row.LastSyncAt,
+		); err != nil {
+			return nil, fmt.Errorf("dashboard outlet scan failed: %w", err)
+		}
+		stats.Outlets = append(stats.Outlets, row)
 	}
 
 	return stats, nil
@@ -1358,4 +1833,12 @@ func parseTime(s string) interface{} {
 	}
 
 	return time.Now().UTC()
+}
+
+// nullStr converts empty string to nil (NULL in SQL), non-empty to *string
+func nullStr(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }

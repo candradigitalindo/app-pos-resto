@@ -8,10 +8,18 @@ import (
 	"time"
 )
 
+// OrderItemAddon represents an addon selected for an order item.
+type OrderItemAddon struct {
+	Name  string  `json:"name"`
+	Price float64 `json:"price"`
+}
+
 // OrderItemInput represents an item in the order request.
 type OrderItemInput struct {
-	ProductID string `json:"product_id"`
-	Qty       int64  `json:"qty"`
+	ProductID string           `json:"product_id"`
+	Qty       int64            `json:"qty"`
+	Notes     string           `json:"notes"`
+	Addons    []OrderItemAddon `json:"addons"`
 }
 
 type SplitBillItem struct {
@@ -29,6 +37,7 @@ type OrderInput struct {
 	Items         []OrderItemInput `json:"items"`
 	PrinterID     string           `json:"printer_id"` // Target printer ULID
 	CreatedBy     string           `json:"created_by,omitempty"`
+	WaiterName    string           `json:"waiter_name,omitempty"`
 }
 
 // TimeSeriesData represents revenue data for a time point
@@ -72,7 +81,7 @@ type OrderRepository interface {
 	UpdateOrderStatus(ctx context.Context, orderID string, status string) error
 	UpdateOrderItemStatus(ctx context.Context, itemID string, status string) error
 	UpdateOrderItemQty(ctx context.Context, itemID string, qty int64) error
-	AddItemsToOrder(ctx context.Context, orderID string, items []OrderItemInput) error
+	AddItemsToOrder(ctx context.Context, orderID string, items []OrderItemInput, waiterName string) error
 	ProcessPayment(ctx context.Context, orderID string) error
 	ApplyOrderDiscount(ctx context.Context, orderID string, chargeType string, value float64) error
 	ApplyOrderCompliment(ctx context.Context, orderID string) error
@@ -95,4 +104,5 @@ type OrderRepository interface {
 	CountVoidedOrders(ctx context.Context) (int64, error)
 	ListVoidedOrdersByDateRange(ctx context.Context, startDate, endDate time.Time, limit, offset int64) ([]VoidedOrderHistory, error)
 	CountVoidedOrdersByDateRange(ctx context.Context, startDate, endDate time.Time) (int64, error)
+	GetTopProductNotes(ctx context.Context, productID string, limit int) ([]ProductNote, error)
 }

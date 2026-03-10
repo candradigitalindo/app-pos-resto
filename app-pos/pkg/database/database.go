@@ -386,6 +386,21 @@ func runMigrations(db *sql.DB) error {
 			duration_ms INTEGER,
 			details TEXT
 		);
+
+		-- Tabel tracking versi data (conflict resolution)
+		CREATE TABLE IF NOT EXISTS entity_versions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			entity_type TEXT NOT NULL,
+			entity_id TEXT NOT NULL,
+			version INTEGER DEFAULT 1,
+			cloud_version INTEGER DEFAULT 0,
+			last_modified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			last_synced_at TIMESTAMP,
+			sync_status TEXT DEFAULT 'pending',
+			UNIQUE(entity_type, entity_id)
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_entity_versions_sync ON entity_versions(sync_status);
 	`
 
 	_, err := db.Exec(schema)
@@ -1717,11 +1732,189 @@ func runMigrations(db *sql.DB) error {
 		}
 	}
 
+	// Migration: Add notes column to order_items table
+	{
+		var hasNotes bool
+		rows, err := db.Query("PRAGMA table_info(order_items)")
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var cid int
+			var name, ctype string
+			var notnull int
+			var dfltValue sql.NullString
+			var pk int
+			if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+				rows.Close()
+				return err
+			}
+			if name == "notes" {
+				hasNotes = true
+			}
+		}
+		rows.Close()
+
+		if !hasNotes {
+			_, err := db.Exec("ALTER TABLE order_items ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+			if err != nil {
+				return err
+			}
+			log.Println("✅ Added notes column to order_items table")
+		}
+	}
+
+	// Migration: Create product_notes table for special request suggestions
+	{
+		_, err := db.Exec(`
+			CREATE TABLE IF NOT EXISTS product_notes (
+				id TEXT PRIMARY KEY CHECK (length(id) = 26),
+				product_id TEXT NOT NULL,
+				note_text TEXT NOT NULL,
+				usage_count INTEGER NOT NULL DEFAULT 1,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+				UNIQUE(product_id, note_text)
+			)
+		`)
+		if err != nil {
+			return err
+		}
+	}
+
 	if err := seedAdminUser(db); err != nil {
 		return err
 	}
 	if err := seedOutletConfig(db); err != nil {
 		return err
+	}
+
+	// Migration: Create product_addons table for additional items with prices
+	{
+		_, err := db.Exec(`
+			CREATE TABLE IF NOT EXISTS product_addons (
+				id TEXT PRIMARY KEY CHECK (length(id) = 26),
+				product_id TEXT NOT NULL,
+				name TEXT NOT NULL,
+				price REAL NOT NULL DEFAULT 0,
+				is_active INTEGER NOT NULL DEFAULT 1,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+			)
+		`)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Migration: Add addons column to order_items (JSON text)
+	{
+		var hasColumn bool
+		rows, err := db.Query("PRAGMA table_info(order_items)")
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var cid int
+			var name, colType string
+			var notNull int
+			var dfltValue interface{}
+			var pk int
+			if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+				rows.Close()
+				return err
+			}
+			if name == "addons" {
+				hasColumn = true
+				break
+			}
+		}
+		rows.Close()
+
+		if !hasColumn {
+			_, err := db.Exec("ALTER TABLE order_items ADD COLUMN addons TEXT NOT NULL DEFAULT '[]'")
+			if err != nil {
+				return err
+			}
+			log.Println("✅ Added addons column to order_items table")
+		}
+	}
+
+	// Migration: Add waiter_name column to orders
+	{
+		var hasColumn bool
+		rows, err := db.Query("PRAGMA table_info(orders)")
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var cid int
+			var name, colType string
+			var notNull int
+			var dfltValue interface{}
+			var pk int
+			if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+				rows.Close()
+				return err
+			}
+			if name == "waiter_name" {
+				hasColumn = true
+				break
+			}
+		}
+		rows.Close()
+
+		if !hasColumn {
+			_, err := db.Exec("ALTER TABLE orders ADD COLUMN waiter_name TEXT NOT NULL DEFAULT ''")
+			if err != nil {
+				return err
+			}
+			log.Println("✅ Added waiter_name column to orders table")
+		}
+	}
+
+	// Migration: Add waiter_name and is_additional columns to order_items
+	{
+		var hasWaiterName, hasIsAdditional bool
+		rows, err := db.Query("PRAGMA table_info(order_items)")
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var cid int
+			var name, colType string
+			var notNull int
+			var dfltValue interface{}
+			var pk int
+			if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+				rows.Close()
+				return err
+			}
+			if name == "waiter_name" {
+				hasWaiterName = true
+			}
+			if name == "is_additional" {
+				hasIsAdditional = true
+			}
+		}
+		rows.Close()
+
+		if !hasWaiterName {
+			_, err := db.Exec("ALTER TABLE order_items ADD COLUMN waiter_name TEXT NOT NULL DEFAULT ''")
+			if err != nil {
+				return err
+			}
+			log.Println("✅ Added waiter_name column to order_items table")
+		}
+		if !hasIsAdditional {
+			_, err := db.Exec("ALTER TABLE order_items ADD COLUMN is_additional INTEGER NOT NULL DEFAULT 0")
+			if err != nil {
+				return err
+			}
+			log.Println("✅ Added is_additional column to order_items table")
+		}
 	}
 
 	return nil

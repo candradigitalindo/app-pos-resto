@@ -216,6 +216,9 @@ func RunMigrations() error {
 
 		`CREATE INDEX IF NOT EXISTS idx_cloud_printers_outlet ON cloud_printers(outlet_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_cloud_printers_active ON cloud_printers(outlet_id, is_active)`,
+
+		// Add phone column to outlets (idempotent)
+		`ALTER TABLE outlets ADD COLUMN IF NOT EXISTS phone VARCHAR(50) DEFAULT ''`,
 	}
 
 	for i, m := range migrations {
@@ -230,6 +233,9 @@ func RunMigrations() error {
 		`ALTER TABLE cloud_transactions ADD COLUMN IF NOT EXISTS items JSONB`,
 		`ALTER TABLE cloud_categories ADD COLUMN IF NOT EXISTS code_prefix VARCHAR(10) DEFAULT ''`,
 		`ALTER TABLE cloud_categories ADD COLUMN IF NOT EXISTS printer_id VARCHAR(50) DEFAULT NULL`,
+		`ALTER TABLE cloud_products ADD COLUMN IF NOT EXISTS code VARCHAR(50) DEFAULT NULL`,
+		`ALTER TABLE cloud_products ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_products_code ON cloud_products(outlet_id, code) WHERE code IS NOT NULL AND code != ''`,
 	}
 
 	for _, m := range additiveMigrations {

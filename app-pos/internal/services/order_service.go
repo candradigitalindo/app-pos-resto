@@ -14,7 +14,7 @@ type OrderService interface {
 	UpdateOrderStatus(ctx context.Context, orderID string, status string) error
 	UpdateOrderItemStatus(ctx context.Context, itemID string, status string) error
 	UpdateOrderItemQty(ctx context.Context, itemID string, qty int64) error
-	AddItemsToOrder(ctx context.Context, orderID string, items []repositories.OrderItemInput) error
+	AddItemsToOrder(ctx context.Context, orderID string, items []repositories.OrderItemInput, waiterName string) error
 	ProcessPayment(ctx context.Context, orderID string) error
 	ApplyOrderDiscount(ctx context.Context, orderID string, chargeType string, value float64) error
 	ApplyOrderCompliment(ctx context.Context, orderID string) error
@@ -35,6 +35,7 @@ type OrderService interface {
 	VoidOrder(ctx context.Context, orderID string, voidedBy string, voidReason string) error
 	ListVoidedOrders(ctx context.Context, limit, offset int64) ([]repositories.VoidedOrderHistory, int64, error)
 	ListVoidedOrdersByDateRange(ctx context.Context, startDate, endDate time.Time, limit, offset int64) ([]repositories.VoidedOrderHistory, int64, error)
+	GetTopProductNotes(ctx context.Context, productID string, limit int) ([]repositories.ProductNote, error)
 }
 
 type orderService struct {
@@ -71,8 +72,8 @@ func (s *orderService) UpdateOrderItemQty(ctx context.Context, itemID string, qt
 	return s.orderRepo.UpdateOrderItemQty(ctx, itemID, qty)
 }
 
-func (s *orderService) AddItemsToOrder(ctx context.Context, orderID string, items []repositories.OrderItemInput) error {
-	return s.orderRepo.AddItemsToOrder(ctx, orderID, items)
+func (s *orderService) AddItemsToOrder(ctx context.Context, orderID string, items []repositories.OrderItemInput, waiterName string) error {
+	return s.orderRepo.AddItemsToOrder(ctx, orderID, items, waiterName)
 }
 
 func (s *orderService) ProcessPayment(ctx context.Context, orderID string) error {
@@ -169,4 +170,8 @@ func (s *orderService) ListVoidedOrdersByDateRange(ctx context.Context, startDat
 		return nil, 0, err
 	}
 	return items, total, nil
+}
+
+func (s *orderService) GetTopProductNotes(ctx context.Context, productID string, limit int) ([]repositories.ProductNote, error) {
+	return s.orderRepo.GetTopProductNotes(ctx, productID, limit)
 }

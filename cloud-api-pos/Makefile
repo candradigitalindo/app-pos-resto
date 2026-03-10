@@ -1,9 +1,14 @@
-.PHONY: run build dev clean migrate
+.PHONY: run build dev dev-all clean migrate
 
-# Run the server
+# Run the server only
 run:
 	@echo "🚀 Starting Cloud API server..."
 	go run main.go
+
+# Run backend + UI dev server together
+dev-all:
+	@echo "🚀 Starting Cloud API + UI dev server..."
+	DEV_UI=true go run main.go
 
 # Build binary
 build:

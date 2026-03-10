@@ -35,10 +35,12 @@ type PrintPayload struct {
 
 // PrintItemWithInfo represents an item in print payload with full details.
 type PrintItem struct {
-	Name     string `json:"name"`
-	Quantity int    `json:"quantity"`
-	Price    int    `json:"price"`
-	Total    int    `json:"total"`
+	Name     string           `json:"name"`
+	Quantity int              `json:"quantity"`
+	Price    int              `json:"price"`
+	Total    int              `json:"total"`
+	Notes    string           `json:"notes,omitempty"`
+	Addons   []OrderItemAddon `json:"addons,omitempty"`
 }
 
 func parseNumeric(value interface{}) (float64, error) {
@@ -317,10 +319,14 @@ func (r *orderRepository) CreateOrderWithItems(ctx context.Context, input OrderI
 		subtotal := 0.0
 		type ItemWithDetails struct {
 			ProductName string
+			ProductID   string
 			Price       float64
 			Qty         int64
 			PrinterID   string
 			Destination string
+			Notes       string
+			AddonsJSON  string
+			Addons      []OrderItemAddon
 		}
 		itemsWithDetails := make([]ItemWithDetails, 0, len(input.Items))
 		itemsByPrinter := make(map[string][]ItemWithDetails)
@@ -349,14 +355,32 @@ func (r *orderRepository) CreateOrderWithItems(ctx context.Context, input OrderI
 				}
 			}
 
+			// Calculate addon total per item
+			addonTotal := 0.0
+			for _, addon := range item.Addons {
+				addonTotal += addon.Price
+			}
+			itemPrice := product.Price + addonTotal // base price + addons
+
+			// Serialize addons to JSON
+			addonsJSON := "[]"
+			if len(item.Addons) > 0 {
+				b, _ := json.Marshal(item.Addons)
+				addonsJSON = string(b)
+			}
+
 			// Calculate subtotal
-			subtotal += product.Price * float64(item.Qty)
+			subtotal += itemPrice * float64(item.Qty)
 			itemDetail := ItemWithDetails{
 				ProductName: product.Name,
-				Price:       product.Price,
+				ProductID:   item.ProductID,
+				Price:       itemPrice,
 				Qty:         item.Qty,
 				PrinterID:   printerID,
 				Destination: destination,
+				Notes:       strings.TrimSpace(item.Notes),
+				AddonsJSON:  addonsJSON,
+				Addons:      item.Addons,
 			}
 			itemsWithDetails = append(itemsWithDetails, itemDetail)
 
@@ -386,25 +410,36 @@ func (r *orderRepository) CreateOrderWithItems(ctx context.Context, input OrderI
 			return fmt.Errorf("gagal membuat order: %w", err)
 		}
 
+		// Store waiter_name on the order
+		if input.WaiterName != "" {
+			_, err = tx.ExecContext(ctx, "UPDATE orders SET waiter_name = ? WHERE id = ?", input.WaiterName, orderID)
+			if err != nil {
+				return fmt.Errorf("gagal menyimpan waiter_name: %w", err)
+			}
+		}
+
 		for _, item := range itemsWithDetails {
 			itemID := ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String()
-			_, err = q.CreateOrderItem(ctx, db.CreateOrderItemParams{
-				ID:          itemID,
-				OrderID:     orderID,
-				ProductName: item.ProductName,
-				Qty:         item.Qty,
-				Price:       item.Price,
-				Destination: item.Destination,
-			})
+			_, err = tx.ExecContext(ctx,
+				`INSERT INTO order_items (id, order_id, product_name, qty, price, destination, item_status, notes, addons, waiter_name, is_additional) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, 0)`,
+				itemID, orderID, item.ProductName, item.Qty, item.Price, item.Destination, item.Notes, item.AddonsJSON, input.WaiterName,
+			)
 			if err != nil {
 				return fmt.Errorf("gagal membuat item order: %w", err)
 			}
 		}
 
+		// Upsert product_notes for items with notes
+		for _, item := range itemsWithDetails {
+			if item.Notes != "" {
+				r.upsertProductNotes(ctx, tx, item.ProductID, item.Notes)
+			}
+		}
+
 		// Create print jobs grouped by printer
 		now := time.Now()
-		waiterName := ""
-		if input.CreatedBy != "" {
+		waiterName := input.WaiterName
+		if waiterName == "" && input.CreatedBy != "" {
 			user, err := q.GetUserByID(ctx, input.CreatedBy)
 			if err == nil {
 				waiterName = user.FullName
@@ -423,6 +458,8 @@ func (r *orderRepository) CreateOrderWithItems(ctx context.Context, input OrderI
 					Quantity: int(item.Qty),
 					Price:    price,
 					Total:    total,
+					Notes:    item.Notes,
+					Addons:   item.Addons,
 				}
 				printerTotal += total
 			}
@@ -469,7 +506,7 @@ func (r *orderRepository) CreateOrderWithItems(ctx context.Context, input OrderI
 	return orderID, err
 }
 
-func (r *orderRepository) AddItemsToOrder(ctx context.Context, orderID string, items []OrderItemInput) error {
+func (r *orderRepository) AddItemsToOrder(ctx context.Context, orderID string, items []OrderItemInput, waiterName string) error {
 	return r.execTx(ctx, func(q *db.Queries, tx *sql.Tx) error {
 		order, err := q.GetOrderWithItems(ctx, orderID)
 		if err != nil {
@@ -483,10 +520,14 @@ func (r *orderRepository) AddItemsToOrder(ctx context.Context, orderID string, i
 		var totalAmount float64
 		type ItemWithDetails struct {
 			ProductName string
+			ProductID   string
 			Price       float64
 			Qty         int64
 			PrinterID   string
 			Destination string
+			Notes       string
+			AddonsJSON  string
+			Addons      []OrderItemAddon
 		}
 		itemsWithDetails := make([]ItemWithDetails, 0, len(items))
 		itemsByPrinter := make(map[string][]ItemWithDetails)
@@ -511,15 +552,32 @@ func (r *orderRepository) AddItemsToOrder(ctx context.Context, orderID string, i
 				}
 			}
 
-			itemTotal := product.Price * float64(item.Qty)
+			// Calculate addon total per item
+			addonTotal := 0.0
+			for _, addon := range item.Addons {
+				addonTotal += addon.Price
+			}
+			itemPrice := product.Price + addonTotal
+
+			addonsJSON := "[]"
+			if len(item.Addons) > 0 {
+				b, _ := json.Marshal(item.Addons)
+				addonsJSON = string(b)
+			}
+
+			itemTotal := itemPrice * float64(item.Qty)
 			totalAmount += itemTotal
 
 			itemDetail := ItemWithDetails{
 				ProductName: product.Name,
-				Price:       product.Price,
+				ProductID:   item.ProductID,
+				Price:       itemPrice,
 				Qty:         item.Qty,
 				PrinterID:   printerID,
 				Destination: destination,
+				Notes:       strings.TrimSpace(item.Notes),
+				AddonsJSON:  addonsJSON,
+				Addons:      item.Addons,
 			}
 			itemsWithDetails = append(itemsWithDetails, itemDetail)
 
@@ -530,16 +588,19 @@ func (r *orderRepository) AddItemsToOrder(ctx context.Context, orderID string, i
 
 		for _, item := range itemsWithDetails {
 			itemID := ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String()
-			_, err = q.CreateOrderItem(ctx, db.CreateOrderItemParams{
-				ID:          itemID,
-				OrderID:     orderID,
-				ProductName: item.ProductName,
-				Qty:         item.Qty,
-				Price:       item.Price,
-				Destination: item.Destination,
-			})
+			_, err = tx.ExecContext(ctx,
+				`INSERT INTO order_items (id, order_id, product_name, qty, price, destination, item_status, notes, addons, waiter_name, is_additional) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, 1)`,
+				itemID, orderID, item.ProductName, item.Qty, item.Price, item.Destination, item.Notes, item.AddonsJSON, waiterName,
+			)
 			if err != nil {
 				return fmt.Errorf("gagal membuat item order: %w", err)
+			}
+		}
+
+		// Upsert product_notes for items with notes
+		for _, item := range itemsWithDetails {
+			if item.Notes != "" {
+				r.upsertProductNotes(ctx, tx, item.ProductID, item.Notes)
 			}
 		}
 
@@ -547,11 +608,15 @@ func (r *orderRepository) AddItemsToOrder(ctx context.Context, orderID string, i
 		if order.CustomerName.Valid {
 			customerName = order.CustomerName.String
 		}
-		waiterName := ""
-		if order.CreatedBy.Valid && order.CreatedBy.String != "" {
+		// Use the waiter who's adding items for kitchen print; fallback to order's original waiter
+		printWaiterName := waiterName
+		if printWaiterName == "" {
+			_ = tx.QueryRowContext(ctx, "SELECT COALESCE(waiter_name, '') FROM orders WHERE id = ?", orderID).Scan(&printWaiterName)
+		}
+		if printWaiterName == "" && order.CreatedBy.Valid && order.CreatedBy.String != "" {
 			user, err := q.GetUserByID(ctx, order.CreatedBy.String)
 			if err == nil {
-				waiterName = user.FullName
+				printWaiterName = user.FullName
 			}
 		}
 
@@ -568,6 +633,8 @@ func (r *orderRepository) AddItemsToOrder(ctx context.Context, orderID string, i
 					Quantity: int(item.Qty),
 					Price:    price,
 					Total:    total,
+					Notes:    item.Notes,
+					Addons:   item.Addons,
 				}
 				printerTotal += total
 			}
@@ -577,7 +644,7 @@ func (r *orderRepository) AddItemsToOrder(ctx context.Context, orderID string, i
 				ReceiptNumber: orderID,
 				TableNumber:   order.TableNumber,
 				CustomerName:  customerName,
-				WaiterName:    waiterName,
+				WaiterName:    printWaiterName,
 				Items:         printItems,
 				Subtotal:      printerTotal,
 				Total:         printerTotal,
@@ -1753,4 +1820,59 @@ func (r *orderRepository) CountVoidedOrdersByDateRange(ctx context.Context, star
 		return 0, err
 	}
 	return total, nil
+}
+
+// upsertProductNotes saves or increments usage_count for each note text per product.
+// Notes string may contain multiple comma-separated notes.
+func (r *orderRepository) upsertProductNotes(ctx context.Context, tx *sql.Tx, productID string, notes string) {
+	for _, note := range strings.Split(notes, ",") {
+		note = strings.TrimSpace(note)
+		if note == "" {
+			continue
+		}
+		// Try to increment existing
+		res, err := tx.ExecContext(ctx,
+			`UPDATE product_notes SET usage_count = usage_count + 1, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND note_text = ?`,
+			productID, note,
+		)
+		if err != nil {
+			continue
+		}
+		affected, _ := res.RowsAffected()
+		if affected == 0 {
+			// Insert new
+			noteID := ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String()
+			tx.ExecContext(ctx,
+				`INSERT INTO product_notes (id, product_id, note_text, usage_count) VALUES (?, ?, ?, 1)`,
+				noteID, productID, note,
+			)
+		}
+	}
+}
+
+type ProductNote struct {
+	ID         string `json:"id"`
+	NoteText   string `json:"note_text"`
+	UsageCount int64  `json:"usage_count"`
+}
+
+func (r *orderRepository) GetTopProductNotes(ctx context.Context, productID string, limit int) ([]ProductNote, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, note_text, usage_count FROM product_notes WHERE product_id = ? ORDER BY usage_count DESC, updated_at DESC LIMIT ?`,
+		productID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var notes []ProductNote
+	for rows.Next() {
+		var n ProductNote
+		if err := rows.Scan(&n.ID, &n.NoteText, &n.UsageCount); err != nil {
+			return nil, err
+		}
+		notes = append(notes, n)
+	}
+	return notes, nil
 }

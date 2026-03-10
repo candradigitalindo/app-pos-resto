@@ -8,7 +8,10 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"syscall"
 
 	"github.com/gofiber/fiber/v2"
@@ -62,12 +65,22 @@ func main() {
 
 	routes.Setup(app, cfg)
 
+	// ── Auto-start Vite dev server when DEV_UI=true ─────────────
+	var uiCmd *exec.Cmd
+	if os.Getenv("DEV_UI") == "true" {
+		uiCmd = startUIDevServer()
+	}
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		<-quit
 		log.Println("Shutting down Cloud API server...")
+		if uiCmd != nil && uiCmd.Process != nil {
+			log.Println("Stopping UI dev server...")
+			uiCmd.Process.Kill()
+		}
 		app.Shutdown()
 	}()
 
@@ -81,6 +94,38 @@ func main() {
 	if err := app.Listen(addr); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
+}
+
+// startUIDevServer spawns `npm run dev` inside the ui/ directory.
+// The Vite process is a child process and is killed when the API stops.
+func startUIDevServer() *exec.Cmd {
+	// Locate ui/ relative to the binary (or cwd when using go run)
+	exeDir, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	if err != nil {
+		exeDir = "."
+	}
+	uiDir := filepath.Join(exeDir, "ui")
+	// Fallback: if running via `go run main.go` the binary lives in /tmp
+	if _, err := os.Stat(uiDir); os.IsNotExist(err) {
+		uiDir = "ui"
+	}
+
+	npmBin := "npm"
+	if runtime.GOOS == "windows" {
+		npmBin = "npm.cmd"
+	}
+
+	cmd := exec.Command(npmBin, "run", "dev")
+	cmd.Dir = uiDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		log.Printf("[UI] Failed to start dev server: %v", err)
+		return nil
+	}
+	log.Printf("[UI] Dev server starting in %s (pid %d)", uiDir, cmd.Process.Pid)
+	return cmd
 }
 
 func getLANIP() string {

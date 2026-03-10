@@ -4,6 +4,7 @@ import (
 	"cloud-api-pos/config"
 	"cloud-api-pos/models"
 	"cloud-api-pos/services"
+	"log"
 	"math"
 	"strconv"
 	"time"
@@ -95,6 +96,23 @@ func RegenerateOutletAPIKey(c *fiber.Ctx) error {
 	})
 }
 
+func UpdateOutlet(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var req models.UpdateOutletRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.APIResponse{
+			Success: false, Error: "Invalid request body",
+		})
+	}
+	outlet, err := services.UpdateOutlet(id, req)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.APIResponse{
+			Success: false, Error: "Failed to update outlet: " + err.Error(),
+		})
+	}
+	return c.JSON(models.APIResponse{Success: true, Data: outlet, Message: "Outlet berhasil diperbarui"})
+}
+
 func ToggleOutlet(c *fiber.Ctx) error {
 	id := c.Params("id")
 	outlet, err := services.ToggleOutlet(id)
@@ -107,6 +125,22 @@ func ToggleOutlet(c *fiber.Ctx) error {
 	return c.JSON(models.APIResponse{
 		Success: true, Data: outlet,
 	})
+}
+
+func DeleteOutlet(c *fiber.Ctx) error {
+	id := c.Params("id")
+	err := services.DeleteOutlet(id)
+	if err != nil {
+		if err.Error() == "outlet not found" {
+			return c.Status(fiber.StatusNotFound).JSON(models.APIResponse{
+				Success: false, Error: "Outlet tidak ditemukan",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(models.APIResponse{
+			Success: false, Error: "Gagal menghapus outlet: " + err.Error(),
+		})
+	}
+	return c.JSON(models.APIResponse{Success: true, Message: "Outlet berhasil dihapus"})
 }
 
 // GetOutletInfo returns outlet info to the authenticated outlet itself
@@ -578,10 +612,13 @@ func GetSyncLogs(c *fiber.Ctx) error {
 // ── Dashboard Handler ───────────────────────────────────────
 
 func GetDashboard(c *fiber.Ctx) error {
-	stats, err := services.GetDashboardStats()
+	dateFrom := c.Query("date_from", "")
+	dateTo := c.Query("date_to", "")
+	stats, err := services.GetDashboardStats(dateFrom, dateTo)
 	if err != nil {
+		log.Printf("GetDashboard error: %v", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(models.APIResponse{
-			Success: false, Error: "Failed to get dashboard stats",
+			Success: false, Error: "Failed to get dashboard stats: " + err.Error(),
 		})
 	}
 
@@ -639,6 +676,130 @@ func AdminLogin(cfg *config.Config) fiber.Handler {
 			Message: "Login berhasil",
 		})
 	}
+}
+
+// ── Admin Product & Category Handlers ──────────────────────
+
+func AdminGetProducts(c *fiber.Ctx) error {
+	outletID := c.Query("outlet_id")
+	search := c.Query("search")
+	page, limit := getPagination(c)
+
+	products, total, err := services.GetAllProducts(outletID, search, page, limit)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.APIResponse{
+			Success: false, Error: "Gagal mengambil data produk",
+		})
+	}
+	return c.JSON(models.APIResponse{
+		Success: true,
+		Data: fiber.Map{
+			"items":       products,
+			"total":       total,
+			"page":        page,
+			"limit":       limit,
+			"total_pages": int(math.Ceil(float64(total) / float64(limit))),
+		},
+	})
+}
+
+func AdminGetCategories(c *fiber.Ctx) error {
+	outletID := c.Query("outlet_id")
+	search := c.Query("search")
+	page, limit := getPagination(c)
+
+	cats, total, err := services.GetAllCategories(outletID, search, page, limit)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.APIResponse{
+			Success: false, Error: "Gagal mengambil data kategori",
+		})
+	}
+	return c.JSON(models.APIResponse{
+		Success: true,
+		Data: fiber.Map{
+			"items":       cats,
+			"total":       total,
+			"page":        page,
+			"limit":       limit,
+			"total_pages": int(math.Ceil(float64(total) / float64(limit))),
+		},
+	})
+}
+
+func AdminCreateProduct(c *fiber.Ctx) error {
+	var req models.AdminCreateProductRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.APIResponse{Success: false, Error: "Invalid request body"})
+	}
+	if req.OutletID == "" || req.Name == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(models.APIResponse{Success: false, Error: "outlet_id dan name wajib diisi"})
+	}
+	p, err := services.AdminCreateProduct(req)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.APIResponse{Success: false, Error: err.Error()})
+	}
+	return c.Status(fiber.StatusCreated).JSON(models.APIResponse{Success: true, Data: p})
+}
+
+func AdminUpdateProduct(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var req models.AdminUpdateProductRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.APIResponse{Success: false, Error: "Invalid request body"})
+	}
+	if req.Name == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(models.APIResponse{Success: false, Error: "name wajib diisi"})
+	}
+	if err := services.AdminUpdateProduct(id, req); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.APIResponse{Success: false, Error: err.Error()})
+	}
+	return c.JSON(models.APIResponse{Success: true, Data: fiber.Map{"id": id}})
+}
+
+func AdminDeleteProduct(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if err := services.AdminDeleteProduct(id); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.APIResponse{Success: false, Error: err.Error()})
+	}
+	return c.JSON(models.APIResponse{Success: true, Data: fiber.Map{"id": id}})
+}
+
+func AdminCreateCategory(c *fiber.Ctx) error {
+	var req models.AdminCreateCategoryRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.APIResponse{Success: false, Error: "Invalid request body"})
+	}
+	if req.OutletID == "" || req.Name == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(models.APIResponse{Success: false, Error: "outlet_id dan name wajib diisi"})
+	}
+	cat, err := services.AdminCreateCategory(req)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.APIResponse{Success: false, Error: err.Error()})
+	}
+	return c.Status(fiber.StatusCreated).JSON(models.APIResponse{Success: true, Data: cat})
+}
+
+func AdminUpdateCategory(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var req models.AdminUpdateCategoryRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.APIResponse{Success: false, Error: "Invalid request body"})
+	}
+	if req.Name == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(models.APIResponse{Success: false, Error: "name wajib diisi"})
+	}
+	if err := services.AdminUpdateCategory(id, req); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.APIResponse{Success: false, Error: err.Error()})
+	}
+	return c.JSON(models.APIResponse{Success: true, Data: fiber.Map{"id": id}})
+}
+
+func AdminDeleteCategory(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if err := services.AdminDeleteCategory(id); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.APIResponse{Success: false, Error: err.Error()})
+	}
+	return c.JSON(models.APIResponse{Success: true, Data: fiber.Map{"id": id}})
 }
 
 func GetAdmins(c *fiber.Ctx) error {
