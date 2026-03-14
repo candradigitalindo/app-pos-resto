@@ -30,6 +30,7 @@ type SyncService interface {
 	GetSyncStatus(ctx context.Context) (*models.SyncStatus, error)
 	GetSyncLogs(ctx context.Context, limit int) ([]models.SyncLog, error)
 	GetFailedSync(ctx context.Context) ([]models.SyncQueue, error)
+	GetLastSyncTime(ctx context.Context) (time.Time, error)
 
 	// Manual sync
 	TriggerSync(ctx context.Context) error
@@ -539,13 +540,13 @@ func (s *syncService) PullUpdates(ctx context.Context, since time.Time) error {
 		}
 	}
 
-	if processedCount == 0 {
-		log.Println("No updates from cloud")
-		return nil
-	}
-
+	// Selalu update last_sync_at setelah pull berhasil (meskipun tidak ada data baru)
 	if err := s.syncRepo.UpdateLastSync(ctx); err != nil {
 		log.Printf("Failed to update last sync time: %v", err)
+	}
+
+	if processedCount == 0 {
+		log.Println("No updates from cloud")
 	}
 
 	return nil
@@ -575,6 +576,49 @@ func (s *syncService) FullPullFromCloud(ctx context.Context) error {
 	}
 	log.Printf("FullPullFromCloud: %d kategori diproses", catCount)
 
+	// === Delete local categories not in cloud ===
+	cloudCatIDs := make(map[string]struct{})
+	for _, cat := range categories {
+		id := ""
+		if v, ok := cat["id"].(string); ok {
+			id = v
+		}
+		if id == "" {
+			if v, ok := cat["local_id"].(string); ok {
+				id = v
+			}
+		}
+		if id != "" {
+			cloudCatIDs[id] = struct{}{}
+		}
+	}
+	{
+		rows, err := s.db.QueryContext(ctx, "SELECT id, COALESCE(cloud_id, '') FROM categories WHERE is_deleted = 0")
+		if err == nil {
+			type localCat struct{ id, cloudID string }
+			var localCats []localCat
+			for rows.Next() {
+				var lc localCat
+				if err := rows.Scan(&lc.id, &lc.cloudID); err == nil {
+					localCats = append(localCats, lc)
+				}
+			}
+			rows.Close()
+			delCatCount := 0
+			for _, lc := range localCats {
+				_, foundByID := cloudCatIDs[lc.id]
+				_, foundByCloudID := cloudCatIDs[lc.cloudID]
+				if !foundByID && !foundByCloudID {
+					s.db.ExecContext(ctx, "UPDATE categories SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", lc.id)
+					delCatCount++
+				}
+			}
+			if delCatCount > 0 {
+				log.Printf("FullPullFromCloud: %d kategori lokal dihapus (tidak ada di cloud)", delCatCount)
+			}
+		}
+	}
+
 	// 2. Fetch & upsert products
 	products, err := s.cloudClient.GetAllProducts(ctx)
 	if err != nil {
@@ -590,6 +634,49 @@ func (s *syncService) FullPullFromCloud(ctx context.Context) error {
 	}
 	log.Printf("FullPullFromCloud: %d produk diproses", prodCount)
 
+	// === Delete local products not in cloud ===
+	cloudProdIDs := make(map[string]struct{})
+	for _, prod := range products {
+		id := ""
+		if v, ok := prod["id"].(string); ok {
+			id = v
+		}
+		if id == "" {
+			if v, ok := prod["local_id"].(string); ok {
+				id = v
+			}
+		}
+		if id != "" {
+			cloudProdIDs[id] = struct{}{}
+		}
+	}
+	{
+		rows, err := s.db.QueryContext(ctx, "SELECT id, COALESCE(cloud_id, '') FROM products WHERE is_deleted = 0")
+		if err == nil {
+			type localProd struct{ id, cloudID string }
+			var localProds []localProd
+			for rows.Next() {
+				var lp localProd
+				if err := rows.Scan(&lp.id, &lp.cloudID); err == nil {
+					localProds = append(localProds, lp)
+				}
+			}
+			rows.Close()
+			delProdCount := 0
+			for _, lp := range localProds {
+				_, foundByID := cloudProdIDs[lp.id]
+				_, foundByCloudID := cloudProdIDs[lp.cloudID]
+				if !foundByID && !foundByCloudID {
+					s.db.ExecContext(ctx, "UPDATE products SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", lp.id)
+					delProdCount++
+				}
+			}
+			if delProdCount > 0 {
+				log.Printf("FullPullFromCloud: %d produk lokal dihapus (tidak ada di cloud)", delProdCount)
+			}
+		}
+	}
+
 	if err := s.syncRepo.UpdateLastSync(ctx); err != nil {
 		log.Printf("Warning: gagal update last sync: %v", err)
 	}
@@ -600,6 +687,19 @@ func (s *syncService) FullPullFromCloud(ctx context.Context) error {
 // GetSyncStatus returns current sync status
 func (s *syncService) GetSyncStatus(ctx context.Context) (*models.SyncStatus, error) {
 	return s.syncRepo.GetSyncStatus(ctx)
+}
+
+// GetLastSyncTime returns the last sync timestamp from DB
+func (s *syncService) GetLastSyncTime(ctx context.Context) (time.Time, error) {
+	config, err := s.syncRepo.GetOutletConfig(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if config.LastSyncAt != nil {
+		return *config.LastSyncAt, nil
+	}
+	// No last sync — return zero time so we pull everything
+	return time.Time{}, nil
 }
 
 // GetSyncLogs returns recent sync logs
@@ -899,6 +999,13 @@ doUpsert:
 	exists, err := s.entityExists(ctx, "products", localID)
 	if err != nil {
 		return err
+	}
+
+	// Clear code pada produk soft-deleted lain yang punya code sama (hindari UNIQUE constraint)
+	if code != "" {
+		_, _ = s.db.ExecContext(ctx, `
+			UPDATE products SET code = NULL WHERE code = ? AND id != ? AND is_deleted = 1
+		`, code, localID)
 	}
 
 	nullCategoryID := toNullString(categoryID)

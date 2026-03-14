@@ -25,6 +25,7 @@ type OrderHandler struct {
 	queries            *db.Queries
 	db                 *sql.DB
 	realtime           RealtimeBroadcaster
+	syncRepo           repositories.SyncRepository
 }
 
 type RealtimeBroadcaster interface {
@@ -36,7 +37,7 @@ type splitBillItem struct {
 	Qty    int64  `json:"qty"`
 }
 
-func NewOrderHandler(service services.OrderService, transactionService services.TransactionService, customerService services.CustomerService, queries *db.Queries, dbConn *sql.DB, realtime RealtimeBroadcaster) *OrderHandler {
+func NewOrderHandler(service services.OrderService, transactionService services.TransactionService, customerService services.CustomerService, queries *db.Queries, dbConn *sql.DB, realtime RealtimeBroadcaster, syncRepo repositories.SyncRepository) *OrderHandler {
 	return &OrderHandler{
 		service:            service,
 		transactionService: transactionService,
@@ -44,6 +45,7 @@ func NewOrderHandler(service services.OrderService, transactionService services.
 		queries:            queries,
 		db:                 dbConn,
 		realtime:           realtime,
+		syncRepo:           syncRepo,
 	}
 }
 
@@ -52,6 +54,59 @@ func (h *OrderHandler) emitEvent(event string, payload map[string]interface{}) {
 		return
 	}
 	h.realtime.Emit(event, payload)
+}
+
+func (h *OrderHandler) enqueueOrderSync(ctx context.Context, orderID, operation string) {
+	if h.syncRepo == nil {
+		return
+	}
+	order, items, err := h.service.GetOrderDetails(ctx, orderID)
+	if err != nil {
+		return
+	}
+	type itemPayload struct {
+		ProductName string  `json:"product_name"`
+		Qty         int     `json:"qty"`
+		Price       float64 `json:"price"`
+		Subtotal    float64 `json:"subtotal"`
+		Destination string  `json:"destination"`
+		Status      string  `json:"status"`
+	}
+	orderItems := make([]itemPayload, 0, len(items))
+	for _, it := range items {
+		orderItems = append(orderItems, itemPayload{
+			ProductName: it.ProductName,
+			Qty:         int(it.Qty),
+			Price:       it.Price,
+			Subtotal:    it.Price * float64(it.Qty),
+			Destination: it.Destination,
+			Status:      it.ItemStatus,
+		})
+	}
+
+	// Build payment_info from order state
+	paymentInfo := map[string]interface{}{
+		"paid_amount":    order.PaidAmount,
+		"payment_status": order.PaymentStatus,
+	}
+	if order.VoidedAt.Valid {
+		paymentInfo["voided_at"] = order.VoidedAt.Time.Format(time.RFC3339)
+	}
+
+	payload := map[string]interface{}{
+		"local_id":      order.ID,
+		"table_number":  order.TableNumber,
+		"customer_name": order.CustomerName.String,
+		"pax":           order.Pax,
+		"total_amount":  order.TotalAmount,
+		"status":        order.OrderStatus,
+		"items":         orderItems,
+		"payment_info":  paymentInfo,
+		"version":       int(order.UpdatedAt.Unix()),
+		"created_at":    order.CreatedAt.Format(time.RFC3339),
+		"updated_at":    order.UpdatedAt.Format(time.RFC3339),
+	}
+	_ = h.syncRepo.EnqueueSync(ctx, "order", orderID, operation, payload)
 }
 
 func (h *OrderHandler) ensureOpenCashierShift(ctx context.Context) error {
@@ -253,6 +308,8 @@ func (h *OrderHandler) HandleCreateOrder(c *echo.Context) error {
 		return InternalErrorResponse(c, "Gagal membuat order: "+err.Error())
 	}
 
+	h.enqueueOrderSync((*c).Request().Context(), orderID, "create")
+
 	// Return success immediately (print jobs are in queue)
 	h.emitEvent("order_created", map[string]interface{}{
 		"order_id":     orderID,
@@ -291,6 +348,8 @@ func (h *OrderHandler) HandleAddItemsToOrder(c *echo.Context) error {
 		}
 		return InternalErrorResponse(c, "Gagal menambah item order: "+err.Error())
 	}
+
+	h.enqueueOrderSync((*c).Request().Context(), orderID, "upsert")
 
 	h.emitEvent("order_items_updated", map[string]interface{}{
 		"order_id": orderID,
@@ -332,6 +391,8 @@ func (h *OrderHandler) HandleAddItemsToOrderByTable(c *echo.Context) error {
 		return InternalErrorResponse(c, "Gagal menambah item order: "+err.Error())
 	}
 
+	h.enqueueOrderSync((*c).Request().Context(), order.ID, "upsert")
+
 	h.emitEvent("order_items_updated", map[string]interface{}{
 		"order_id": order.ID,
 	})
@@ -366,6 +427,13 @@ func (h *OrderHandler) HandleUpdateOrderItemStatus(c *echo.Context) error {
 
 	if err := h.service.UpdateOrderItemStatus((*c).Request().Context(), itemID, req.Status); err != nil {
 		return InternalErrorResponse(c, "Gagal update status item: "+err.Error())
+	}
+
+	// Sync order after item status change
+	var orderID string
+	_ = h.db.QueryRowContext((*c).Request().Context(), "SELECT order_id FROM order_items WHERE id = ?", itemID).Scan(&orderID)
+	if orderID != "" {
+		h.enqueueOrderSync((*c).Request().Context(), orderID, "upsert")
 	}
 
 	h.emitEvent("item_status_updated", map[string]interface{}{
@@ -404,6 +472,13 @@ func (h *OrderHandler) HandleUpdateOrderItemQty(c *echo.Context) error {
 			return BadRequestResponse(c, "qty tidak valid")
 		}
 		return InternalErrorResponse(c, "Gagal update qty item: "+err.Error())
+	}
+
+	// Sync order after item qty change
+	var orderID string
+	_ = h.db.QueryRowContext((*c).Request().Context(), "SELECT order_id FROM order_items WHERE id = ?", itemID).Scan(&orderID)
+	if orderID != "" {
+		h.enqueueOrderSync((*c).Request().Context(), orderID, "upsert")
 	}
 
 	h.emitEvent("order_items_updated", map[string]interface{}{
@@ -533,6 +608,8 @@ func (h *OrderHandler) HandleProcessPayment(c *echo.Context) error {
 		return InternalErrorResponse(c, "Gagal mengambil riwayat pembayaran: "+err.Error())
 	}
 
+	h.enqueueOrderSync(ctx, orderID, "upsert")
+
 	h.enqueueFullPaymentReceipt(ctx, paidOrder, paidItems, req.PaymentMethod, paidAmount, changeAmount)
 
 	h.emitEvent("payment_completed", map[string]interface{}{
@@ -582,6 +659,8 @@ func (h *OrderHandler) HandleApplyDiscount(c *echo.Context) error {
 		return BadRequestResponse(c, err.Error())
 	}
 
+	h.enqueueOrderSync(ctx, orderID, "upsert")
+
 	h.emitEvent("order_items_updated", map[string]interface{}{
 		"order_id": orderID,
 	})
@@ -621,6 +700,8 @@ func (h *OrderHandler) HandleApplyCompliment(c *echo.Context) error {
 	}
 
 	h.enqueueComplimentReceipt(ctx, order, items)
+
+	h.enqueueOrderSync(ctx, orderID, "upsert")
 
 	updatedTables := map[string]bool{
 		order.TableNumber: true,
@@ -870,6 +951,8 @@ func (h *OrderHandler) HandleVoidOrder(c *echo.Context) error {
 	for tableNumber := range updatedTables {
 		tableNumbers = append(tableNumbers, tableNumber)
 	}
+
+	h.enqueueOrderSync(ctx, orderID, "upsert")
 
 	h.emitEvent("order_voided", map[string]interface{}{
 		"order_id":      orderID,
@@ -1549,6 +1632,9 @@ func (h *OrderHandler) HandleSplitBillPayment(c *echo.Context) error {
 
 	h.enqueueSplitPaymentReceipt(ctx, order, receiptItems, receiptSubtotal, receiptTotal, req.PaymentMethod, receiptPaidAmount, changeAmount)
 
+	// Sync order after split bill payment
+	h.enqueueOrderSync(ctx, orderID, "upsert")
+
 	h.emitEvent("payment_completed", map[string]interface{}{
 		"order_id":       orderID,
 		"payment_status": order.PaymentStatus,
@@ -1821,6 +1907,12 @@ func (h *OrderHandler) HandleMergeTables(c *echo.Context) error {
 	order, items, err := h.service.GetOrderDetails((*c).Request().Context(), newOrderID)
 	if err != nil {
 		return InternalErrorResponse(c, "Gagal mengambil order gabungan: "+err.Error())
+	}
+
+	// Sync merged order and source orders
+	h.enqueueOrderSync((*c).Request().Context(), newOrderID, "create")
+	for _, srcID := range req.SourceOrderIDs {
+		h.enqueueOrderSync((*c).Request().Context(), srcID, "upsert")
 	}
 
 	h.emitEvent("orders_merged", map[string]interface{}{

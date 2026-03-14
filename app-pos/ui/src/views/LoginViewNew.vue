@@ -120,7 +120,7 @@
                 <input
                   v-model="username"
                   type="text"
-                  class="w-full pl-11 pr-4 py-3 rounded-xl bg-white/[0.06] border border-white/[0.08] text-white placeholder-slate-500 focus:bg-white/[0.1] focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/20 transition-all duration-300 outline-none text-sm"
+                  class="w-full pl-11 pr-4 py-3 rounded-xl bg-white/[0.06] border border-white/[0.08] text-white text-center placeholder-slate-500 focus:bg-white/[0.1] focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/20 transition-all duration-300 outline-none text-sm"
                   placeholder="Masukkan username"
                   autocomplete="username"
                   required

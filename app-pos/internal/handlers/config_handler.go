@@ -187,6 +187,11 @@ func (h *ConfigHandler) UpdateOutletConfig(c *echo.Context) error {
 		h.syncWorker.SetEnabled(*req.SyncEnabled)
 	}
 
+	// Update sync worker interval if changed
+	if req.SyncIntervalMin != nil && h.syncWorker != nil {
+		h.syncWorker.SetInterval(*req.SyncIntervalMin)
+	}
+
 	// Jika API key berubah DAN cloud URL tersedia, auto-discover outlet info dari cloud
 	apiKeyChanged := req.CloudAPIKey != "" && req.CloudAPIKey != oldAPIKey
 	cloudURL := strings.TrimSuffix(config.CloudAPIURL, "/")
@@ -603,7 +608,11 @@ func (h *ConfigHandler) TestCloudConnection(c *echo.Context) error {
 
 	// Step 1: Ping cloud API to check connectivity
 	cloudURL := strings.TrimRight(config.CloudAPIURL, "/")
-	pingURL := cloudURL + "/api/v1/ping"
+	// Handle URL that already contains /api/v1
+	pingURL := cloudURL + "/ping"
+	if !strings.Contains(cloudURL, "/api/v1") {
+		pingURL = cloudURL + "/api/v1/ping"
+	}
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 
@@ -639,7 +648,10 @@ func (h *ConfigHandler) TestCloudConnection(c *echo.Context) error {
 	}
 
 	// Step 3: Get outlet info from cloud API
-	infoURL := cloudURL + "/api/v1/outlets/" + outletID + "/info"
+	infoURL := cloudURL + "/outlets/" + outletID + "/info"
+	if !strings.Contains(cloudURL, "/api/v1") {
+		infoURL = cloudURL + "/api/v1/outlets/" + outletID + "/info"
+	}
 	req2, _ := http.NewRequest("GET", infoURL, nil)
 	req2.Header.Set("Authorization", "Bearer "+config.CloudAPIKey)
 

@@ -49,6 +49,7 @@ func (w *SyncWorker) Start() {
 		return
 	}
 
+	w.stopChan = make(chan struct{})
 	w.isRunning = true
 	log.Printf("▶️  Starting sync worker (interval: %v)", w.interval)
 
@@ -140,7 +141,14 @@ func (w *SyncWorker) performSync() {
 
 	// Pull updates from cloud (since last sync) — hanya jika push berhasil
 	if !hadError {
-		since := time.Now().Add(-w.interval * 2) // Pull last 2 intervals worth of data
+		since, err := w.syncService.GetLastSyncTime(ctx)
+		if err != nil {
+			log.Printf("⚠️  Failed to get last sync time, using fallback: %v", err)
+			since = time.Now().Add(-w.interval * 2)
+		}
+		if since.IsZero() {
+			since = time.Now().Add(-24 * time.Hour) // First sync: pull last 24h
+		}
 		if err := w.syncService.PullUpdates(ctx, since); err != nil {
 			log.Printf("❌ Error pulling updates from cloud: %v", err)
 			hadError = true
@@ -180,5 +188,22 @@ func (w *SyncWorker) SetEnabled(enabled bool) {
 	} else if !enabled && w.isRunning {
 		log.Println("⏸️  Sync disabled - Stopping sync worker...")
 		w.Stop()
+	}
+}
+
+// SetInterval updates the sync interval and restarts the worker if running
+func (w *SyncWorker) SetInterval(minutes int) {
+	if minutes < 1 {
+		minutes = 5
+	}
+	newInterval := time.Duration(minutes) * time.Minute
+	if newInterval == w.interval {
+		return
+	}
+	log.Printf("🔄 Sync interval changed: %v → %v", w.interval, newInterval)
+	w.interval = newInterval
+	if w.isRunning {
+		w.Stop()
+		w.Start()
 	}
 }

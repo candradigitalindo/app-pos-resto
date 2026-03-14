@@ -268,7 +268,7 @@ func main() {
 	categoryHandler := handlers.NewCategoryHandler(categoryService)
 	transactionHandler := handlers.NewTransactionHandler(transactionService, queries, sqlDB, syncRepo)
 	socketBroadcaster := &socketBroadcaster{server: socketServer}
-	orderHandler := handlers.NewOrderHandler(orderService, transactionService, customerService, queries, sqlDB, socketBroadcaster)
+	orderHandler := handlers.NewOrderHandler(orderService, transactionService, customerService, queries, sqlDB, socketBroadcaster, syncRepo)
 	tableHandler := handlers.NewTableHandler(tableService, queries, sqlDB)
 	printerHandler := handlers.NewPrinterHandler(printerService, syncRepo)
 	printHandler := handlers.NewPrintHandler(sqlDB)
