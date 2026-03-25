@@ -373,6 +373,7 @@ func main() {
 	protected.POST("/orders", orderHandler.HandleCreateOrder, authmw.WaiterOrAdmin())
 	protected.GET("/orders", orderHandler.HandleListOrders)
 	protected.POST("/orders/merge", orderHandler.HandleMergeTables, authmw.WaiterOrAdmin())
+	protected.PUT("/orders/:id/move-table", orderHandler.HandleMoveTable, authmw.WaiterOrAdmin())
 	protected.POST("/orders/:id/items", orderHandler.HandleAddItemsToOrder, authmw.WaiterOrAdmin())
 	protected.POST("/orders/table/:table_id/items", orderHandler.HandleAddItemsToOrderByTable, authmw.WaiterOrAdmin())
 	// Kitchen/Bar can update item status

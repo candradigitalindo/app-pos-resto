@@ -30,6 +30,7 @@ type PrintJobData struct {
 	RetryOf                string             `json:"retry_of,omitempty"`
 	ReceiptNumber          string             `json:"receipt_number"`
 	TableNumber            string             `json:"table_number"`
+	OldTableNumber         string             `json:"old_table_number,omitempty"`
 	CustomerName           string             `json:"customer_name"`
 	WaiterName             string             `json:"waiter_name"`
 	CashierName            string             `json:"cashier_name"`
@@ -65,6 +66,8 @@ type PrintJobData struct {
 	CancelledTotal         int                `json:"cancelled_total"`
 	CashIns                []CashMovementData `json:"cash_ins"`
 	CashOuts               []CashMovementData `json:"cash_outs"`
+	IsMoveTable            bool               `json:"is_move_table,omitempty"`
+	Pax                    int                `json:"pax,omitempty"`
 }
 
 type CashMovementData struct {
@@ -393,6 +396,49 @@ func (w *PrintWorker) processJob(jobID, printerID string, dataJSON string, retry
 			DateTime:      jobData.DateTime,
 		}
 		receiptData = formatter.FormatCashOutReceipt(cashOutPayload)
+	} else if jobData.IsMoveTable {
+		// Move table notice - same format for checker, kitchen, and bar printers
+		printerItems := make([]printer.ReceiptItem, len(jobData.Items))
+		for i, item := range jobData.Items {
+			printerItems[i] = printer.ReceiptItem{
+				Name:     item.Name,
+				Quantity: item.Quantity,
+				Price:    item.Price,
+				Total:    item.Total,
+			}
+		}
+		receiptData = formatter.FormatMoveTable(
+			jobData.ReceiptNumber,
+			jobData.OldTableNumber,
+			jobData.TableNumber,
+			jobData.WaiterName,
+			jobData.Pax,
+			printerItems,
+			jobData.DateTime,
+		)
+	} else if printerType == "checker" {
+		// Checker format - verification order list (all items, no prices)
+		printerItems := make([]printer.ReceiptItem, len(jobData.Items))
+		for i, item := range jobData.Items {
+			printerItems[i] = printer.ReceiptItem{
+				Name:     item.Name,
+				Quantity: item.Quantity,
+				Price:    item.Price,
+				Total:    item.Total,
+			}
+		}
+		// Detect if this is additional items (checker had earlier jobs for same order)
+		var existingCheckerJobs int
+		_ = w.db.QueryRow(`SELECT COUNT(*) FROM print_queue WHERE printer_id = ? AND id < ? AND data LIKE '%' || ? || '%'`, printerID, jobID, jobData.OrderID).Scan(&existingCheckerJobs)
+		isAdditional := existingCheckerJobs > 0
+		receiptData = formatter.FormatCheckerOrder(
+			jobData.ReceiptNumber,
+			jobData.TableNumber,
+			jobData.WaiterName,
+			printerItems,
+			isAdditional,
+			jobData.DateTime,
+		)
 	} else if printerType == "kitchen" || printerType == "bar" {
 		// Kitchen/Bar format - simple order list
 		// Convert to printer.ReceiptItem

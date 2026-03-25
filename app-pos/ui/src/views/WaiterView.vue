@@ -559,6 +559,17 @@
               <div class="flex flex-col sm:flex-row gap-2">
                 <button
                   type="button"
+                  @click="openMoveTableModal"
+                  :disabled="moveTableCandidates.length === 0 || currentOrder.order.is_merged"
+                  class="btn-secondary flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                  </svg>
+                  Pindah Meja
+                </button>
+                <button
+                  type="button"
                   @click="openMergeModal"
                   :disabled="mergeCandidates.length === 0 || currentOrder.order.is_merged"
                   class="btn-secondary flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -687,6 +698,79 @@
           >
             <div v-if="merging" class="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
             {{ merging ? 'Memproses...' : 'Gabungkan Meja' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MOVE TABLE MODAL ==================== -->
+  <div v-if="showMoveTableModal" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/60 sm:px-4" @click="closeMoveTableModal">
+    <div class="w-full max-w-2xl rounded-t-3xl sm:rounded-3xl bg-white shadow-soft max-h-[90vh] overflow-hidden flex flex-col" @click.stop>
+      <div class="flex items-center justify-between border-b border-slate-100 px-4 sm:px-6 py-3 sm:py-4 sticky top-0 bg-white z-10">
+        <div class="flex items-center gap-3">
+          <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100">
+            <svg class="h-6 w-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+            </svg>
+          </div>
+          <div>
+            <h2 class="text-base sm:text-lg font-bold text-slate-900">Pindah Meja</h2>
+            <p class="text-xs sm:text-sm text-slate-500">Dari: Meja {{ selectedTable?.table_number }}</p>
+          </div>
+        </div>
+        <button @click="closeMoveTableModal" class="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-600 transition hover:bg-slate-200">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="overflow-y-auto flex-1 p-4 sm:p-6">
+        <div class="space-y-3">
+          <div class="rounded-2xl border-2 border-slate-200 bg-slate-50/60 p-3 sm:p-4">
+            <div class="text-xs font-semibold text-slate-500">Pilih meja tujuan</div>
+            <div class="text-sm font-bold text-slate-900">Pilih 1 meja kosong untuk memindahkan order</div>
+          </div>
+
+          <div v-if="moveTableCandidates.length === 0" class="rounded-2xl border-2 border-slate-200 p-6 text-center text-sm text-slate-500">
+            Tidak ada meja kosong yang tersedia
+          </div>
+
+          <div v-else class="grid grid-cols-3 sm:grid-cols-4 gap-2">
+            <button
+              v-for="table in moveTableCandidates"
+              :key="table.id"
+              type="button"
+              @click="moveTargetTable = table"
+              :class="[
+                'rounded-2xl border-2 p-3 sm:p-4 text-center transition',
+                moveTargetTable?.id === table.id
+                  ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
+                  : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/50'
+              ]"
+            >
+              <div class="text-lg sm:text-xl font-bold" :class="moveTargetTable?.id === table.id ? 'text-blue-600' : 'text-slate-700'">{{ table.table_number }}</div>
+              <div class="text-xs text-slate-500 mt-1">Kapasitas {{ table.capacity }}</div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="border-t border-slate-100 p-4 sm:p-6">
+        <div v-if="moveTargetTable" class="mb-3 rounded-xl bg-blue-50 p-3 text-center">
+          <span class="text-sm text-blue-700">Meja <strong>{{ selectedTable?.table_number }}</strong> → Meja <strong>{{ moveTargetTable.table_number }}</strong></span>
+        </div>
+        <div class="flex flex-col sm:flex-row gap-2 sm:justify-end">
+          <button type="button" @click="closeMoveTableModal" class="btn-secondary">Batal</button>
+          <button
+            type="button"
+            @click="submitMoveTable"
+            :disabled="!moveTargetTable || movingTable"
+            class="btn-primary flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <div v-if="movingTable" class="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+            {{ movingTable ? 'Memproses...' : 'Pindahkan Meja' }}
           </button>
         </div>
       </div>
@@ -936,9 +1020,12 @@ const showOrderModal = ref(false)
 const showViewOrderModal = ref(false)
 const showAddItemsModal = ref(false)
 const showMergeModal = ref(false)
+const showMoveTableModal = ref(false)
 const submitting = ref(false)
 const addingItems = ref(false)
 const merging = ref(false)
+const movingTable = ref(false)
+const moveTargetTable = ref(null)
 const loadingOrder = ref(false)
 const currentOrder = ref(null)
 const mergeSelections = ref([])
@@ -1215,6 +1302,10 @@ const mergeCandidates = computed(() => {
   )
 })
 
+const moveTableCandidates = computed(() => {
+  return availableTables.value.filter(table => table.status === 'available')
+})
+
 // === Data fetching ===
 const refreshData = async (showLoading = true) => {
   if (showLoading) loading.value = true
@@ -1398,6 +1489,16 @@ const closeMergeModal = () => {
   showMergeModal.value = false
 }
 
+const openMoveTableModal = () => {
+  moveTargetTable.value = null
+  showMoveTableModal.value = true
+}
+
+const closeMoveTableModal = () => {
+  showMoveTableModal.value = false
+  moveTargetTable.value = null
+}
+
 const openAddItemsModal = () => {
   showViewOrderModal.value = false
   showAddItemsModal.value = true
@@ -1536,6 +1637,34 @@ const submitMerge = async () => {
   }
 }
 
+const submitMoveTable = async () => {
+  if (!currentOrder.value?.order?.id) {
+    showError('Data order tidak valid')
+    return
+  }
+  if (!moveTargetTable.value) {
+    showError('Pilih meja tujuan')
+    return
+  }
+
+  movingTable.value = true
+  try {
+    await api.put(`/orders/${currentOrder.value.order.id}/move-table`, {
+      new_table_number: String(moveTargetTable.value.table_number)
+    })
+    showSuccess(`Berhasil pindah ke Meja ${moveTargetTable.value.table_number}`)
+    closeMoveTableModal()
+    showViewOrderModal.value = false
+    selectedTable.value = null
+    currentOrder.value = null
+    await refreshData()
+  } catch (error) {
+    showError('Gagal pindah meja: ' + (error.response?.data?.message || error.message))
+  } finally {
+    movingTable.value = false
+  }
+}
+
 const viewTableOrder = async (table) => {
   loadingOrder.value = true
   showViewOrderModal.value = true
@@ -1583,6 +1712,7 @@ const handleRealtimeEvent = async (event) => {
     event.type === 'order_created' ||
     event.type === 'order_items_updated' ||
     event.type === 'orders_merged' ||
+    event.type === 'table_moved' ||
     event.type === 'item_status_updated' ||
     event.type === 'payment_completed' ||
     event.type === 'table_status_updated'

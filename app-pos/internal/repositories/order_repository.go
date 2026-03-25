@@ -98,6 +98,7 @@ type OrderRepository interface {
 	ListOrdersByCustomer(ctx context.Context, customerID string, startDate, endDate time.Time) ([]db.Order, error)
 	SplitBillPayment(ctx context.Context, orderID string, amount float64, paymentMethod string, note string, createdBy string, items []SplitBillItem) error
 	MergeTables(ctx context.Context, sourceOrderIDs []string, targetTableNumber string) (string, error)
+	MoveOrderToTable(ctx context.Context, orderID string, newTableNumber string, waiterName string) error
 	GetOrderPayments(ctx context.Context, orderID string) ([]db.Payment, error)
 	VoidOrder(ctx context.Context, orderID string, voidedBy string, voidReason string) error
 	ListVoidedOrders(ctx context.Context, limit, offset int64) ([]VoidedOrderHistory, error)

@@ -1930,6 +1930,61 @@ func (h *OrderHandler) HandleMergeTables(c *echo.Context) error {
 	})
 }
 
+// HandleMoveTable - Waiter/Admin untuk pindah meja
+func (h *OrderHandler) HandleMoveTable(c *echo.Context) error {
+	orderID := c.Param("id")
+	if orderID == "" {
+		return BadRequestResponse(c, "Order ID wajib diisi")
+	}
+
+	var req struct {
+		NewTableNumber string `json:"new_table_number"`
+	}
+	if err := (*c).Bind(&req); err != nil {
+		return BadRequestResponse(c, "Body request tidak valid")
+	}
+	if req.NewTableNumber == "" {
+		return BadRequestResponse(c, "new_table_number wajib diisi")
+	}
+
+	// Get waiter name from JWT context
+	waiterName := ""
+	if userID, ok := (*c).Get("user_id").(string); ok && userID != "" {
+		user, err := h.queries.GetUserByID((*c).Request().Context(), userID)
+		if err == nil {
+			waiterName = user.FullName
+		}
+	}
+
+	// Get old order info for event
+	oldOrder, _, _ := h.service.GetOrderDetails((*c).Request().Context(), orderID)
+	oldTableNumber := ""
+	if oldOrder != nil {
+		oldTableNumber = oldOrder.TableNumber
+	}
+
+	err := h.service.MoveOrderToTable((*c).Request().Context(), orderID, req.NewTableNumber, waiterName)
+	if err != nil {
+		return InternalErrorResponse(c, "Gagal pindah meja: "+err.Error())
+	}
+
+	// Sync
+	h.enqueueOrderSync((*c).Request().Context(), orderID, "upsert")
+
+	// Emit real-time event
+	h.emitEvent("table_moved", map[string]interface{}{
+		"order_id":         orderID,
+		"old_table_number": oldTableNumber,
+		"new_table_number": req.NewTableNumber,
+	})
+
+	return SuccessResponse(c, "Meja berhasil dipindah", map[string]interface{}{
+		"order_id":         orderID,
+		"old_table_number": oldTableNumber,
+		"new_table_number": req.NewTableNumber,
+	})
+}
+
 // HandleGetOrderByTable - Get active order for a specific table
 func (h *OrderHandler) HandleGetOrderByTable(c *echo.Context) error {
 	tableID := c.Param("table_id")

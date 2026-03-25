@@ -31,6 +31,7 @@ type OrderService interface {
 	ListOrdersByCustomer(ctx context.Context, customerID string, startDate, endDate time.Time) ([]db.Order, error)
 	SplitBillPayment(ctx context.Context, orderID string, amount float64, paymentMethod string, note string, createdBy string, items []repositories.SplitBillItem) error
 	MergeTables(ctx context.Context, sourceOrderIDs []string, targetTableNumber string) (string, error)
+	MoveOrderToTable(ctx context.Context, orderID string, newTableNumber string, waiterName string) error
 	GetOrderPayments(ctx context.Context, orderID string) ([]db.Payment, error)
 	VoidOrder(ctx context.Context, orderID string, voidedBy string, voidReason string) error
 	ListVoidedOrders(ctx context.Context, limit, offset int64) ([]repositories.VoidedOrderHistory, int64, error)
@@ -138,6 +139,10 @@ func (s *orderService) SplitBillPayment(ctx context.Context, orderID string, amo
 
 func (s *orderService) MergeTables(ctx context.Context, sourceOrderIDs []string, targetTableNumber string) (string, error) {
 	return s.orderRepo.MergeTables(ctx, sourceOrderIDs, targetTableNumber)
+}
+
+func (s *orderService) MoveOrderToTable(ctx context.Context, orderID string, newTableNumber string, waiterName string) error {
+	return s.orderRepo.MoveOrderToTable(ctx, orderID, newTableNumber, waiterName)
 }
 
 func (s *orderService) GetOrderPayments(ctx context.Context, orderID string) ([]db.Payment, error) {

@@ -24,6 +24,31 @@ func NewAuthHandler(dbConn *sql.DB) *AuthHandler {
 	}
 }
 
+// isPINUsedByOther checks if the given plain PIN is already used by another active user.
+// excludeUserID can be empty string to check against ALL active users (for registration).
+func (h *AuthHandler) isPINUsedByOther(ctx echo.Context, pin string, excludeUserID string) (bool, error) {
+	rows, err := h.db.QueryContext(ctx.Request().Context(),
+		"SELECT id, password_hash FROM users WHERE is_active = 1")
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id, hash string
+		if err := rows.Scan(&id, &hash); err != nil {
+			continue
+		}
+		if id == excludeUserID {
+			continue
+		}
+		if bcrypt.CompareHashAndPassword([]byte(hash), []byte(pin)) == nil {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 type RegisterRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -134,6 +159,15 @@ func (h *AuthHandler) HandleRegister(c *echo.Context) error {
 	}
 	if !validRoles[req.Role] {
 		return BadRequestResponse(c, "Role tidak valid. Role yang tersedia: admin, waiter, kitchen, bar, cashier, manager")
+	}
+
+	// Check PIN uniqueness
+	pinUsed, err := h.isPINUsedByOther(*c, req.Password, "")
+	if err != nil {
+		return InternalErrorResponse(c, "Gagal memeriksa PIN")
+	}
+	if pinUsed {
+		return ConflictResponse(c, "PIN sudah digunakan oleh user lain")
 	}
 
 	// Hash password
@@ -350,6 +384,15 @@ func (h *AuthHandler) HandleUpdateProfile(c *echo.Context) error {
 			return BadRequestResponse(c, "PIN baru harus berbeda dengan PIN lama")
 		}
 
+		// Check PIN uniqueness
+		pinUsed, err := h.isPINUsedByOther(*c, req.NewPassword, claims.UserID)
+		if err != nil {
+			return InternalErrorResponse(c, "Gagal memeriksa PIN")
+		}
+		if pinUsed {
+			return ConflictResponse(c, "PIN sudah digunakan oleh user lain")
+		}
+
 		// Hash new password
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 		if err != nil {
@@ -527,6 +570,14 @@ func (h *AuthHandler) HandleUpdateUser(c *echo.Context) error {
 			if char < '0' || char > '9' {
 				return BadRequestResponse(c, "PIN harus berupa angka")
 			}
+		}
+		// Check PIN uniqueness
+		pinUsed, err := h.isPINUsedByOther(*c, req.Password, userID)
+		if err != nil {
+			return InternalErrorResponse(c, "Gagal memeriksa PIN")
+		}
+		if pinUsed {
+			return ConflictResponse(c, "PIN sudah digunakan oleh user lain")
 		}
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 		if err != nil {

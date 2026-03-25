@@ -1041,6 +1041,210 @@ func wrapText(text string, width int) []string {
 	return lines
 }
 
+// FormatCheckerOrder formats order for checker printer (verification format)
+// Shows ALL items with table number in big text, waiter name, no prices
+func (f *PrintFormatter) FormatCheckerOrder(orderNumber, tableName, waiterName string, items []ReceiptItem, isAdditional bool, timestamp time.Time) []byte {
+	buf := bytes.NewBuffer(nil)
+
+	buf.Write(ESC_INIT)
+	buf.Write(ESC_CHARSET_LATIN)
+
+	// Header
+	buf.Write(ESC_ALIGN_CENTER)
+	buf.Write(ESC_SIZE_DOUBLE)
+	buf.Write(ESC_BOLD_ON)
+	if isAdditional {
+		buf.WriteString("CHECKER")
+		buf.Write(ESC_NEWLINE)
+		buf.WriteString("TAMBAHAN")
+	} else {
+		buf.WriteString("CHECKER")
+	}
+	buf.Write(ESC_BOLD_OFF)
+	buf.Write(ESC_SIZE_NORMAL)
+	buf.Write(ESC_NEWLINE)
+	buf.Write(ESC_NEWLINE)
+
+	// Table number - big
+	buf.Write(ESC_SIZE_DOUBLE)
+	buf.Write(ESC_BOLD_ON)
+	buf.WriteString("MEJA " + tableName)
+	buf.Write(ESC_BOLD_OFF)
+	buf.Write(ESC_SIZE_NORMAL)
+	buf.Write(ESC_NEWLINE)
+
+	buf.Write(ESC_ALIGN_LEFT)
+	buf.WriteString(BuildDivider("=", f.paperSize))
+	buf.Write(ESC_NEWLINE)
+
+	// Order info
+	labelWidth := 7
+	formatLine := func(label, value string) string {
+		prefix := PadRight(label, labelWidth) + " : "
+		available := f.charLimit - len(prefix)
+		if available < 1 {
+			available = 1
+		}
+		if len(value) > available {
+			value = value[:available]
+		}
+		return prefix + value
+	}
+
+	buf.WriteString(formatLine("Order", orderNumber))
+	buf.Write(ESC_NEWLINE)
+	if waiterName != "" {
+		buf.WriteString(formatLine("Waiter", waiterName))
+		buf.Write(ESC_NEWLINE)
+	}
+	buf.WriteString(formatLine("Waktu", timestamp.Format("15:04")))
+	buf.Write(ESC_NEWLINE)
+
+	buf.WriteString(BuildDivider("-", f.paperSize))
+	buf.Write(ESC_NEWLINE)
+	buf.Write(ESC_NEWLINE)
+
+	// Items - qty x name only, no prices
+	buf.Write(ESC_SIZE_NORMAL)
+	for _, item := range items {
+		prefix := fmt.Sprintf("%d x ", item.Quantity)
+		availableWidth := f.charLimit - len(prefix)
+		if availableWidth < 1 {
+			availableWidth = 1
+		}
+		lines := wrapText(item.Name, availableWidth)
+		if len(lines) == 0 {
+			lines = []string{""}
+		}
+		for i, line := range lines {
+			if i == 0 {
+				buf.Write(ESC_BOLD_ON)
+				buf.WriteString(prefix)
+				buf.Write(ESC_BOLD_OFF)
+				buf.WriteString(line)
+				buf.Write(ESC_NEWLINE)
+				continue
+			}
+			buf.WriteString(strings.Repeat(" ", len(prefix)))
+			buf.WriteString(line)
+			buf.Write(ESC_NEWLINE)
+		}
+	}
+
+	buf.Write(ESC_NEWLINE)
+	buf.WriteString(BuildDivider("=", f.paperSize))
+	buf.Write(ESC_NEWLINE)
+	buf.Write(ESC_NEWLINE)
+	buf.Write(ESC_NEWLINE)
+	buf.Write(ESC_NEWLINE)
+
+	// Cut
+	buf.Write(ESC_CUT_PARTIAL)
+
+	return buf.Bytes()
+}
+
+// FormatMoveTable formats a "PINDAH MEJA" notice for checker/kitchen printer
+// Shows old table → new table in big text, waiter name, and all items
+func (f *PrintFormatter) FormatMoveTable(orderNumber, oldTable, newTable, waiterName string, pax int, items []ReceiptItem, timestamp time.Time) []byte {
+	buf := bytes.NewBuffer(nil)
+
+	buf.Write(ESC_INIT)
+	buf.Write(ESC_CHARSET_LATIN)
+
+	// Header
+	buf.Write(ESC_ALIGN_CENTER)
+	buf.Write(ESC_SIZE_DOUBLE)
+	buf.Write(ESC_BOLD_ON)
+	buf.WriteString("PINDAH MEJA")
+	buf.Write(ESC_BOLD_OFF)
+	buf.Write(ESC_SIZE_NORMAL)
+	buf.Write(ESC_NEWLINE)
+	buf.Write(ESC_NEWLINE)
+
+	// Old → New table in big text
+	buf.Write(ESC_SIZE_DOUBLE)
+	buf.Write(ESC_BOLD_ON)
+	buf.WriteString(oldTable + " -> " + newTable)
+	buf.Write(ESC_BOLD_OFF)
+	buf.Write(ESC_SIZE_NORMAL)
+	buf.Write(ESC_NEWLINE)
+
+	buf.Write(ESC_ALIGN_LEFT)
+	buf.WriteString(BuildDivider("=", f.paperSize))
+	buf.Write(ESC_NEWLINE)
+
+	// Order info
+	labelWidth := 7
+	formatLine := func(label, value string) string {
+		prefix := PadRight(label, labelWidth) + " : "
+		available := f.charLimit - len(prefix)
+		if available < 1 {
+			available = 1
+		}
+		if len(value) > available {
+			value = value[:available]
+		}
+		return prefix + value
+	}
+
+	buf.WriteString(formatLine("Order", orderNumber))
+	buf.Write(ESC_NEWLINE)
+	if waiterName != "" {
+		buf.WriteString(formatLine("Waiter", waiterName))
+		buf.Write(ESC_NEWLINE)
+	}
+	if pax > 0 {
+		buf.WriteString(formatLine("Tamu", fmt.Sprintf("%d pax", pax)))
+		buf.Write(ESC_NEWLINE)
+	}
+	buf.WriteString(formatLine("Waktu", timestamp.Format("15:04")))
+	buf.Write(ESC_NEWLINE)
+
+	buf.WriteString(BuildDivider("-", f.paperSize))
+	buf.Write(ESC_NEWLINE)
+	buf.Write(ESC_NEWLINE)
+
+	// Items - qty x name only, no prices
+	buf.Write(ESC_SIZE_NORMAL)
+	for _, item := range items {
+		prefix := fmt.Sprintf("%d x ", item.Quantity)
+		availableWidth := f.charLimit - len(prefix)
+		if availableWidth < 1 {
+			availableWidth = 1
+		}
+		lines := wrapText(item.Name, availableWidth)
+		if len(lines) == 0 {
+			lines = []string{""}
+		}
+		for i, line := range lines {
+			if i == 0 {
+				buf.Write(ESC_BOLD_ON)
+				buf.WriteString(prefix)
+				buf.Write(ESC_BOLD_OFF)
+				buf.WriteString(line)
+				buf.Write(ESC_NEWLINE)
+				continue
+			}
+			buf.WriteString(strings.Repeat(" ", len(prefix)))
+			buf.WriteString(line)
+			buf.Write(ESC_NEWLINE)
+		}
+	}
+
+	buf.Write(ESC_NEWLINE)
+	buf.WriteString(BuildDivider("=", f.paperSize))
+	buf.Write(ESC_NEWLINE)
+	buf.Write(ESC_NEWLINE)
+	buf.Write(ESC_NEWLINE)
+	buf.Write(ESC_NEWLINE)
+
+	// Cut
+	buf.Write(ESC_CUT_PARTIAL)
+
+	return buf.Bytes()
+}
+
 // FormatTestPrint generates minimal test print
 func (f *PrintFormatter) FormatTestPrint(printerName, ipPort string) []byte {
 	buf := bytes.NewBuffer(nil)

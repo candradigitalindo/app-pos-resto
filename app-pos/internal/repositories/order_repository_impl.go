@@ -17,20 +17,23 @@ import (
 
 // PrintPayload represents the JSON content for print jobs.
 type PrintPayload struct {
-	OrderID       string      `json:"order_id"`
-	ReceiptNumber string      `json:"receipt_number"`
-	TableNumber   string      `json:"table_number"`
-	CustomerName  string      `json:"customer_name"`
-	WaiterName    string      `json:"waiter_name"`
-	CashierName   string      `json:"cashier_name"`
-	Items         []PrintItem `json:"items"`
-	Subtotal      int         `json:"subtotal"`
-	Tax           int         `json:"tax"`
-	Total         int         `json:"total"`
-	PaymentMethod string      `json:"payment_method"`
-	PaidAmount    int         `json:"paid_amount"`
-	ChangeAmount  int         `json:"change_amount"`
-	DateTime      time.Time   `json:"datetime"`
+	OrderID        string      `json:"order_id"`
+	ReceiptNumber  string      `json:"receipt_number"`
+	TableNumber    string      `json:"table_number"`
+	OldTableNumber string      `json:"old_table_number,omitempty"`
+	CustomerName   string      `json:"customer_name"`
+	WaiterName     string      `json:"waiter_name"`
+	CashierName    string      `json:"cashier_name"`
+	Items          []PrintItem `json:"items"`
+	Subtotal       int         `json:"subtotal"`
+	Tax            int         `json:"tax"`
+	Total          int         `json:"total"`
+	PaymentMethod  string      `json:"payment_method"`
+	PaidAmount     int         `json:"paid_amount"`
+	ChangeAmount   int         `json:"change_amount"`
+	DateTime       time.Time   `json:"datetime"`
+	IsMoveTable    bool        `json:"is_move_table,omitempty"`
+	Pax            int         `json:"pax,omitempty"`
 }
 
 // PrintItemWithInfo represents an item in print payload with full details.
@@ -495,6 +498,51 @@ func (r *orderRepository) CreateOrderWithItems(ctx context.Context, input OrderI
 			}
 		}
 
+		// Create checker print job if checker printer is active
+		var checkerPrinterID string
+		_ = tx.QueryRowContext(ctx, "SELECT id FROM printers WHERE printer_type = 'checker' AND is_active = 1 LIMIT 1").Scan(&checkerPrinterID)
+		if checkerPrinterID != "" {
+			allPrintItems := make([]PrintItem, 0, len(itemsWithDetails))
+			var allTotal int
+			for _, item := range itemsWithDetails {
+				price := int(math.Round(item.Price))
+				total := price * int(item.Qty)
+				allPrintItems = append(allPrintItems, PrintItem{
+					Name:     item.ProductName,
+					Quantity: int(item.Qty),
+					Price:    price,
+					Total:    total,
+					Notes:    item.Notes,
+					Addons:   item.Addons,
+				})
+				allTotal += total
+			}
+			checkerPayload := PrintPayload{
+				OrderID:       orderID,
+				ReceiptNumber: orderID,
+				TableNumber:   input.TableNumber,
+				CustomerName:  input.CustomerName,
+				WaiterName:    waiterName,
+				Items:         allPrintItems,
+				Subtotal:      allTotal,
+				Total:         allTotal,
+				DateTime:      now,
+			}
+			checkerJSON, err := json.Marshal(checkerPayload)
+			if err != nil {
+				return fmt.Errorf("gagal marshal checker payload: %w", err)
+			}
+			checkerJobID := ulid.MustNew(ulid.Timestamp(now), rand.Reader).String()
+			_, err = q.CreatePrintJob(ctx, db.CreatePrintJobParams{
+				ID:        checkerJobID,
+				PrinterID: checkerPrinterID,
+				Data:      string(checkerJSON),
+			})
+			if err != nil {
+				return fmt.Errorf("gagal membuat checker print job: %w", err)
+			}
+		}
+
 		_, _, err = r.recalculateOrderTotals(ctx, q, tx, orderID)
 		if err != nil {
 			return err
@@ -664,6 +712,51 @@ func (r *orderRepository) AddItemsToOrder(ctx context.Context, orderID string, i
 			})
 			if err != nil {
 				return fmt.Errorf("gagal membuat print job: %w", err)
+			}
+		}
+
+		// Create checker print job for additional items if checker printer is active
+		var checkerPrinterID string
+		_ = tx.QueryRowContext(ctx, "SELECT id FROM printers WHERE printer_type = 'checker' AND is_active = 1 LIMIT 1").Scan(&checkerPrinterID)
+		if checkerPrinterID != "" {
+			allPrintItems := make([]PrintItem, 0, len(itemsWithDetails))
+			var allTotal int
+			for _, item := range itemsWithDetails {
+				price := int(math.Round(item.Price))
+				total := price * int(item.Qty)
+				allPrintItems = append(allPrintItems, PrintItem{
+					Name:     item.ProductName,
+					Quantity: int(item.Qty),
+					Price:    price,
+					Total:    total,
+					Notes:    item.Notes,
+					Addons:   item.Addons,
+				})
+				allTotal += total
+			}
+			checkerPayload := PrintPayload{
+				OrderID:       orderID,
+				ReceiptNumber: orderID,
+				TableNumber:   order.TableNumber,
+				CustomerName:  customerName,
+				WaiterName:    printWaiterName,
+				Items:         allPrintItems,
+				Subtotal:      allTotal,
+				Total:         allTotal,
+				DateTime:      now,
+			}
+			checkerJSON, err := json.Marshal(checkerPayload)
+			if err != nil {
+				return fmt.Errorf("gagal marshal checker payload: %w", err)
+			}
+			checkerJobID := ulid.MustNew(ulid.Timestamp(now), rand.Reader).String()
+			_, err = q.CreatePrintJob(ctx, db.CreatePrintJobParams{
+				ID:        checkerJobID,
+				PrinterID: checkerPrinterID,
+				Data:      string(checkerJSON),
+			})
+			if err != nil {
+				return fmt.Errorf("gagal membuat checker print job: %w", err)
 			}
 		}
 
@@ -1648,6 +1741,141 @@ func (r *orderRepository) MergeTables(ctx context.Context, sourceOrderIDs []stri
 	})
 
 	return newOrderID, err
+}
+
+// MoveOrderToTable moves an active order from one table to another.
+// Updates table statuses and creates checker print job for "PINDAH MEJA" notice.
+func (r *orderRepository) MoveOrderToTable(ctx context.Context, orderID string, newTableNumber string, waiterName string) error {
+	return r.execTx(ctx, func(q *db.Queries, tx *sql.Tx) error {
+		// Get current order
+		order, err := q.GetOrderWithItems(ctx, orderID)
+		if err != nil {
+			return fmt.Errorf("order tidak ditemukan: %w", err)
+		}
+		if order.PaymentStatus == "paid" {
+			return fmt.Errorf("order sudah dibayar, tidak bisa pindah meja")
+		}
+
+		oldTableNumber := order.TableNumber
+
+		if oldTableNumber == newTableNumber {
+			return fmt.Errorf("meja tujuan sama dengan meja saat ini")
+		}
+
+		// Verify new table exists and is available
+		var newTableStatus string
+		err = tx.QueryRowContext(ctx, "SELECT status FROM tables WHERE table_number = ?", newTableNumber).Scan(&newTableStatus)
+		if err != nil {
+			return fmt.Errorf("meja %s tidak ditemukan: %w", newTableNumber, err)
+		}
+		if newTableStatus != "available" {
+			return fmt.Errorf("meja %s tidak tersedia (status: %s)", newTableNumber, newTableStatus)
+		}
+
+		// Update order's table_number
+		_, err = tx.ExecContext(ctx, "UPDATE orders SET table_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", newTableNumber, orderID)
+		if err != nil {
+			return fmt.Errorf("gagal update meja order: %w", err)
+		}
+
+		// Set old table to available
+		_, err = tx.ExecContext(ctx, "UPDATE tables SET status = 'available', updated_at = CURRENT_TIMESTAMP WHERE table_number = ?", oldTableNumber)
+		if err != nil {
+			return fmt.Errorf("gagal update status meja lama: %w", err)
+		}
+
+		// Set new table to occupied
+		_, err = tx.ExecContext(ctx, "UPDATE tables SET status = 'occupied', updated_at = CURRENT_TIMESTAMP WHERE table_number = ?", newTableNumber)
+		if err != nil {
+			return fmt.Errorf("gagal update status meja baru: %w", err)
+		}
+
+		// Resolve waiter name
+		printWaiterName := waiterName
+		if printWaiterName == "" {
+			_ = tx.QueryRowContext(ctx, "SELECT COALESCE(waiter_name, '') FROM orders WHERE id = ?", orderID).Scan(&printWaiterName)
+		}
+		if printWaiterName == "" && order.CreatedBy.Valid && order.CreatedBy.String != "" {
+			user, err := q.GetUserByID(ctx, order.CreatedBy.String)
+			if err == nil {
+				printWaiterName = user.FullName
+			}
+		}
+
+		// Get all order items for the print
+		items, err := q.GetOrderItems(ctx, orderID)
+		if err != nil {
+			return fmt.Errorf("gagal mendapatkan item order: %w", err)
+		}
+
+		now := time.Now()
+		printItems := make([]PrintItem, 0, len(items))
+		for _, item := range items {
+			price := int(math.Round(item.Price))
+			printItems = append(printItems, PrintItem{
+				Name:     item.ProductName,
+				Quantity: int(item.Qty),
+				Price:    price,
+				Total:    price * int(item.Qty),
+			})
+		}
+
+		// Build move-table payload
+		movePayload := PrintPayload{
+			OrderID:        orderID,
+			ReceiptNumber:  orderID,
+			TableNumber:    newTableNumber,
+			OldTableNumber: oldTableNumber,
+			WaiterName:     printWaiterName,
+			Items:          printItems,
+			Pax:            int(order.Pax),
+			DateTime:       now,
+			IsMoveTable:    true,
+		}
+
+		// Create checker print job if checker printer is active
+		var checkerPrinterID string
+		_ = tx.QueryRowContext(ctx, "SELECT id FROM printers WHERE printer_type = 'checker' AND is_active = 1 LIMIT 1").Scan(&checkerPrinterID)
+		if checkerPrinterID != "" {
+			payloadJSON, err := json.Marshal(movePayload)
+			if err != nil {
+				return fmt.Errorf("gagal marshal move-table payload: %w", err)
+			}
+			jobID := ulid.MustNew(ulid.Timestamp(now), rand.Reader).String()
+			_, err = q.CreatePrintJob(ctx, db.CreatePrintJobParams{
+				ID:        jobID,
+				PrinterID: checkerPrinterID,
+				Data:      string(payloadJSON),
+			})
+			if err != nil {
+				return fmt.Errorf("gagal membuat checker print job: %w", err)
+			}
+		}
+
+		// Also print move notice to kitchen/bar printers that have active jobs for this order
+		rows, err := tx.QueryContext(ctx, `
+			SELECT DISTINCT p.id FROM printers p
+			WHERE p.printer_type IN ('kitchen', 'bar') AND p.is_active = 1
+			AND EXISTS (SELECT 1 FROM print_queue pq WHERE pq.printer_id = p.id AND pq.data LIKE '%' || ? || '%')
+		`, orderID)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var kitchenPrinterID string
+				if rows.Scan(&kitchenPrinterID) == nil {
+					payloadJSON, _ := json.Marshal(movePayload)
+					jobID := ulid.MustNew(ulid.Timestamp(now), rand.Reader).String()
+					_, _ = q.CreatePrintJob(ctx, db.CreatePrintJobParams{
+						ID:        jobID,
+						PrinterID: kitchenPrinterID,
+						Data:      string(payloadJSON),
+					})
+				}
+			}
+		}
+
+		return nil
+	})
 }
 
 // GetOrderPayments mendapatkan semua pembayaran untuk order (untuk tracking split bill)
