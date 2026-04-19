@@ -2,10 +2,16 @@
  * src/utils/format.js — Display formatting helpers
  *
  * All functions are pure (no side effects) and return strings.
- *
- * AI NOTE: To add a new format function, simply export a new function here.
- * All components import from this module — changes propagate everywhere.
+ * Time formatting respects the app-wide timezone setting.
  */
+
+/**
+ * Get the current timezone from the settings store (cached in localStorage).
+ * Falls back to Asia/Jakarta if not set.
+ */
+function getTimezone() {
+  return localStorage.getItem('cloud_pos_timezone') || 'Asia/Jakarta'
+}
 
 /**
  * Format a number as Indonesian Rupiah currency.
@@ -23,54 +29,76 @@ export function formatRupiah(value) {
 }
 
 /**
- * Format an ISO date string or Date to a human-readable local datetime.
+ * Format an ISO date string or Date to dd-MM-YYYY, HH:mm.
+ * Uses the app-wide timezone setting.
  * @param {string|Date} value
- * @returns {string}  e.g. "04 Mar 2026, 14:30"
+ * @returns {string}  e.g. "04-03-2026, 14:30"
  */
 export function formatDateTime(value) {
   if (!value) return '—'
-  return new Intl.DateTimeFormat('id-ID', {
+  const d = new Date(value)
+  const tz = getTimezone()
+  const parts = new Intl.DateTimeFormat('en-GB', {
     year: 'numeric',
-    month: 'short',
+    month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-  }).format(new Date(value))
+    hour12: false,
+    timeZone: tz,
+  }).formatToParts(d)
+  const get = (type) => parts.find(p => p.type === type)?.value || ''
+  return `${get('day')}-${get('month')}-${get('year')}, ${get('hour')}:${get('minute')}`
 }
 
 /**
- * Format an ISO date string to date only.
+ * Format an ISO date string or Date to dd-MM-YYYY (date only, no time).
+ * Uses the app-wide timezone setting.
  * @param {string|Date} value
- * @returns {string}  e.g. "04 Mar 2026"
+ * @returns {string}  e.g. "04-03-2026"
  */
 export function formatDate(value) {
   if (!value) return '—'
-  return new Intl.DateTimeFormat('id-ID', {
+  const d = new Date(value)
+  const tz = getTimezone()
+  const parts = new Intl.DateTimeFormat('en-GB', {
     year: 'numeric',
-    month: 'short',
+    month: '2-digit',
     day: '2-digit',
-  }).format(new Date(value))
+    timeZone: tz,
+  }).formatToParts(d)
+  const get = (type) => parts.find(p => p.type === type)?.value || ''
+  return `${get('day')}-${get('month')}-${get('year')}`
 }
 
 /**
- * Truncate a string to `max` characters and append "…" if needed.
- * @param {string} str
- * @param {number} max
- * @returns {string}
+ * Get today's date as YYYY-MM-DD in the configured timezone.
+ * Use this instead of new Date().toISOString().slice(0, 10).
+ * @returns {string}  e.g. "2026-04-10"
  */
-export function truncate(str, max = 40) {
-  if (!str) return ''
-  return str.length <= max ? str : str.slice(0, max) + '…'
+export function todayDateString() {
+  const tz = getTimezone()
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone: tz,
+  }).formatToParts(new Date())
+  const get = (type) => parts.find(p => p.type === type)?.value || ''
+  return `${get('year')}-${get('month')}-${get('day')}`
 }
 
 /**
- * Capitalise the first letter of each word.
- * @param {string} str
- * @returns {string}
+ * Convert a YYYY-MM-DD or ISO timestamp string to dd-MM-YYYY for display.
+ * @param {string} value  e.g. "2026-04-11" or "2026-04-11T00:00:00Z"
+ * @returns {string}      e.g. "11-04-2026"
  */
-export function titleCase(str) {
-  if (!str) return ''
-  return str.replace(/\b\w/g, c => c.toUpperCase())
+export function formatDateStr(value) {
+  if (!value || typeof value !== 'string') return '—'
+  const dateOnly = value.includes('T') ? value.split('T')[0] : value
+  const parts = dateOnly.split('-')
+  if (parts.length !== 3) return value
+  return `${parts[2]}-${parts[1]}-${parts[0]}`
 }
 
 /**

@@ -180,7 +180,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import { dashboardApi } from '@/api/dashboard.js'
-import { formatRupiah, timeAgo } from '@/utils/format.js'
+import { formatRupiah, timeAgo, formatDate } from '@/utils/format.js'
 import AppTable  from '@/components/ui/AppTable.vue'
 import AppAlert  from '@/components/ui/AppAlert.vue'
 
@@ -269,9 +269,10 @@ const customFrom    = ref('')
 const customTo      = ref('')
 
 // ── Current date ──────────────────────────────────────────────
-const currentDate = computed(() =>
-  new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
-)
+const currentDate = computed(() => {
+  const tz = localStorage.getItem('cloud_pos_timezone') || 'Asia/Jakarta'
+  return new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: tz })
+})
 
 // ── Lifecycle ─────────────────────────────────────────────────
 onMounted(fetchStats)

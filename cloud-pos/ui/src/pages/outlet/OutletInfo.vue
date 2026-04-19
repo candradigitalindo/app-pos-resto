@@ -248,6 +248,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { outletsApi }    from '@/api/outlets.js'
 import { useToastStore } from '@/stores/toast.js'
+import { formatDateTime } from '@/utils/format.js'
 import AppAlert from '@/components/ui/AppAlert.vue'
 
 const props = defineProps({
@@ -270,10 +271,7 @@ const maskedKey = computed(() => {
   return localKey.value.slice(0, 8) + '••••••••••••••••' + localKey.value.slice(-4)
 })
 
-function fmtDate(ts) {
-  if (!ts) return '—'
-  return new Date(ts).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })
-}
+const fmtDate = formatDateTime
 
 async function copyKey() {
   const key = localKey.value || props.outlet?.api_key

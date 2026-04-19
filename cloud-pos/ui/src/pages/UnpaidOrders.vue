@@ -170,7 +170,7 @@ const parsedItems = computed(() => {
 
 onMounted(async () => {
   try {
-    const data = await outletsApi.list()
+    const data = await outletsApi.myOutlets()
     const list = data.outlets ?? data ?? []
     outletOptions.value = list.map(o => ({ value: o.id, label: o.name }))
   } catch { /* ignore */ }

@@ -89,23 +89,6 @@
         </nav>
       </div>
 
-      <div class="sb-spacer" />
-      <div class="sb-separator" />
-
-      <!-- User block -->
-      <div class="sb-user">
-        <div class="user-avatar-lg">{{ adminInitial }}</div>
-        <div class="user-meta">
-          <span class="user-name">{{ authStore.admin?.username }}</span>
-          <span class="user-role capitalize">{{ authStore.admin?.role }}</span>
-        </div>
-        <button class="logout-icon-btn" @click="logout" title="Logout">
-          <svg fill="none" viewBox="0 0 20 20" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"
-              d="M13 4.5l3.5 3.5L13 11.5M16.5 8H7M10 3H5a1 1 0 00-1 1v12a1 1 0 001 1h5"/>
-          </svg>
-        </button>
-      </div>
     </aside>
 
     <!-- ── Main column ── -->
@@ -145,8 +128,16 @@
             </svg>
           </button>
           <span class="tb-vdivider" />
-          <span class="role-chip capitalize">{{ authStore.admin?.role }}</span>
-          <div class="tb-avatar">{{ adminInitial }}</div>
+          <div class="tb-user-block cursor-pointer" @click="showProfileModal = true">
+            <div class="tb-avatar">{{ adminInitial }}</div>
+            <div class="tb-user-meta">
+              <span class="tb-user-name">{{ authStore.admin?.username }}</span>
+              <span class="tb-user-role capitalize">{{ authStore.admin?.role }}</span>
+            </div>
+            <svg class="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 20 20" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 8l4 4 4-4"/>
+            </svg>
+          </div>
         </div>
       </header>
 
@@ -156,6 +147,62 @@
       </main>
     </div>
 
+    <!-- ── Profile Modal ── -->
+    <AppModal v-model="showProfileModal" title="Profil Saya" size="md">
+      <div class="space-y-6">
+        <!-- Profile Info -->
+        <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-xl">
+          <div class="w-14 h-14 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center text-white text-xl font-bold shadow-md flex-shrink-0">
+            {{ adminInitial }}
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="text-lg font-bold text-gray-900 truncate">{{ authStore.admin?.name || authStore.admin?.username }}</p>
+            <p class="text-sm text-gray-500">@{{ authStore.admin?.username }}</p>
+            <span class="inline-block mt-1 px-2.5 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-700 rounded-full capitalize">{{ authStore.admin?.role }}</span>
+          </div>
+        </div>
+
+        <!-- Edit Name -->
+        <div>
+          <h3 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+            <svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+            Ubah Nama
+          </h3>
+          <div class="flex gap-2">
+            <AppInput v-model="profileForm.name" placeholder="Nama lengkap" class="flex-1" />
+            <AppButton :loading="profileLoading" @click="updateProfile" size="sm">Simpan</AppButton>
+          </div>
+          <p v-if="profileMsg" class="text-xs mt-1.5" :class="profileSuccess ? 'text-emerald-600' : 'text-red-600'">{{ profileMsg }}</p>
+        </div>
+
+        <!-- Change Password -->
+        <div>
+          <h3 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+            <svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+            Ubah Password
+          </h3>
+          <div class="space-y-3">
+            <AppInput v-model="pwForm.currentPassword" type="password" label="Password Lama" placeholder="Masukkan password lama" />
+            <AppInput v-model="pwForm.newPassword" type="password" label="Password Baru" placeholder="Minimal 6 karakter" />
+            <AppInput v-model="pwForm.confirmPassword" type="password" label="Konfirmasi Password Baru" placeholder="Ulangi password baru" />
+          </div>
+          <p v-if="pwMsg" class="text-xs mt-2" :class="pwSuccess ? 'text-emerald-600' : 'text-red-600'">{{ pwMsg }}</p>
+          <AppButton class="mt-3 w-full" :loading="pwLoading" @click="changePassword">Ubah Password</AppButton>
+        </div>
+
+        <!-- Logout -->
+        <div class="pt-3 border-t border-gray-200">
+          <button class="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors" @click="logout">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 20 20" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"
+                d="M13 4.5l3.5 3.5L13 11.5M16.5 8H7M10 3H5a1 1 0 00-1 1v12a1 1 0 001 1h5"/>
+            </svg>
+            Logout
+          </button>
+        </div>
+      </div>
+    </AppModal>
+
     <ToastContainer />
   </div>
 </template>
@@ -164,13 +211,83 @@
 import { ref, reactive, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth.js'
+import { authApi } from '@/api/auth.js'
 import ToastContainer from '@/components/ToastContainer.vue'
+import AppModal from '@/components/ui/AppModal.vue'
+import AppInput from '@/components/ui/AppInput.vue'
+import AppButton from '@/components/ui/AppButton.vue'
 
 const route       = useRoute()
 const router      = useRouter()
 const authStore   = useAuthStore()
 const sidebarOpen = ref(false)
 const openGroups  = reactive({})
+
+// ── Profile modal state ──
+const showProfileModal = ref(false)
+const profileForm      = reactive({ name: authStore.admin?.name || '' })
+const profileLoading   = ref(false)
+const profileMsg       = ref('')
+const profileSuccess   = ref(false)
+
+const pwForm    = reactive({ currentPassword: '', newPassword: '', confirmPassword: '' })
+const pwLoading = ref(false)
+const pwMsg     = ref('')
+const pwSuccess = ref(false)
+
+async function updateProfile() {
+  profileMsg.value = ''
+  if (!profileForm.name.trim()) {
+    profileMsg.value = 'Nama tidak boleh kosong'
+    profileSuccess.value = false
+    return
+  }
+  profileLoading.value = true
+  try {
+    const admin = await authApi.updateProfile(profileForm.name.trim())
+    authStore.admin.name = admin.name
+    profileMsg.value = 'Nama berhasil diperbarui'
+    profileSuccess.value = true
+  } catch (e) {
+    profileMsg.value = e?.message || 'Gagal memperbarui profil'
+    profileSuccess.value = false
+  } finally {
+    profileLoading.value = false
+  }
+}
+
+async function changePassword() {
+  pwMsg.value = ''
+  if (!pwForm.currentPassword || !pwForm.newPassword) {
+    pwMsg.value = 'Semua field password wajib diisi'
+    pwSuccess.value = false
+    return
+  }
+  if (pwForm.newPassword.length < 6) {
+    pwMsg.value = 'Password baru minimal 6 karakter'
+    pwSuccess.value = false
+    return
+  }
+  if (pwForm.newPassword !== pwForm.confirmPassword) {
+    pwMsg.value = 'Konfirmasi password tidak cocok'
+    pwSuccess.value = false
+    return
+  }
+  pwLoading.value = true
+  try {
+    await authApi.changePassword(pwForm.currentPassword, pwForm.newPassword)
+    pwMsg.value = 'Password berhasil diubah'
+    pwSuccess.value = true
+    pwForm.currentPassword = ''
+    pwForm.newPassword = ''
+    pwForm.confirmPassword = ''
+  } catch (e) {
+    pwMsg.value = e?.message || 'Gagal mengubah password'
+    pwSuccess.value = false
+  } finally {
+    pwLoading.value = false
+  }
+}
 
 const adminInitial     = computed(() => (authStore.admin?.username ?? 'A').charAt(0).toUpperCase())
 const currentPageTitle = computed(() => route.meta?.title?.replace(' — Cloud POS', '') ?? 'Dashboard')
@@ -195,6 +312,7 @@ function toggleGroup(label) {
 }
 
 async function logout() {
+  showProfileModal.value = false
   await authStore.logout()
   router.push('/login')
 }
@@ -203,6 +321,7 @@ const NAV_ITEMS_DATA = [
   {
     to: '/',
     label: 'Dashboard',
+    permission: 'dashboard',
     icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
         d="M4 5a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5z"/>
@@ -215,8 +334,22 @@ const NAV_ITEMS_DATA = [
     </svg>`,
   },
   {
+    to: '/manager-dashboard',
+    label: 'Manager Dashboard',
+    permission: 'dashboard.manager',
+    icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
+        d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75z"/>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
+        d="M9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625z"/>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
+        d="M16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/>
+    </svg>`,
+  },
+  {
     to: '/outlets',
     label: 'Outlet',
+    permission: 'outlets.view',
     icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
         d="M3 9.5l9-7 9 7V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/>
@@ -227,34 +360,86 @@ const NAV_ITEMS_DATA = [
   {
     to: '/products',
     label: 'Produk',
+    permission: 'products.view',
     icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
         d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10"/>
     </svg>`,
   },
   {
-    label: 'Laporan',
+    label: 'Keuangan',
     icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
         d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
     </svg>`,
     children: [
-      { to: '/sales-report', label: 'Penjualan' },
+      { to: '/sales-report',         label: 'Pendapatan', permission: 'reports' },
+      { to: '/procurement-payments',  label: 'Pembayaran', permission: 'procurement.finance' },
+      { to: '/product-sales-report', label: 'Penjualan Produk', permission: 'reports' },
+      { to: '/general-ledger',       label: 'Buku Besar', permission: 'reports' },
+      { to: '/cash-flow-report',     label: 'Pemasukan & Pengeluaran', permission: 'reports' },
+      { to: '/profit-loss-report',   label: 'Profit & Loss', permission: 'reports' },
+      { to: '/balance-report',       label: 'Laporan Neraca', permission: 'reports' },
+      { to: '/tax-report',           label: 'Laporan Pajak', permission: 'reports' },
+      { to: '/bank-accounts',         label: 'Data Rekening', permission: 'procurement.finance' },
     ],
   },
   {
-    to: '/admins',
-    label: 'Admin',
+    label: 'Pengadaan',
+    permission: 'procurement.view',
+    icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
+        d="M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 00-3 3h15.75m-12.75-3h11.218c1.121-2.3 2.1-4.684 2.924-7.138a60.114 60.114 0 00-16.536-1.84M7.5 14.25L5.106 5.272M6 20.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm12.75 0a.75.75 0 11-1.5 0 .75.75 0 011.5 0z"/>
+    </svg>`,
+    children: [
+      { to: '/procurement-dashboard', label: 'Dashboard' },
+      { to: '/purchase-goods', label: 'Barang' },
+      { to: '/purchase-services', label: 'Jasa' },
+      { to: '/work-units', label: 'Unit Kerja', permission: 'procurement.work_units' },
+      { to: '/vendors', label: 'Vendor', permission: 'procurement.vendors' },
+    ],
+  },
+  {
+    label: 'Pengguna',
+    permission: 'users.view',
     icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
         d="M16 7a4 4 0 11-8 0 4 4 0 018 0z"/>
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
         d="M12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
     </svg>`,
+    children: [
+      { to: '/admins', label: 'User' },
+      { to: '/roles',  label: 'Role' },
+    ],
+  },
+  {
+    label: 'Pengaturan',
+    permission: 'settings.view',
+    icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
+        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.573-1.066z"/>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
+        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+    </svg>`,
+    children: [
+      { to: '/settings/company',  label: 'Identitas Perusahaan' },
+      { to: '/settings/timezone', label: 'Zona Waktu' },
+      { to: '/settings/tax',     label: 'Pajak' },
+    ],
   },
 ]
 
-const NAV_ITEMS = NAV_ITEMS_DATA
+const NAV_ITEMS = computed(() =>
+  NAV_ITEMS_DATA
+    .filter(item => !item.permission || authStore.hasPermission(item.permission))
+    .map(item => {
+      if (!item.children) return item
+      const filtered = item.children.filter(c => !c.permission || authStore.hasPermission(c.permission))
+      return { ...item, children: filtered }
+    })
+    .filter(item => !item.children || item.children.length > 0)
+)
 
 // Auto-open group if a child route is active
 NAV_ITEMS_DATA.forEach(item => {
@@ -326,7 +511,13 @@ NAV_ITEMS_DATA.forEach(item => {
 }
 
 /* Nav */
-.sb-nav-wrap { position: relative; z-index: 1; padding: 0 .65rem; }
+.sb-nav-wrap {
+  position: relative; z-index: 1; padding: 0 .65rem;
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.1) transparent;
+}
+.sb-nav-wrap::-webkit-scrollbar { width: 4px; }
+.sb-nav-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 9999px; }
 .sb-section-lbl {
   font-size: .575rem; font-weight: 700; text-transform: uppercase;
   letter-spacing: .12em; color: rgba(255,255,255,.22);
@@ -431,41 +622,7 @@ NAV_ITEMS_DATA.forEach(item => {
   max-height: 200px; opacity: 1;
 }
 
-/* User block */
-.sb-spacer { flex: 1; }
-.sb-separator {
-  height: 1px; margin: .5rem .8rem;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.09) 40%, rgba(255,255,255,.09) 60%, transparent);
-}
-.sb-user {
-  display: flex; align-items: center; gap: .6rem;
-  padding: .75rem .9rem;
-  margin: 0 .65rem .7rem;
-  border-radius: 12px;
-  background: rgba(255,255,255,.06);
-  border: 1px solid rgba(255,255,255,.09);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
-  position: relative; z-index: 1;
-}
-.user-avatar-lg {
-  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
-  background: linear-gradient(135deg, rgba(110,231,160,.35), rgba(52,211,113,.15));
-  border: 1.5px solid rgba(110,231,160,.3);
-  display: flex; align-items: center; justify-content: center;
-  font-size: .775rem; font-weight: 700; color: #a7f3c8;
-}
-.user-meta { display: flex; flex-direction: column; flex: 1; min-width: 0; }
-.user-name { font-size: .78rem; font-weight: 600; color: rgba(255,255,255,.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.user-role { font-size: .62rem; color: rgba(255,255,255,.3); margin-top: .05rem; }
-.logout-icon-btn {
-  width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
-  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08);
-  color: rgba(255,255,255,.35); cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: background .15s, color .15s, border-color .15s;
-}
-.logout-icon-btn:hover { background: rgba(239,68,68,.22); color: #fca5a5; border-color: rgba(239,68,68,.3); }
-.logout-icon-btn svg { width: 14px; height: 14px; display: block; }
+
 
 /* ══════════════════════════════ TOPBAR ════════════════════════════ */
 .topbar {
@@ -512,20 +669,25 @@ NAV_ITEMS_DATA.forEach(item => {
 .tb-action-btn:hover { background: rgba(255,255,255,.9); box-shadow: 0 2px 8px rgba(0,0,0,.1), inset 0 1px 0 rgba(255,255,255,.9); color: #14532d; }
 .tb-action-btn svg { width: 16px; height: 16px; display: block; }
 .tb-vdivider { width: 1px; height: 20px; background: rgba(0,0,0,.08); }
-.role-chip {
-  font-size: .68rem; font-weight: 600; letter-spacing: .04em;
-  padding: .28rem .7rem; border-radius: 999px;
-  background: rgba(255,255,255,.6); border: 1px solid rgba(0,0,0,.08); color: #1a4731;
+.tb-user-block {
+  display: flex; align-items: center; gap: .55rem;
+  padding: .35rem .5rem .35rem .35rem;
+  border-radius: 12px;
+  background: rgba(255,255,255,.5);
+  border: 1px solid rgba(0,0,0,.07);
   box-shadow: 0 1px 3px rgba(0,0,0,.06), inset 0 1px 0 rgba(255,255,255,.8);
 }
 .tb-avatar {
-  width: 32px; height: 32px; border-radius: 50%;
+  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
   background: linear-gradient(135deg, #22c55e, #16a34a);
   border: 2px solid rgba(255,255,255,.7);
   display: flex; align-items: center; justify-content: center;
   font-size: .72rem; font-weight: 700; color: #fff;
-  box-shadow: 0 0 0 2px rgba(34,197,94,.2), 0 2px 6px rgba(0,0,0,.15); cursor: pointer;
+  box-shadow: 0 0 0 2px rgba(34,197,94,.2), 0 2px 6px rgba(0,0,0,.15);
 }
+.tb-user-meta { display: flex; flex-direction: column; min-width: 0; }
+.tb-user-name { font-size: .78rem; font-weight: 600; color: #1a4731; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
+.tb-user-role { font-size: .6rem; color: #6b8f7b; margin-top: .05rem; line-height: 1.2; }
 
 /* ══════════════════════════ MAIN + CONTENT ═════════════════════════ */
 .main-col {

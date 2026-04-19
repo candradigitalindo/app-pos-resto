@@ -76,6 +76,7 @@ const TAB_ITEMS = [
   { path: 'printers',     label: 'Printer'        },
   { path: 'sync-logs',    label: 'Sync Log'       },
   { path: 'conflicts',    label: 'Konflik'        },
+  { path: 'procurement',  label: 'Pengadaan'      },
 ]
 </script>
 

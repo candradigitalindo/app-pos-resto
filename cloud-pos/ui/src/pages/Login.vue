@@ -127,7 +127,7 @@ async function submit() {
   loading.value = true
   try {
     await authStore.login(form.username, form.password)
-    router.push('/')
+    router.push(authStore.redirectTo || '/')
   } catch (err) {
     errorMsg.value = err?.message || 'Username atau password salah.'
   } finally {

@@ -1,0 +1,1 @@
+import{a as t}from"./index-BFInzh3G.js";const e={list:()=>t.get("/admin/bank-accounts"),create:a=>t.post("/admin/bank-accounts",a),update:(a,n)=>t.put(`/admin/bank-accounts/${a}`,n),delete:a=>t.delete(`/admin/bank-accounts/${a}`)};export{e as b};

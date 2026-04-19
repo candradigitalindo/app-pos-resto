@@ -87,6 +87,7 @@ func AdminAuth(cfg *config.Config) fiber.Handler {
 			c.Locals("admin_id", "static")
 			c.Locals("admin_username", "admin")
 			c.Locals("admin_role", "superadmin")
+			c.Locals("admin_scope", "all")
 			return c.Next()
 		}
 
@@ -103,6 +104,34 @@ func AdminAuth(cfg *config.Config) fiber.Handler {
 		c.Locals("admin_username", claims["username"])
 		c.Locals("admin_role", claims["role"])
 
+		// Extract scope from JWT
+		scope, _ := claims["scope"].(string)
+		if scope == "" {
+			scope = "all"
+		}
+		c.Locals("admin_scope", scope)
+
+		if scope == "specific" {
+			if raw, ok := claims["outlet_ids"].([]interface{}); ok {
+				ids := make([]string, 0, len(raw))
+				for _, v := range raw {
+					if s, ok := v.(string); ok {
+						ids = append(ids, s)
+					}
+				}
+				c.Locals("admin_outlet_ids", ids)
+			}
+			if raw, ok := claims["work_unit_ids"].([]interface{}); ok {
+				ids := make([]string, 0, len(raw))
+				for _, v := range raw {
+					if s, ok := v.(string); ok {
+						ids = append(ids, s)
+					}
+				}
+				c.Locals("admin_work_unit_ids", ids)
+			}
+		}
+
 		return c.Next()
 	}
 }
@@ -111,5 +140,44 @@ func RateLimiter(cfg *config.Config) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		// TODO: implement rate limiting with Redis or in-memory store
 		return c.Next()
+	}
+}
+
+// RequirePermission checks if the authenticated admin's role has a specific permission.
+// superadmin (static token) always passes.
+// For ".view" permissions, having ".manage" of the same module also passes (manage implies view).
+func RequirePermission(permission string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		role, _ := c.Locals("admin_role").(string)
+
+		// superadmin bypasses all permission checks
+		if role == "superadmin" {
+			return c.Next()
+		}
+
+		perms, err := services.GetRolePermissions(role)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(models.APIResponse{
+				Success: false, Error: "Gagal memeriksa permission",
+			})
+		}
+
+		for _, p := range perms {
+			if p == permission {
+				return c.Next()
+			}
+			// Any sub-permission of a module implies .view access
+			if strings.HasSuffix(permission, ".view") {
+				module := strings.TrimSuffix(permission, ".view")
+				if strings.HasPrefix(p, module+".") {
+					return c.Next()
+				}
+			}
+		}
+
+		return c.Status(fiber.StatusForbidden).JSON(models.APIResponse{
+			Success: false,
+			Error:   "Akses ditolak: Anda tidak memiliki izin untuk fitur ini",
+		})
 	}
 }

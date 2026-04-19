@@ -414,9 +414,10 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
-import { outletsApi }    from '@/api/outlets.js'
-import { useToastStore } from '@/stores/toast.js'
-import { PAGE_SIZE }     from '@/utils/constants.js'
+import { outletsApi }      from '@/api/outlets.js'
+import { useToastStore }   from '@/stores/toast.js'
+import { PAGE_SIZE }       from '@/utils/constants.js'
+import { formatDateTime }  from '@/utils/format.js'
 import AppAlert      from '@/components/ui/AppAlert.vue'
 import AppPagination from '@/components/ui/AppPagination.vue'
 
@@ -483,10 +484,7 @@ async function doRegen() {
   }
 }
 
-function fmtDate(iso) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })
-}
+const fmtDate = formatDateTime
 
 const toast = useToastStore()
 

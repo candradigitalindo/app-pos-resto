@@ -15,9 +15,13 @@
 import { apiClient } from './client.js'
 
 export const outletsApi = {
-  /** Fetch all outlets (supports pagination: { page, limit }) */
+  /** Fetch all outlets (requires outlets.view permission) */
   list: (params = {}) =>
     apiClient.get('/admin/outlets', { params }),
+
+  /** Fetch outlets accessible to the current user based on scope (no permission required) */
+  myOutlets: () =>
+    apiClient.get('/admin/my-outlets'),
 
   /** Update outlet details (name, address, phone, webhook_url) */
   update: (id, payload) =>
@@ -76,6 +80,7 @@ export const outletsApi = {
   resolveConflict: (outletId, conflictId, payload) =>
     apiClient.post(`/outlets/${outletId}/conflicts/${conflictId}/resolve`, payload),
 
-  getAnalytics: (outletId, params = {}) =>
-    apiClient.get(`/outlets/${outletId}/analytics`, { params }),
+  /** Get procurement dashboard stats for an outlet */
+  getProcurementDashboard: (outletId) =>
+    apiClient.get(`/admin/outlets/${outletId}/procurement-dashboard`),
 }

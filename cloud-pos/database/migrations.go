@@ -1,6 +1,8 @@
 package database
 
-import "log"
+import (
+	"log"
+)
 
 func RunMigrations() error {
 	migrations := []string{
@@ -12,8 +14,8 @@ func RunMigrations() error {
 			api_key VARCHAR(100) UNIQUE NOT NULL,
 			webhook_url TEXT,
 			is_active BOOLEAN DEFAULT true,
-			created_at TIMESTAMP DEFAULT NOW(),
-			updated_at TIMESTAMP DEFAULT NOW()
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS cloud_orders (
@@ -29,9 +31,9 @@ func RunMigrations() error {
 			items JSONB,
 			payment_info JSONB,
 			version INTEGER DEFAULT 1,
-			created_at TIMESTAMP DEFAULT NOW(),
-			updated_at TIMESTAMP DEFAULT NOW(),
-			synced_at TIMESTAMP DEFAULT NOW(),
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			synced_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
 			UNIQUE(outlet_id, local_id)
 		)`,
 
@@ -48,8 +50,8 @@ func RunMigrations() error {
 			cashier_name VARCHAR(100),
 			items JSONB,
 			version INTEGER DEFAULT 1,
-			created_at TIMESTAMP DEFAULT NOW(),
-			synced_at TIMESTAMP DEFAULT NOW(),
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			synced_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
 			UNIQUE(outlet_id, local_id)
 		)`,
 
@@ -65,9 +67,9 @@ func RunMigrations() error {
 			destination VARCHAR(50),
 			is_deleted BOOLEAN DEFAULT false,
 			version INTEGER DEFAULT 1,
-			created_at TIMESTAMP DEFAULT NOW(),
-			updated_at TIMESTAMP DEFAULT NOW(),
-			synced_at TIMESTAMP DEFAULT NOW(),
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			synced_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
 			UNIQUE(outlet_id, local_id)
 		)`,
 
@@ -78,9 +80,9 @@ func RunMigrations() error {
 			name VARCHAR(100) NOT NULL,
 			is_deleted BOOLEAN DEFAULT false,
 			version INTEGER DEFAULT 1,
-			created_at TIMESTAMP DEFAULT NOW(),
-			updated_at TIMESTAMP DEFAULT NOW(),
-			synced_at TIMESTAMP DEFAULT NOW(),
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			synced_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
 			UNIQUE(outlet_id, local_id),
 			UNIQUE(outlet_id, name)
 		)`,
@@ -91,8 +93,8 @@ func RunMigrations() error {
 			outlet_code VARCHAR(20) NOT NULL,
 			date DATE NOT NULL,
 			summary JSONB NOT NULL,
-			created_at TIMESTAMP DEFAULT NOW(),
-			updated_at TIMESTAMP DEFAULT NOW(),
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
 			UNIQUE(outlet_id, date)
 		)`,
 
@@ -104,7 +106,7 @@ func RunMigrations() error {
 			entity_count INTEGER DEFAULT 0,
 			status VARCHAR(20) DEFAULT 'success',
 			error_message TEXT,
-			created_at TIMESTAMP DEFAULT NOW()
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS sync_conflicts (
@@ -122,7 +124,7 @@ func RunMigrations() error {
 			resolved_by VARCHAR(100),
 			resolved_at TIMESTAMP,
 			notes TEXT,
-			created_at TIMESTAMP DEFAULT NOW()
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
 		)`,
 
 		`CREATE INDEX IF NOT EXISTS idx_cloud_orders_outlet ON cloud_orders(outlet_id)`,
@@ -136,6 +138,9 @@ func RunMigrations() error {
 		`CREATE INDEX IF NOT EXISTS idx_cloud_categories_outlet ON cloud_categories(outlet_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_cloud_analytics_outlet ON cloud_analytics(outlet_id, date)`,
 		`CREATE INDEX IF NOT EXISTS idx_sync_logs_outlet ON sync_logs(outlet_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_cloud_orders_created ON cloud_orders(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_cloud_transactions_created ON cloud_transactions(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_cloud_orders_payment_status ON cloud_orders((payment_info->>'payment_status'))`,
 
 		// Cashier shifts table
 		`CREATE TABLE IF NOT EXISTS cloud_cashier_shifts (
@@ -156,9 +161,9 @@ func RunMigrations() error {
 			handover_to VARCHAR(100),
 			status VARCHAR(20) NOT NULL DEFAULT 'open',
 			notes TEXT,
-			created_at TIMESTAMP DEFAULT NOW(),
-			updated_at TIMESTAMP DEFAULT NOW(),
-			synced_at TIMESTAMP DEFAULT NOW(),
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			synced_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
 			UNIQUE(outlet_id, local_id)
 		)`,
 
@@ -172,8 +177,8 @@ func RunMigrations() error {
 			amount DECIMAL(15,2) NOT NULL,
 			counterpart_name VARCHAR(200) NOT NULL DEFAULT '',
 			note TEXT NOT NULL DEFAULT '',
-			created_at TIMESTAMP DEFAULT NOW(),
-			synced_at TIMESTAMP DEFAULT NOW(),
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			synced_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
 			UNIQUE(outlet_id, local_id)
 		)`,
 
@@ -192,8 +197,8 @@ func RunMigrations() error {
 			role VARCHAR(20) NOT NULL DEFAULT 'admin',
 			is_active BOOLEAN DEFAULT true,
 			last_login_at TIMESTAMP,
-			created_at TIMESTAMP DEFAULT NOW(),
-			updated_at TIMESTAMP DEFAULT NOW()
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
 		)`,
 
 		// Printers per outlet
@@ -208,9 +213,9 @@ func RunMigrations() error {
 			paper_size VARCHAR(10) NOT NULL DEFAULT '80mm',
 			is_active BOOLEAN NOT NULL DEFAULT true,
 			is_deleted BOOLEAN NOT NULL DEFAULT false,
-			created_at TIMESTAMP DEFAULT NOW(),
-			updated_at TIMESTAMP DEFAULT NOW(),
-			synced_at TIMESTAMP DEFAULT NOW(),
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			synced_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
 			UNIQUE(outlet_id, local_id)
 		)`,
 
@@ -244,6 +249,453 @@ func RunMigrations() error {
 		}
 	}
 
+	// Role permissions table
+	rolePermMigrations := []string{
+		`CREATE TABLE IF NOT EXISTS role_permissions (
+			id SERIAL PRIMARY KEY,
+			role VARCHAR(50) NOT NULL,
+			permission VARCHAR(50) NOT NULL,
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			UNIQUE(role, permission)
+		)`,
+		// Seed default permissions for admin (full access)
+		`INSERT INTO role_permissions (role, permission)
+		VALUES
+			('admin', 'dashboard'),
+			('admin', 'outlets'),
+			('admin', 'products'),
+			('admin', 'reports'),
+			('admin', 'users'),
+			('admin', 'settings.view'),
+			('admin', 'settings.manage')
+		ON CONFLICT (role, permission) DO NOTHING`,
+		// Seed default permissions for manager (no user management)
+		`INSERT INTO role_permissions (role, permission)
+		VALUES
+			('manager', 'dashboard'),
+			('manager', 'outlets'),
+			('manager', 'products'),
+			('manager', 'reports')
+		ON CONFLICT (role, permission) DO NOTHING`,
+		// Seed default permissions for viewer (read-only)
+		`INSERT INTO role_permissions (role, permission)
+		VALUES
+			('viewer', 'dashboard'),
+			('viewer', 'reports')
+		ON CONFLICT (role, permission) DO NOTHING`,
+	}
+
+	for _, m := range rolePermMigrations {
+		if _, err := DB.Exec(m); err != nil {
+			log.Printf("Role permissions migration skipped: %v", err)
+		}
+	}
+
+	// Roles table (custom roles registry)
+	rolesMigrations := []string{
+		`CREATE TABLE IF NOT EXISTS roles (
+			name VARCHAR(50) PRIMARY KEY,
+			description VARCHAR(255) NOT NULL DEFAULT '',
+			is_system BOOLEAN NOT NULL DEFAULT false,
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
+		)`,
+		// Seed default roles (only admin is system role)
+		`INSERT INTO roles (name, description, is_system) VALUES
+			('admin', 'Full akses ke semua fitur', true),
+			('manager', 'Akses tanpa manajemen pengguna', false),
+			('viewer', 'Hanya dashboard dan laporan', false)
+		ON CONFLICT (name) DO NOTHING`,
+		// Ensure only admin is system role
+		`UPDATE roles SET is_system = false WHERE name IN ('manager', 'viewer') AND is_system = true`,
+		// Widen role_permissions.role column to allow custom role names
+		`ALTER TABLE role_permissions ALTER COLUMN role TYPE VARCHAR(50)`,
+		// Add redirect_to column for post-login redirect per role
+		`ALTER TABLE roles ADD COLUMN IF NOT EXISTS redirect_to VARCHAR(100) NOT NULL DEFAULT '/'`,
+		// Set default redirect_to for seeded roles
+		`UPDATE roles SET redirect_to = '/' WHERE name = 'admin' AND redirect_to = '/'`,
+		`UPDATE roles SET redirect_to = '/manager-dashboard' WHERE name = 'manager' AND redirect_to IN ('/', '/outlets')`,
+		`UPDATE roles SET redirect_to = '/sales-report' WHERE name = 'viewer' AND redirect_to = '/'`,
+		// Seed dashboard.manager permission for admin and manager roles
+		`INSERT INTO role_permissions (role, permission) VALUES ('admin', 'dashboard.manager') ON CONFLICT (role, permission) DO NOTHING`,
+		`INSERT INTO role_permissions (role, permission) VALUES ('manager', 'dashboard.manager') ON CONFLICT (role, permission) DO NOTHING`,
+		// Migrate old-style permissions (outlets, products) to new format (module.view)
+		`UPDATE role_permissions SET permission = 'outlets.view' WHERE permission = 'outlets'`,
+		`UPDATE role_permissions SET permission = 'products.view' WHERE permission = 'products'`,
+		`UPDATE role_permissions SET permission = 'users.view' WHERE permission = 'users'`,
+		// Seed procurement.work_units for admin and manager roles
+		`INSERT INTO role_permissions (role, permission) VALUES ('admin', 'procurement.work_units') ON CONFLICT (role, permission) DO NOTHING`,
+		`INSERT INTO role_permissions (role, permission) VALUES ('manager', 'procurement.work_units') ON CONFLICT (role, permission) DO NOTHING`,
+	}
+
+	for _, m := range rolesMigrations {
+		if _, err := DB.Exec(m); err != nil {
+			log.Printf("Roles migration skipped: %v", err)
+		}
+	}
+
+	// Purchase requests table
+	purchaseMigrations := []string{
+		`CREATE TABLE IF NOT EXISTS purchase_requests (
+			id CHAR(26) PRIMARY KEY,
+			outlet_id CHAR(26) NOT NULL REFERENCES outlets(id),
+			request_type VARCHAR(10) NOT NULL DEFAULT 'barang',
+			requested_by VARCHAR(100) NOT NULL,
+			vendor_name VARCHAR(200) NOT NULL DEFAULT '',
+			status VARCHAR(20) NOT NULL DEFAULT 'pending',
+			items JSONB NOT NULL DEFAULT '[]',
+			total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+			total_hps DECIMAL(15,2) NOT NULL DEFAULT 0,
+			total_final DECIMAL(15,2) NOT NULL DEFAULT 0,
+			notes TEXT NOT NULL DEFAULT '',
+			approved_by VARCHAR(100),
+			approved_at TIMESTAMP,
+			rejected_reason TEXT,
+			paid_by VARCHAR(100),
+			paid_at TIMESTAMP,
+			payment_proof TEXT,
+			received_by VARCHAR(100),
+			received_at TIMESTAMP,
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_purchase_requests_outlet ON purchase_requests(outlet_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_purchase_requests_status ON purchase_requests(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_purchase_requests_created ON purchase_requests(created_at)`,
+		`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS request_type VARCHAR(10) NOT NULL DEFAULT 'barang'`,
+		`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS vendor_name VARCHAR(200) NOT NULL DEFAULT ''`,
+		`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS total_hps DECIMAL(15,2) NOT NULL DEFAULT 0`,
+		`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS total_final DECIMAL(15,2) NOT NULL DEFAULT 0`,
+		`CREATE INDEX IF NOT EXISTS idx_purchase_requests_type ON purchase_requests(request_type)`,
+		// Allow purchase requests without outlet (standalone work units)
+		`ALTER TABLE purchase_requests ALTER COLUMN outlet_id DROP NOT NULL`,
+		// Payment detail fields
+		`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS payment_account_dest VARCHAR(300) NOT NULL DEFAULT ''`,
+		`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS payment_account_source VARCHAR(300) NOT NULL DEFAULT ''`,
+		`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS payment_notes TEXT NOT NULL DEFAULT ''`,
+		// Split purchase requests support
+		`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS parent_id CHAR(26) REFERENCES purchase_requests(id) ON DELETE SET NULL`,
+		`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS split_status VARCHAR(20) DEFAULT NULL`, // 'master' or NULL
+		`CREATE INDEX IF NOT EXISTS idx_purchase_requests_parent ON purchase_requests(parent_id)`,
+		// Request number for sequential numbering (ddmmYYnnn)
+		`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS request_number VARCHAR(20) NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_purchase_requests_number ON purchase_requests(request_number)`,
+		// Cascade: sync children status to match their master's status (for existing data)
+		// Only cascade to children that are still in an earlier/equal stage — never downgrade paid/partial/received
+		`UPDATE purchase_requests c
+		 SET status = p.status, updated_at = NOW()
+		 FROM purchase_requests p
+		 WHERE c.parent_id = p.id
+		   AND p.split_status = 'master'
+		   AND c.status != p.status
+		   AND p.status IN ('approved', 'payment_requested', 'cancelled')
+		   AND c.status NOT IN ('partial', 'paid', 'received')`,
+	}
+
+	for _, m := range purchaseMigrations {
+		if _, err := DB.Exec(m); err != nil {
+			log.Printf("Purchase requests migration skipped: %v", err)
+		}
+	}
+
+	// Work units table — each outlet is auto-registered as a work unit
+	workUnitMigrations := []string{
+		`CREATE TABLE IF NOT EXISTS work_units (
+			id CHAR(26) PRIMARY KEY,
+			outlet_id CHAR(26) NOT NULL REFERENCES outlets(id) ON DELETE CASCADE,
+			name VARCHAR(100) NOT NULL,
+			admin_id CHAR(26) REFERENCES cloud_admins(id) ON DELETE SET NULL,
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			UNIQUE(outlet_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_work_units_outlet ON work_units(outlet_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_work_units_admin ON work_units(admin_id)`,
+		// Seed work units for existing outlets that don't have one yet
+		`INSERT INTO work_units (id, outlet_id, name, created_at, updated_at)
+		SELECT
+			UPPER(LPAD(TO_HEX((EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT), 12, '0') ||
+			LPAD(TO_HEX((RANDOM() * 2147483647)::INT), 8, '0') ||
+			LPAD(TO_HEX((RANDOM() * 65535)::INT), 4, '0') ||
+			'00'),
+			o.id, o.name, NOW(), NOW()
+		FROM outlets o
+		WHERE NOT EXISTS (SELECT 1 FROM work_units wu WHERE wu.outlet_id = o.id)`,
+		// Add work_unit_id column to purchase_requests
+		`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS work_unit_id CHAR(26) REFERENCES work_units(id) ON DELETE SET NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_purchase_requests_work_unit ON purchase_requests(work_unit_id)`,
+		// Allow standalone work units (not linked to an outlet)
+		`ALTER TABLE work_units ALTER COLUMN outlet_id DROP NOT NULL`,
+		`ALTER TABLE work_units DROP CONSTRAINT IF EXISTS work_units_outlet_id_key`,
+		`DROP INDEX IF EXISTS work_units_outlet_id_key`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_work_units_outlet_unique ON work_units(outlet_id) WHERE outlet_id IS NOT NULL`,
+	}
+
+	for _, m := range workUnitMigrations {
+		if _, err := DB.Exec(m); err != nil {
+			log.Printf("Work units migration skipped: %v", err)
+		}
+	}
+
+	// Migrate old permission keys to granular view/manage format
+	permMigrations := map[string][]string{
+		"outlets":     {"outlets.view", "outlets.manage"},
+		"products":    {"products.view", "products.manage"},
+		"procurement": {"procurement.view", "procurement.submit", "procurement.approve", "procurement.purchasing", "procurement.finance"},
+		"users":       {"users.view", "users.manage"},
+	}
+	for old, newPerms := range permMigrations {
+		var count int
+		DB.QueryRow("SELECT COUNT(*) FROM role_permissions WHERE permission = $1", old).Scan(&count)
+		if count > 0 {
+			rows, err := DB.Query("SELECT role FROM role_permissions WHERE permission = $1", old)
+			if err == nil {
+				var roles []string
+				for rows.Next() {
+					var r string
+					rows.Scan(&r)
+					roles = append(roles, r)
+				}
+				rows.Close()
+				for _, r := range roles {
+					for _, np := range newPerms {
+						DB.Exec("INSERT INTO role_permissions (role, permission) VALUES ($1, $2) ON CONFLICT DO NOTHING", r, np)
+					}
+				}
+				DB.Exec("DELETE FROM role_permissions WHERE permission = $1", old)
+			}
+			log.Printf("Migrated permission '%s' → %v for %d roles", old, newPerms, count)
+		}
+	}
+
+	// Migrate procurement.manage → 3 granular permissions
+	{
+		var count int
+		DB.QueryRow("SELECT COUNT(*) FROM role_permissions WHERE permission = 'procurement.manage'").Scan(&count)
+		if count > 0 {
+			rows, err := DB.Query("SELECT role FROM role_permissions WHERE permission = 'procurement.manage'")
+			if err == nil {
+				var roles []string
+				for rows.Next() {
+					var r string
+					rows.Scan(&r)
+					roles = append(roles, r)
+				}
+				rows.Close()
+				for _, r := range roles {
+					DB.Exec("INSERT INTO role_permissions (role, permission) VALUES ($1, $2) ON CONFLICT DO NOTHING", r, "procurement.submit")
+					DB.Exec("INSERT INTO role_permissions (role, permission) VALUES ($1, $2) ON CONFLICT DO NOTHING", r, "procurement.approve")
+					DB.Exec("INSERT INTO role_permissions (role, permission) VALUES ($1, $2) ON CONFLICT DO NOTHING", r, "procurement.purchasing")
+					DB.Exec("INSERT INTO role_permissions (role, permission) VALUES ($1, $2) ON CONFLICT DO NOTHING", r, "procurement.finance")
+				}
+				DB.Exec("DELETE FROM role_permissions WHERE permission = 'procurement.manage'")
+			}
+			log.Printf("Migrated 'procurement.manage' → submit+approve+purchasing+finance for %d roles", count)
+		}
+	}
+
+	// Ensure roles that had procurement.finance also get procurement.purchasing (added later)
+	{
+		rows, err := DB.Query("SELECT DISTINCT role FROM role_permissions WHERE permission = 'procurement.finance'")
+		if err == nil {
+			var roles []string
+			for rows.Next() {
+				var r string
+				rows.Scan(&r)
+				roles = append(roles, r)
+			}
+			rows.Close()
+			for _, r := range roles {
+				DB.Exec("INSERT INTO role_permissions (role, permission) VALUES ($1, 'procurement.purchasing') ON CONFLICT DO NOTHING", r)
+			}
+		}
+	}
+
+	// Settings table (key-value store for app-wide settings)
+	settingsMigrations := []string{
+		`CREATE TABLE IF NOT EXISTS app_settings (
+			key VARCHAR(100) PRIMARY KEY,
+			value TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
+		)`,
+		// Seed default settings
+		`INSERT INTO app_settings (key, value) VALUES
+			('company_name', ''),
+			('company_address', ''),
+			('company_phone', ''),
+			('company_email', ''),
+			('company_tax_id', ''),
+			('company_logo_url', ''),
+			('timezone', 'Asia/Jakarta')
+		ON CONFLICT (key) DO NOTHING`,
+		// SQL function: convert a TIMESTAMP to DATE in the configured timezone.
+		// Treats stored timestamps as UTC, converts to app timezone, then extracts date.
+		`CREATE OR REPLACE FUNCTION tz_date(ts TIMESTAMP) RETURNS DATE AS $$
+			SELECT ((ts AT TIME ZONE 'UTC') AT TIME ZONE COALESCE(
+				(SELECT value FROM app_settings WHERE key = 'timezone'),
+				'Asia/Jakarta'
+			))::date;
+		$$ LANGUAGE sql STABLE`,
+		// SQL function: return today's date in the configured timezone.
+		`CREATE OR REPLACE FUNCTION tz_today() RETURNS DATE AS $$
+			SELECT (NOW() AT TIME ZONE COALESCE(
+				(SELECT value FROM app_settings WHERE key = 'timezone'),
+				'Asia/Jakarta'
+			))::date;
+		$$ LANGUAGE sql STABLE`,
+		// Tax settings
+		`INSERT INTO app_settings (key, value) VALUES
+			('tax_enabled', 'false'),
+			('tax_rate', '10'),
+			('tax_name', 'Pajak Restoran (PB1)')
+		ON CONFLICT (key) DO NOTHING`,
+		// Add tax_amount column to cloud_transactions
+		`ALTER TABLE cloud_transactions ADD COLUMN IF NOT EXISTS tax_amount DECIMAL(15,2) DEFAULT 0`,
+	}
+
+	for _, m := range settingsMigrations {
+		if _, err := DB.Exec(m); err != nil {
+			log.Printf("Settings migration skipped: %v", err)
+		}
+	}
+
+	// Grant settings permissions to all roles that have users.manage (admin-level roles)
+	{
+		rows, err := DB.Query("SELECT DISTINCT role FROM role_permissions WHERE permission = 'users.manage'")
+		if err == nil {
+			var roles []string
+			for rows.Next() {
+				var r string
+				rows.Scan(&r)
+				roles = append(roles, r)
+			}
+			rows.Close()
+			for _, r := range roles {
+				DB.Exec("INSERT INTO role_permissions (role, permission) VALUES ($1, 'settings.view') ON CONFLICT DO NOTHING", r)
+				DB.Exec("INSERT INTO role_permissions (role, permission) VALUES ($1, 'settings.manage') ON CONFLICT DO NOTHING", r)
+			}
+		}
+	}
+
+	// Ensure superadmin has all permissions in DB
+	allPerms := []string{
+		"dashboard", "dashboard.manager",
+		"outlets.view", "outlets.manage",
+		"products.view", "products.manage",
+		"reports",
+		"procurement.view", "procurement.submit", "procurement.approve", "procurement.purchasing", "procurement.finance", "procurement.work_units", "procurement.vendors",
+		"users.view", "users.manage",
+		"settings.view", "settings.manage",
+	}
+	for _, p := range allPerms {
+		DB.Exec("INSERT INTO role_permissions (role, permission) VALUES ('superadmin', $1) ON CONFLICT DO NOTHING", p)
+	}
+
+	// Vendors table
+	vendorMigrations := []string{
+		`CREATE TABLE IF NOT EXISTS vendors (
+			id CHAR(26) PRIMARY KEY,
+			name VARCHAR(200) NOT NULL,
+			phone VARCHAR(50) DEFAULT '',
+			email VARCHAR(200) DEFAULT '',
+			address TEXT DEFAULT '',
+			notes TEXT DEFAULT '',
+			is_active BOOLEAN DEFAULT true,
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
+		)`,
+		`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS bank_name VARCHAR(100) DEFAULT ''`,
+		`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS account_number VARCHAR(50) DEFAULT ''`,
+		`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS account_holder VARCHAR(200) DEFAULT ''`,
+	}
+	for _, m := range vendorMigrations {
+		if _, err := DB.Exec(m); err != nil {
+			log.Printf("Vendor migration skipped: %v", err)
+		}
+	}
+
+	// Seed procurement.vendors permission for admin/manager roles
+	{
+		rows, err := DB.Query("SELECT DISTINCT role FROM role_permissions WHERE permission = 'procurement.work_units'")
+		if err == nil {
+			for rows.Next() {
+				var r string
+				rows.Scan(&r)
+				DB.Exec("INSERT INTO role_permissions (role, permission) VALUES ($1, 'procurement.vendors') ON CONFLICT DO NOTHING", r)
+			}
+			rows.Close()
+		}
+	}
+
+	// Add vendor_id FK to purchase_requests
+	vendorPurchaseMigrations := []string{
+		`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS vendor_id CHAR(26) REFERENCES vendors(id) ON DELETE SET NULL`,
+	}
+	for _, m := range vendorPurchaseMigrations {
+		if _, err := DB.Exec(m); err != nil {
+			log.Printf("Vendor-purchase migration skipped: %v", err)
+		}
+	}
+
+	// Add invoice_number to purchase_requests
+	if _, err := DB.Exec(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS invoice_number TEXT NOT NULL DEFAULT ''`); err != nil {
+		log.Printf("Invoice number migration skipped: %v", err)
+	}
+
+	// Bank accounts table
+	if _, err := DB.Exec(`CREATE TABLE IF NOT EXISTS bank_accounts (
+		id CHAR(26) PRIMARY KEY,
+		bank_name VARCHAR(100) NOT NULL,
+		account_number VARCHAR(50) NOT NULL,
+		account_holder VARCHAR(200) NOT NULL,
+		is_active BOOLEAN NOT NULL DEFAULT true,
+		created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+		updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
+	)`); err != nil {
+		log.Printf("Bank accounts migration skipped: %v", err)
+	}
+
+	// Role scope — allow roles to be scoped to specific work units
+	roleScopeMigrations := []string{
+		`ALTER TABLE roles ADD COLUMN IF NOT EXISTS scope_type VARCHAR(10) NOT NULL DEFAULT 'all'`,
+		`CREATE TABLE IF NOT EXISTS role_work_unit_scope (
+			role VARCHAR(50) NOT NULL REFERENCES roles(name) ON DELETE CASCADE,
+			work_unit_id CHAR(26) NOT NULL REFERENCES work_units(id) ON DELETE CASCADE,
+			PRIMARY KEY (role, work_unit_id)
+		)`,
+		// Add ON UPDATE CASCADE so role renames propagate without FK violations
+		`ALTER TABLE role_work_unit_scope DROP CONSTRAINT IF EXISTS role_work_unit_scope_role_fkey`,
+		`ALTER TABLE role_work_unit_scope ADD CONSTRAINT role_work_unit_scope_role_fkey
+			FOREIGN KEY (role) REFERENCES roles(name) ON DELETE CASCADE ON UPDATE CASCADE`,
+	}
+	for _, m := range roleScopeMigrations {
+		if _, err := DB.Exec(m); err != nil {
+			log.Printf("Role scope migration skipped: %v", err)
+		}
+	}
+
 	log.Printf("Ran %d migrations successfully", len(migrations))
+
+	// Payment histories — partial payment support
+	paymentHistMigrations := []string{
+		`CREATE TABLE IF NOT EXISTS payment_histories (
+			id CHAR(26) PRIMARY KEY,
+			purchase_request_id CHAR(26) NOT NULL REFERENCES purchase_requests(id) ON DELETE CASCADE,
+			amount DECIMAL(15,2) NOT NULL,
+			payment_proof TEXT NOT NULL DEFAULT '',
+			payment_account_dest VARCHAR(300) NOT NULL DEFAULT '',
+			payment_account_source VARCHAR(300) NOT NULL DEFAULT '',
+			payment_notes TEXT NOT NULL DEFAULT '',
+			paid_by VARCHAR(100) NOT NULL DEFAULT '',
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_payment_histories_pr ON payment_histories(purchase_request_id)`,
+		`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS paid_amount DECIMAL(15,2) NOT NULL DEFAULT 0`,
+	}
+	for _, m := range paymentHistMigrations {
+		if _, err := DB.Exec(m); err != nil {
+			log.Printf("Payment histories migration skipped: %v", err)
+		}
+	}
+
 	return nil
 }

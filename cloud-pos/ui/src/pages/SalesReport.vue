@@ -25,7 +25,7 @@
             labelKey="label"
           />
         </div>
-        <button @click="fetchReport"
+        <button @click="page = 1; fetchReport()"
           class="px-4 py-2 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 transition-colors shadow-sm">
           Tampilkan
         </button>
@@ -106,7 +106,7 @@
             </thead>
             <tbody>
               <tr v-for="d in report.daily" :key="d.date" class="border-b border-gray-100">
-                <td class="py-2 pr-4">{{ d.date }}</td>
+                <td class="py-2 pr-4">{{ formatDateStr(d.date) }}</td>
                 <td class="py-2 pr-4 text-right">{{ d.total_transactions }}</td>
                 <td class="py-2 pr-4 text-right">{{ formatRupiah(d.cash_revenue) }}</td>
                 <td class="py-2 pr-4 text-right">{{ formatRupiah(d.qris_revenue) }}</td>
@@ -152,7 +152,7 @@
 import { ref, watch, onMounted } from 'vue'
 import { salesApi } from '@/api/sales.js'
 import { outletsApi } from '@/api/outlets.js'
-import { formatRupiah, formatDateTime } from '@/utils/format.js'
+import { formatRupiah, formatDateTime, formatDateStr, todayDateString } from '@/utils/format.js'
 import { PAGE_SIZE } from '@/utils/constants.js'
 import AppCard       from '@/components/ui/AppCard.vue'
 import AppTable      from '@/components/ui/AppTable.vue'
@@ -162,7 +162,7 @@ import AppSpinner    from '@/components/ui/AppSpinner.vue'
 import SearchSelect  from '@/components/ui/SearchSelect.vue'
 import SummaryCard   from '@/components/SummaryCard.vue'
 
-const today = new Date().toISOString().slice(0, 10)
+const today = todayDateString()
 const dateFrom       = ref(today)
 const dateTo         = ref(today)
 const selectedOutlet = ref('')
@@ -182,7 +182,7 @@ const TX_COLUMNS = [
 
 onMounted(async () => {
   try {
-    const data = await outletsApi.list()
+    const data = await outletsApi.myOutlets()
     const list = data.outlets ?? data ?? []
     outletOptions.value = list.map(o => ({ value: o.id, label: o.name }))
   } catch { /* ignore */ }

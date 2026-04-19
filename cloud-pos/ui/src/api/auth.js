@@ -21,4 +21,10 @@ export const authApi = {
    */
   login: (username, password) =>
     apiClient.post('/admin/login', { username, password }),
+
+  changePassword: (currentPassword, newPassword) =>
+    apiClient.put('/admin/me/password', { current_password: currentPassword, new_password: newPassword }),
+
+  updateProfile: (name) =>
+    apiClient.put('/admin/me/profile', { name }),
 }

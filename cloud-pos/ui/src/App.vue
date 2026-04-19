@@ -11,8 +11,12 @@
 </template>
 
 <script setup>
-/**
- * App.vue <script setup>
- * No logic needed here — layouts and pages handle everything.
- */
+import { onMounted } from 'vue'
+import { useSettingsStore } from '@/stores/settings.js'
+
+const settingsStore = useSettingsStore()
+
+onMounted(() => {
+  settingsStore.fetchTimezone()
+})
 </script>

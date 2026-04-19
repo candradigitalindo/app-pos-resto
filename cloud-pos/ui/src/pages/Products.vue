@@ -367,7 +367,7 @@
 import { ref, watch, onMounted, computed } from 'vue'
 import { productsApi } from '@/api/products.js'
 import { outletsApi }  from '@/api/outlets.js'
-import { formatRupiah } from '@/utils/format.js'
+import { formatRupiah, formatDateTime } from '@/utils/format.js'
 import { PAGE_SIZE }    from '@/utils/constants.js'
 import AppPagination from '@/components/ui/AppPagination.vue'
 import SearchSelect  from '@/components/ui/SearchSelect.vue'
@@ -484,7 +484,7 @@ async function fetchCategories() {
 
 async function fetchOutlets() {
   try {
-    const data = await outletsApi.list()
+    const data = await outletsApi.myOutlets()
     outlets.value = data?.outlets ?? data ?? []
   } catch { outlets.value = [] }
 }
@@ -501,10 +501,7 @@ function switchTab(t) {
   search.value = ''
 }
 
-function fmtDate(iso) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
-}
+const fmtDate = formatDateTime
 
 // ── CRUD handlers ─────────────────────────────────────────
 // Fetch categories for a specific outlet (used in product modal)
