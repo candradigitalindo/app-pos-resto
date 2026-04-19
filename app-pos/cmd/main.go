@@ -264,8 +264,8 @@ func main() {
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(sqlDB)
-	productHandler := handlers.NewProductHandler(productService, sqlDB)
-	categoryHandler := handlers.NewCategoryHandler(categoryService)
+	productHandler := handlers.NewProductHandler(productService, sqlDB, syncRepo)
+	categoryHandler := handlers.NewCategoryHandler(categoryService, syncRepo)
 	transactionHandler := handlers.NewTransactionHandler(transactionService, queries, sqlDB, syncRepo)
 	socketBroadcaster := &socketBroadcaster{server: socketServer}
 	orderHandler := handlers.NewOrderHandler(orderService, transactionService, customerService, queries, sqlDB, socketBroadcaster, syncRepo)
@@ -395,6 +395,7 @@ func main() {
 	protected.GET("/orders/table/:table_id", orderHandler.HandleGetOrderByTable)
 
 	// Product routes - Admin/Manager only for CUD, all can read
+	protected.GET("/sync-status", configHandler.GetSyncEnabledStatus) // All authenticated users
 	protected.POST("/products", productHandler.CreateProduct, authmw.ManagerOrAdmin())
 	protected.GET("/products", productHandler.GetAllProducts)
 	protected.GET("/products/:id", productHandler.GetProduct)

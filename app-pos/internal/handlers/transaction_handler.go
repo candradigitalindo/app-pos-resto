@@ -1136,19 +1136,14 @@ func (h *TransactionHandler) getPendingOrdersCount(ctx context.Context) (int, er
 func (h *TransactionHandler) getShiftPaymentSummary(ctx context.Context, start time.Time, end time.Time, cashierID string) (shiftPaymentSummary, error) {
 	row := h.db.QueryRowContext(ctx, `
 		SELECT
-			COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN amount ELSE 0 END), 0) AS cash,
-			COALESCE(SUM(CASE WHEN payment_method = 'card' THEN amount ELSE 0 END), 0) AS card,
-			COALESCE(SUM(CASE WHEN payment_method = 'qris' THEN amount ELSE 0 END), 0) AS qris,
-			COALESCE(SUM(CASE WHEN payment_method = 'transfer' THEN amount ELSE 0 END), 0) AS transfer
-		FROM (
-			SELECT payment_method, amount, created_by, created_at
-			FROM payments
-			UNION ALL
-			SELECT payment_method, total_amount AS amount, created_by, transaction_date AS created_at
-			FROM transactions
-			WHERE cancelled_at IS NULL
-		) t
-		WHERE created_at BETWEEN ? AND ? AND created_by = ?
+			COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN total_amount ELSE 0 END), 0) AS cash,
+			COALESCE(SUM(CASE WHEN payment_method = 'card' THEN total_amount ELSE 0 END), 0) AS card,
+			COALESCE(SUM(CASE WHEN payment_method = 'qris' THEN total_amount ELSE 0 END), 0) AS qris,
+			COALESCE(SUM(CASE WHEN payment_method = 'transfer' THEN total_amount ELSE 0 END), 0) AS transfer
+		FROM transactions
+		WHERE cancelled_at IS NULL
+			AND transaction_date BETWEEN ? AND ?
+			AND created_by = ?
 	`, start, end, cashierID)
 	summary := shiftPaymentSummary{}
 	if err := row.Scan(&summary.Cash, &summary.Card, &summary.Qris, &summary.Transfer); err != nil {

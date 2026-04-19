@@ -411,3 +411,52 @@ func (c *Client) Ping(ctx context.Context) error {
 
 	return nil
 }
+
+// OutletInfo contains outlet info with tax settings from cloud
+type OutletInfo struct {
+	ID         string  `json:"id"`
+	Code       string  `json:"code"`
+	Name       string  `json:"name"`
+	Address    string  `json:"address"`
+	IsActive   bool    `json:"is_active"`
+	TaxEnabled bool    `json:"tax_enabled"`
+	TaxRate    float64 `json:"tax_rate"`
+	TaxName    string  `json:"tax_name"`
+}
+
+// GetOutletInfo fetches outlet info (including tax settings) from cloud
+func (c *Client) GetOutletInfo(ctx context.Context) (*OutletInfo, error) {
+	if c.baseURL == "" || c.apiKey == "" {
+		return nil, fmt.Errorf("cloud API not configured")
+	}
+
+	url := fmt.Sprintf("%s/api/v1/outlets/%s/info", c.baseURL, c.outletID)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch outlet info: %w", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("cloud API error: status=%d", resp.StatusCode)
+	}
+
+	var result struct {
+		Success bool       `json:"success"`
+		Data    OutletInfo `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse outlet info response: %w", err)
+	}
+	if !result.Success {
+		return nil, fmt.Errorf("cloud API returned success=false")
+	}
+	return &result.Data, nil
+}

@@ -27,6 +27,26 @@ export const useAuthStore = defineStore('auth', () => {
       }
     }
   }
+
+  async function loginByPin(pin) {
+    try {
+      const response = await api.post('/auth/passcode', { pin })
+      
+      if (response.data.success) {
+        token.value = response.data.data.token
+        user.value = response.data.data.user
+        localStorage.setItem('token', token.value)
+        return { success: true, user: response.data.data.user }
+      }
+      
+      return { success: false, message: response.data.message }
+    } catch (error) {
+      return { 
+        success: false, 
+        message: error.response?.data?.message || 'PIN tidak ditemukan' 
+      }
+    }
+  }
   
   async function logout() {
     token.value = null
@@ -60,6 +80,7 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     isAuthenticated,
     login,
+    loginByPin,
     logout,
     setSession,
     fetchProfile

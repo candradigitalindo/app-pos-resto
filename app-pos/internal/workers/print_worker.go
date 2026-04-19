@@ -127,13 +127,6 @@ func (w *PrintWorker) Start(ctx context.Context) {
 	}
 }
 
-// Stop signals the worker to stop
-func (w *PrintWorker) Stop() {
-	close(w.stopChan)
-	<-w.stoppedChan
-	// log.Println("🖨️  Print Worker stopped")
-}
-
 // processPendingJobs processes all pending print jobs
 func (w *PrintWorker) processPendingJobs() {
 	_, _ = w.db.Exec(`

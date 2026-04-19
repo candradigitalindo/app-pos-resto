@@ -164,13 +164,13 @@
       </div>
 
       <!-- Tables Grid -->
-      <div v-else class="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div v-else class="grid gap-2 sm:gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
         <button
           v-for="table in filteredTables"
           :key="table.id"
           @click="selectTable(table)"
           :class="[
-            'group relative overflow-hidden rounded-2xl border-3 p-4 sm:p-5 shadow-lg transition-all active:scale-95 text-left',
+            'group relative overflow-hidden rounded-xl border-2 p-3 sm:p-3.5 shadow-md transition-all active:scale-95 text-left',
             table.status === 'available' 
               ? 'border-emerald-300 bg-gradient-to-br from-emerald-50 to-emerald-100 hover:shadow-xl hover:scale-105' 
               : table.status === 'occupied'
@@ -179,30 +179,30 @@
           ]"
         >
           <!-- Status Badge -->
-          <div class="absolute top-3 right-3 flex flex-col items-end gap-1">
+          <div class="absolute top-2 right-2 flex flex-col items-end gap-1">
             <span :class="[
-              'inline-flex items-center gap-1.5 rounded-full px-2.5 sm:px-3 py-1 text-xs font-bold shadow-md',
+              'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow-sm',
               table.status === 'available' ? 'bg-emerald-600 text-white' :
               table.status === 'occupied' ? 'bg-red-600 text-white' :
               'bg-amber-600 text-white'
             ]">
-              <span class="inline-block h-1.5 w-1.5 rounded-full bg-white"></span>
+              <span class="inline-block h-1 w-1 rounded-full bg-white"></span>
               {{ getStatusText(table.status) }}
             </span>
             <span
               v-if="table.active_order?.is_merged"
-              class="inline-flex items-center gap-1.5 rounded-full px-2.5 sm:px-3 py-1 text-xs font-bold shadow-md bg-amber-100 text-amber-700"
+              class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow-sm bg-amber-100 text-amber-700"
             >
               Gabung ke {{ table.active_order?.merged_from_table_number || '-' }}
             </span>
           </div>
 
           <!-- Table Info -->
-          <div class="mt-2">
-            <div class="text-3xl sm:text-4xl font-black" :class="table.status === 'available' ? 'text-emerald-700' : table.status === 'occupied' ? 'text-red-700' : 'text-amber-700'">
+          <div class="mt-1">
+            <div class="text-2xl sm:text-3xl font-black" :class="table.status === 'available' ? 'text-emerald-700' : table.status === 'occupied' ? 'text-red-700' : 'text-amber-700'">
               {{ table.table_number }}
             </div>
-            <div class="mt-2 sm:mt-3 flex items-center gap-2 text-xs sm:text-sm text-slate-600">
+            <div class="mt-1 flex items-center gap-1.5 text-[11px] sm:text-xs text-slate-600">
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
               </svg>
@@ -210,7 +210,7 @@
             </div>
             
             <!-- Active Order Info -->
-            <div v-if="table.active_order" class="mt-3 space-y-1.5 text-xs">
+            <div v-if="table.active_order" class="mt-2 space-y-1 text-[11px]">
               <div class="flex items-center gap-1.5 text-slate-700">
                 <svg class="h-3.5 w-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -229,15 +229,15 @@
                 </svg>
                 <span class="font-semibold">{{ table.active_order.pax }} pax</span>
               </div>
-              <div class="flex items-center gap-1.5 text-emerald-700 bg-emerald-50 rounded-lg px-2 py-1 -mx-1">
+              <div class="flex items-center gap-1.5 text-emerald-700 bg-emerald-50 rounded-md px-1.5 py-0.5 -mx-0.5">
                 <span class="font-bold">Rp {{ formatCurrency(table.active_order.total_amount) }}</span>
               </div>
-              <div v-if="targetSpendPerPax > 0" class="mt-1 space-y-1">
-                <div class="flex items-center justify-between text-xs text-slate-600">
+              <div v-if="targetSpendPerPax > 0" class="mt-0.5 space-y-0.5">
+                <div class="flex items-center justify-between text-[11px] text-slate-600">
                   <span class="font-semibold">SPP</span>
                   <span class="font-bold">Rp {{ formatCurrency(getSpendPerPax(table.active_order)) }}/pax</span>
                 </div>
-                <div class="flex items-center justify-between rounded-lg px-2 py-1 -mx-1" :class="getGapClass(table.active_order)">
+                <div class="flex items-center justify-between rounded-md px-1.5 py-0.5 -mx-0.5" :class="getGapClass(table.active_order)">
                   <span class="font-semibold" v-if="getSpendGap(table.active_order) > 0">Kurang</span>
                   <span class="font-semibold" v-else>Target</span>
                   <span class="font-bold" v-if="getSpendGap(table.active_order) > 0">Rp {{ formatCurrency(getGapValue(table.active_order)) }}/pax</span>
@@ -245,7 +245,7 @@
                 </div>
               </div>
             </div>
-            <div v-else-if="table.status === 'occupied'" class="mt-2 flex items-center gap-1.5 text-xs text-red-600">
+            <div v-else-if="table.status === 'occupied'" class="mt-1.5 flex items-center gap-1 text-[11px] text-red-600">
               <svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20">
                 <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
               </svg>
@@ -254,25 +254,25 @@
           </div>
 
           <!-- Action Button -->
-          <div class="mt-4">
+          <div class="mt-2.5">
             <div
               v-if="table.status === 'available'"
-              class="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2.5 sm:py-3 font-bold text-white shadow-md transition-all group-hover:bg-emerald-700"
+              class="flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-2 py-1.5 sm:py-2 font-bold text-white shadow-sm transition-all group-hover:bg-emerald-700"
             >
-              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
               </svg>
-              <span class="text-sm sm:text-base">Buat Order</span>
+              <span class="text-xs sm:text-sm">Buat Order</span>
             </div>
             <div
               v-else-if="table.status === 'occupied'"
-              class="flex items-center justify-center gap-2 rounded-xl bg-red-600 px-3 py-2.5 sm:py-3 font-bold text-white shadow-md transition-all group-hover:bg-red-700"
+              class="flex items-center justify-center gap-1.5 rounded-lg bg-red-600 px-2 py-1.5 sm:py-2 font-bold text-white shadow-sm transition-all group-hover:bg-red-700"
             >
-              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
               </svg>
-              <span class="text-sm sm:text-base">Lihat Order</span>
+              <span class="text-xs sm:text-sm">Lihat Order</span>
             </div>
           </div>
         </button>

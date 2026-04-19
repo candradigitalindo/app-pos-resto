@@ -646,6 +646,9 @@ func (h *OrderHandler) HandleApplyDiscount(c *echo.Context) error {
 	if req.Value <= 0 {
 		return BadRequestResponse(c, "Nilai diskon harus lebih dari 0")
 	}
+	if req.ChargeType == "percentage" && req.Value > 100 {
+		return BadRequestResponse(c, "Nilai diskon persentase tidak boleh lebih dari 100")
+	}
 
 	ctx := (*c).Request().Context()
 	if err := h.ensureOpenCashierShift(ctx); err != nil {
@@ -1500,9 +1503,11 @@ func (h *OrderHandler) HandleSplitBillPayment(c *echo.Context) error {
 		if err != nil {
 			return BadRequestResponse(c, err.Error())
 		}
-		splitAdditionalCharges, err := h.calculateActiveAdditionalChargesAmount(ctx, float64(splitSubtotal))
-		if err != nil {
-			return InternalErrorResponse(c, "Gagal menghitung biaya tambahan split bill: "+err.Error())
+		splitAdditionalCharges := 0.0
+		if orderSubtotal > 0 {
+			// Use proportional share of the order's recorded system charges
+			systemChargesTotal := h.getSystemChargesTotal(ctx, orderID)
+			splitAdditionalCharges = float64(systemChargesTotal) * (float64(splitSubtotal) / orderSubtotal)
 		}
 		manualShare := 0.0
 		if manualAdjustmentsTotal != 0 && orderSubtotal > 0 {
@@ -1668,13 +1673,25 @@ func buildReceiptItems(items []db.OrderItem) ([]workers.ReceiptItem, int) {
 	return receiptItems, subtotal
 }
 
+func (h *OrderHandler) getSystemChargesTotal(ctx context.Context, orderID string) float64 {
+	row := h.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(applied_amount), 0)
+		FROM order_additional_charges
+		WHERE order_id = ?
+		  AND charge_id IS NOT NULL
+	`, orderID)
+	var total float64
+	if err := row.Scan(&total); err != nil {
+		return 0
+	}
+	return total
+}
+
 func (h *OrderHandler) getAdditionalChargesTotal(ctx context.Context, orderID string) int {
 	row := h.db.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(oac.applied_amount), 0)
-		FROM order_additional_charges oac
-		LEFT JOIN additional_charges ac ON ac.id = oac.charge_id
-		WHERE oac.order_id = ?
-		  AND (oac.charge_id IS NULL OR ac.is_active = 1)
+		SELECT COALESCE(SUM(applied_amount), 0)
+		FROM order_additional_charges
+		WHERE order_id = ?
 	`, orderID)
 	var total float64
 	if err := row.Scan(&total); err != nil {
@@ -1685,13 +1702,11 @@ func (h *OrderHandler) getAdditionalChargesTotal(ctx context.Context, orderID st
 
 func (h *OrderHandler) getAdditionalChargesBreakdown(ctx context.Context, orderID string) []workers.ReceiptCharge {
 	rows, err := h.db.QueryContext(ctx, `
-		SELECT oac.name, COALESCE(SUM(oac.applied_amount), 0)
-		FROM order_additional_charges oac
-		LEFT JOIN additional_charges ac ON ac.id = oac.charge_id
-		WHERE oac.order_id = ?
-		  AND (oac.charge_id IS NULL OR ac.is_active = 1)
-		GROUP BY oac.charge_id, oac.name
-		ORDER BY MIN(oac.created_at), oac.charge_id
+		SELECT name, COALESCE(SUM(applied_amount), 0)
+		FROM order_additional_charges
+		WHERE order_id = ?
+		GROUP BY charge_id, name
+		ORDER BY MIN(created_at), charge_id
 	`, orderID)
 	if err != nil {
 		return nil
@@ -1756,29 +1771,6 @@ func (h *OrderHandler) getManualAdjustmentsTotal(ctx context.Context, orderID st
 		return 0
 	}
 	return total
-}
-
-func (h *OrderHandler) calculateActiveAdditionalChargesAmount(ctx context.Context, subtotal float64) (float64, error) {
-	if subtotal <= 0 {
-		return 0, nil
-	}
-
-	var total float64
-	err := h.db.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(
-			CASE
-				WHEN charge_type = 'percentage' THEN (? * value / 100.0)
-				ELSE value
-			END
-		), 0)
-		FROM additional_charges
-		WHERE is_active = 1
-	`, subtotal).Scan(&total)
-	if err != nil {
-		return 0, err
-	}
-
-	return total, nil
 }
 
 func buildSplitReceiptItems(orderItems []db.OrderItem, selected []splitBillItem) ([]workers.ReceiptItem, int, error) {

@@ -905,10 +905,6 @@ func (f *PrintFormatter) writeBillFooter(buf *bytes.Buffer) {
 	buf.Write(ESC_ALIGN_LEFT)
 }
 
-func (f *PrintFormatter) writeSplitFooter(buf *bytes.Buffer) {
-	buf.Write(ESC_ALIGN_LEFT)
-}
-
 // FormatKitchenOrder formats order for kitchen printer (simple format)
 func (f *PrintFormatter) FormatKitchenOrder(headerTitle, orderNumber, tableName, waiterName string, items []ReceiptItem, timestamp time.Time) []byte {
 	buf := bytes.NewBuffer(nil)
@@ -1240,34 +1236,6 @@ func (f *PrintFormatter) FormatMoveTable(orderNumber, oldTable, newTable, waiter
 	buf.Write(ESC_NEWLINE)
 
 	// Cut
-	buf.Write(ESC_CUT_PARTIAL)
-
-	return buf.Bytes()
-}
-
-// FormatTestPrint generates minimal test print
-func (f *PrintFormatter) FormatTestPrint(printerName, ipPort string) []byte {
-	buf := bytes.NewBuffer(nil)
-
-	// Initialize printer
-	buf.Write(ESC_INIT)
-	buf.Write(ESC_CHARSET_LATIN)
-
-	// Center align
-	buf.Write(ESC_ALIGN_CENTER)
-	buf.Write(ESC_BOLD_ON)
-	buf.WriteString("TEST OK")
-	buf.Write(ESC_BOLD_OFF)
-	buf.Write(ESC_NEWLINE)
-
-	buf.WriteString(printerName)
-	buf.Write(ESC_NEWLINE)
-
-	buf.WriteString(ipPort)
-	buf.Write(ESC_NEWLINE)
-	buf.Write(ESC_NEWLINE)
-
-	// Cut paper
 	buf.Write(ESC_CUT_PARTIAL)
 
 	return buf.Bytes()

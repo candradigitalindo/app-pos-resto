@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"backend/internal/db"
+	"backend/internal/repositories"
 	"backend/internal/services"
 	"backend/pkg/utils"
 	"context"
@@ -14,13 +15,24 @@ import (
 type ProductHandler struct {
 	productService services.ProductService
 	db             *sql.DB
+	syncRepo       repositories.SyncRepository
 }
 
-func NewProductHandler(productService services.ProductService, db *sql.DB) *ProductHandler {
+func NewProductHandler(productService services.ProductService, db *sql.DB, syncRepo repositories.SyncRepository) *ProductHandler {
 	return &ProductHandler{
 		productService: productService,
 		db:             db,
+		syncRepo:       syncRepo,
 	}
+}
+
+// isSyncEnabled checks if cloud sync is active
+func (h *ProductHandler) isSyncEnabled(c *echo.Context) bool {
+	config, err := h.syncRepo.GetOutletConfig((*c).Request().Context())
+	if err != nil || config == nil {
+		return false
+	}
+	return config.SyncEnabled
 }
 
 type CreateProductRequest struct {
@@ -112,12 +124,37 @@ func (h *ProductHandler) getCategoryNameMap(ctx context.Context) map[string]stri
 	return catMap
 }
 
-// CreateProduct dinonaktifkan — produk dikelola via Cloud POS
+// CreateProduct — jika sync aktif: dikunci (cloud), jika tidak: bisa lokal
 func (h *ProductHandler) CreateProduct(c *echo.Context) error {
-	return (*c).JSON(http.StatusLocked, APIResponse{
-		Success: false,
-		Message: "Produk dikelola melalui Cloud POS. Tambah produk di halaman manajemen cloud.",
-	})
+	if h.isSyncEnabled(c) {
+		return (*c).JSON(http.StatusLocked, APIResponse{
+			Success: false,
+			Message: "Produk dikelola melalui Cloud POS. Tambah produk di halaman manajemen cloud.",
+		})
+	}
+
+	var req CreateProductRequest
+	if err := (*c).Bind(&req); err != nil {
+		return BadRequestResponse(c, "Body request tidak valid")
+	}
+	if req.Name == "" {
+		return BadRequestResponse(c, "Nama produk wajib diisi")
+	}
+	if req.Price < 0 {
+		return BadRequestResponse(c, "Harga produk tidak boleh negatif")
+	}
+
+	var categoryID *string
+	if req.CategoryID != "" {
+		categoryID = &req.CategoryID
+	}
+
+	product, err := h.productService.CreateProduct((*c).Request().Context(), req.Name, req.Code, req.Description, req.Price, req.Stock, categoryID)
+	if err != nil {
+		return InternalErrorResponse(c, "Gagal membuat produk: "+err.Error())
+	}
+
+	return CreatedResponse(c, "Produk berhasil dibuat", toProductResponse(*product))
 }
 
 func (h *ProductHandler) GetProduct(c *echo.Context) error {
@@ -166,20 +203,55 @@ func (h *ProductHandler) GetAllProducts(c *echo.Context) error {
 	return PaginatedSuccessResponse(c, "Data produk berhasil diambil", toProductResponses(products, catMap), pagination)
 }
 
-// UpdateProduct dinonaktifkan — produk dikelola via Cloud POS
+// UpdateProduct — jika sync aktif: dikunci (cloud), jika tidak: bisa lokal
 func (h *ProductHandler) UpdateProduct(c *echo.Context) error {
-	return (*c).JSON(http.StatusLocked, APIResponse{
-		Success: false,
-		Message: "Produk dikelola melalui Cloud POS. Edit produk di halaman manajemen cloud.",
-	})
+	if h.isSyncEnabled(c) {
+		return (*c).JSON(http.StatusLocked, APIResponse{
+			Success: false,
+			Message: "Produk dikelola melalui Cloud POS. Edit produk di halaman manajemen cloud.",
+		})
+	}
+
+	id := c.Param("id")
+	var req UpdateProductRequest
+	if err := (*c).Bind(&req); err != nil {
+		return BadRequestResponse(c, "Body request tidak valid")
+	}
+	if req.Name == "" {
+		return BadRequestResponse(c, "Nama produk wajib diisi")
+	}
+	if req.Price < 0 {
+		return BadRequestResponse(c, "Harga produk tidak boleh negatif")
+	}
+
+	var categoryID *string
+	if req.CategoryID != "" {
+		categoryID = &req.CategoryID
+	}
+
+	if err := h.productService.UpdateProduct((*c).Request().Context(), id, req.Name, req.Code, req.Description, req.Price, req.Stock, categoryID); err != nil {
+		return InternalErrorResponse(c, "Gagal update produk: "+err.Error())
+	}
+
+	product, _ := h.productService.GetProductByID((*c).Request().Context(), id)
+	return SuccessResponse(c, "Produk berhasil diupdate", toProductResponse(*product))
 }
 
-// DeleteProduct dinonaktifkan — produk dikelola via Cloud POS
+// DeleteProduct — jika sync aktif: dikunci (cloud), jika tidak: bisa lokal
 func (h *ProductHandler) DeleteProduct(c *echo.Context) error {
-	return (*c).JSON(http.StatusLocked, APIResponse{
-		Success: false,
-		Message: "Produk dikelola melalui Cloud POS. Hapus produk di halaman manajemen cloud.",
-	})
+	if h.isSyncEnabled(c) {
+		return (*c).JSON(http.StatusLocked, APIResponse{
+			Success: false,
+			Message: "Produk dikelola melalui Cloud POS. Hapus produk di halaman manajemen cloud.",
+		})
+	}
+
+	id := c.Param("id")
+	if err := h.productService.DeleteProduct((*c).Request().Context(), id); err != nil {
+		return InternalErrorResponse(c, "Gagal menghapus produk: "+err.Error())
+	}
+
+	return SuccessResponse(c, "Produk berhasil dihapus", nil)
 }
 
 func (h *ProductHandler) GetProductsByCategory(c *echo.Context) error {

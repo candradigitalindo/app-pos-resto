@@ -29,16 +29,3 @@ func SendToPrinter(ipAddress string, port int, data []byte) error {
 
 	return nil
 }
-
-// TestPrinterConnection tests if printer is reachable
-func TestPrinterConnection(ipAddress string, port int) error {
-	address := net.JoinHostPort(ipAddress, fmt.Sprintf("%d", port))
-
-	conn, err := net.DialTimeout("tcp", address, 3*time.Second)
-	if err != nil {
-		return fmt.Errorf("printer not reachable at %s: %w", address, err)
-	}
-	defer conn.Close()
-
-	return nil
-}

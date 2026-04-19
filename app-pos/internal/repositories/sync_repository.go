@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 )
 
 type SyncRepository interface {
@@ -562,15 +563,74 @@ func (r *syncRepositoryImpl) RefreshOpenOrderTotalsForAdditionalCharges(ctx cont
 			chargesTotal += applied
 		}
 
-		var manualTotal float64
-		if err := tx.QueryRowContext(ctx, `
-			SELECT COALESCE(SUM(applied_amount), 0)
+		// Recalculate manual charges (percentage-based need recalculation against new subtotal)
+		manualTotal := 0.0
+		manualRows, err := tx.QueryContext(ctx, `
+			SELECT id, charge_type, value, applied_amount
 			FROM order_additional_charges
 			WHERE order_id = ?
 			  AND charge_id IS NULL
-		`, orderID).Scan(&manualTotal); err != nil {
+		`, orderID)
+		if err != nil {
 			_ = tx.Rollback()
-			return fmt.Errorf("failed to calculate manual adjustments for order %s: %w", orderID, err)
+			return fmt.Errorf("failed to query manual adjustments for order %s: %w", orderID, err)
+		}
+
+		type manualEntry struct {
+			id            int64
+			chargeType    string
+			value         float64
+			appliedAmount float64
+		}
+		manualEntries := make([]manualEntry, 0)
+		for manualRows.Next() {
+			var entry manualEntry
+			if err := manualRows.Scan(&entry.id, &entry.chargeType, &entry.value, &entry.appliedAmount); err != nil {
+				manualRows.Close()
+				_ = tx.Rollback()
+				return fmt.Errorf("failed to scan manual adjustment for order %s: %w", orderID, err)
+			}
+			manualEntries = append(manualEntries, entry)
+		}
+		if err := manualRows.Err(); err != nil {
+			manualRows.Close()
+			_ = tx.Rollback()
+			return fmt.Errorf("failed to iterate manual adjustments for order %s: %w", orderID, err)
+		}
+		manualRows.Close()
+
+		for _, entry := range manualEntries {
+			sign := 1.0
+			if entry.appliedAmount < 0 {
+				sign = -1
+			}
+			computedAbs := 0.0
+			if entry.chargeType == "percentage" {
+				computedAbs = subtotal * entry.value / 100
+			} else {
+				computedAbs = entry.value
+			}
+			if computedAbs == 0 {
+				if _, err := tx.ExecContext(ctx, `
+					DELETE FROM order_additional_charges WHERE id = ?
+				`, entry.id); err != nil {
+					_ = tx.Rollback()
+					return fmt.Errorf("failed to delete zero manual adjustment for order %s: %w", orderID, err)
+				}
+				continue
+			}
+			applied := sign * computedAbs
+			if math.Abs(applied-entry.appliedAmount) > 0.000001 {
+				if _, err := tx.ExecContext(ctx, `
+					UPDATE order_additional_charges
+					SET applied_amount = ?, updated_at = CURRENT_TIMESTAMP
+					WHERE id = ?
+				`, applied, entry.id); err != nil {
+					_ = tx.Rollback()
+					return fmt.Errorf("failed to update manual adjustment for order %s: %w", orderID, err)
+				}
+			}
+			manualTotal += applied
 		}
 
 		totalAmount := subtotal + chargesTotal + manualTotal

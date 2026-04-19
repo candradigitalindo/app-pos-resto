@@ -10,11 +10,12 @@ import (
 
 type transactionRepository struct {
 	queries *db.Queries
+	db      *sql.DB
 }
 
 // NewTransactionRepository membuat instance baru dari TransactionRepository
 func NewTransactionRepository(dbConn *sql.DB) TransactionRepository {
-	return &transactionRepository{queries: db.New(dbConn)}
+	return &transactionRepository{queries: db.New(dbConn), db: dbConn}
 }
 
 func (r *transactionRepository) Create(ctx context.Context, orderID string, totalAmount float64, paymentMethod, status string, transactionDate time.Time, createdBy string) (*db.Transaction, error) {
@@ -128,7 +129,15 @@ func (r *transactionRepository) Cancel(ctx context.Context, transactionID, manag
 		return ErrTransactionAlreadyCancelled
 	}
 
-	_, err = r.queries.CancelTransaction(ctx, db.CancelTransactionParams{
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	q := db.New(tx)
+
+	// Cancel the transaction
+	_, err = q.CancelTransaction(ctx, db.CancelTransactionParams{
 		Status:       "cancelled",
 		CancelledAt:  sql.NullTime{Time: time.Now(), Valid: true},
 		CancelledBy:  sql.NullString{String: managerID, Valid: managerID != ""},
@@ -136,5 +145,42 @@ func (r *transactionRepository) Cancel(ctx context.Context, transactionID, manag
 		UpdatedAt:    time.Now(),
 		ID:           transactionID,
 	})
-	return err
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	// Update order paid_amount and payment_status
+	var orderTotal, currentPaid float64
+	err = tx.QueryRowContext(ctx,
+		`SELECT total_amount, paid_amount FROM orders WHERE id = ?`,
+		transaction.OrderID,
+	).Scan(&orderTotal, &currentPaid)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	newPaid := currentPaid - transaction.TotalAmount
+	if newPaid < 0 {
+		newPaid = 0
+	}
+
+	paymentStatus := "unpaid"
+	if newPaid > 0 && newPaid < orderTotal {
+		paymentStatus = "partial"
+	} else if newPaid >= orderTotal {
+		paymentStatus = "paid"
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`UPDATE orders SET paid_amount = ?, payment_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		newPaid, paymentStatus, transaction.OrderID,
+	)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
 }

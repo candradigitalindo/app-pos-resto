@@ -3,6 +3,7 @@ package handlers
 import (
 	"backend/internal/db"
 	"backend/internal/middleware"
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"net/http"
@@ -26,8 +27,8 @@ func NewAuthHandler(dbConn *sql.DB) *AuthHandler {
 
 // isPINUsedByOther checks if the given plain PIN is already used by another active user.
 // excludeUserID can be empty string to check against ALL active users (for registration).
-func (h *AuthHandler) isPINUsedByOther(ctx echo.Context, pin string, excludeUserID string) (bool, error) {
-	rows, err := h.db.QueryContext(ctx.Request().Context(),
+func (h *AuthHandler) isPINUsedByOther(ctx context.Context, pin string, excludeUserID string) (bool, error) {
+	rows, err := h.db.QueryContext(ctx,
 		"SELECT id, password_hash FROM users WHERE is_active = 1")
 	if err != nil {
 		return false, err
@@ -104,19 +105,6 @@ func toUserResponse(user *db.User) *UserResponse {
 	}
 }
 
-// toUserResponseFromListRow converts db.ListUsersRow to UserResponse (hides password_hash)
-func toUserResponseFromListRow(user *db.ListUsersRow) *UserResponse {
-	return &UserResponse{
-		ID:        user.ID,
-		Username:  user.Username,
-		FullName:  user.FullName,
-		Role:      user.Role,
-		IsActive:  user.IsActive,
-		CreatedAt: user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt: user.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-	}
-}
-
 // toUserResponseFromPaginatedRow converts db.ListUsersPaginatedRow to UserResponse (hides password_hash)
 func toUserResponseFromPaginatedRow(user *db.ListUsersPaginatedRow) *UserResponse {
 	return &UserResponse{
@@ -162,7 +150,7 @@ func (h *AuthHandler) HandleRegister(c *echo.Context) error {
 	}
 
 	// Check PIN uniqueness
-	pinUsed, err := h.isPINUsedByOther(*c, req.Password, "")
+	pinUsed, err := h.isPINUsedByOther((*c).Request().Context(), req.Password, "")
 	if err != nil {
 		return InternalErrorResponse(c, "Gagal memeriksa PIN")
 	}
@@ -247,7 +235,7 @@ func (h *AuthHandler) HandleLogin(c *echo.Context) error {
 	})
 }
 
-// HandlePasscodeLogin - Quick login by PIN only (no username), for waiter quick access
+// HandlePasscodeLogin - Quick login by PIN only (no username), for all roles
 func (h *AuthHandler) HandlePasscodeLogin(c *echo.Context) error {
 	var req struct {
 		Pin string `json:"pin"`
@@ -260,9 +248,9 @@ func (h *AuthHandler) HandlePasscodeLogin(c *echo.Context) error {
 		return BadRequestResponse(c, "PIN harus 4 digit")
 	}
 
-	// Get all active users who can take orders
+	// Get all active users
 	rows, err := h.db.QueryContext((*c).Request().Context(),
-		"SELECT id, username, password_hash, full_name, role, is_active, created_at, updated_at FROM users WHERE is_active = 1 AND role IN ('waiter','admin','manager')")
+		"SELECT id, username, password_hash, full_name, role, is_active, created_at, updated_at FROM users WHERE is_active = 1")
 	if err != nil {
 		return InternalErrorResponse(c, "Gagal mengambil data user")
 	}
@@ -278,6 +266,9 @@ func (h *AuthHandler) HandlePasscodeLogin(c *echo.Context) error {
 			matchedUser = &u
 			break
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return InternalErrorResponse(c, "Gagal membaca data user")
 	}
 
 	if matchedUser == nil {
@@ -385,7 +376,7 @@ func (h *AuthHandler) HandleUpdateProfile(c *echo.Context) error {
 		}
 
 		// Check PIN uniqueness
-		pinUsed, err := h.isPINUsedByOther(*c, req.NewPassword, claims.UserID)
+		pinUsed, err := h.isPINUsedByOther((*c).Request().Context(), req.NewPassword, claims.UserID)
 		if err != nil {
 			return InternalErrorResponse(c, "Gagal memeriksa PIN")
 		}
@@ -572,7 +563,7 @@ func (h *AuthHandler) HandleUpdateUser(c *echo.Context) error {
 			}
 		}
 		// Check PIN uniqueness
-		pinUsed, err := h.isPINUsedByOther(*c, req.Password, userID)
+		pinUsed, err := h.isPINUsedByOther((*c).Request().Context(), req.Password, userID)
 		if err != nil {
 			return InternalErrorResponse(c, "Gagal memeriksa PIN")
 		}

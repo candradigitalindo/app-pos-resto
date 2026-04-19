@@ -28,6 +28,13 @@
         <div class="grid gap-4 sm:gap-6 p-3 sm:p-6 lg:grid-cols-2">
           <!-- Form Section -->
           <div class="rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm">
+          <!-- Sync enabled banner -->
+          <div v-if="props.syncEnabled" class="mb-4 flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+            <svg class="h-4 w-4 text-amber-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <p class="text-xs text-amber-700">Cloud sync aktif — hanya printer target yang bisa diubah.</p>
+          </div>
           <div class="flex items-center gap-2 sm:gap-3 border-b border-slate-200 pb-3 sm:pb-4">
             <div class="flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-lg sm:rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-lg">
               <svg v-if="editingCategory" class="h-4 w-4 sm:h-5 sm:w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -38,13 +45,13 @@
               </svg>
             </div>
             <h3 class="text-base sm:text-lg font-bold text-slate-900">
-              {{ editingCategory ? 'Edit Kategori' : 'Tambah Kategori' }}
+              {{ props.syncEnabled ? 'Atur Printer Kategori' : (editingCategory ? 'Edit Kategori' : 'Tambah Kategori') }}
             </h3>
           </div>
 
           <div class="space-y-3 sm:space-y-4">
             <!-- Nama Kategori -->
-            <div>
+            <div v-if="!props.syncEnabled">
               <label class="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
                 <svg class="h-4 w-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
@@ -61,7 +68,7 @@
             </div>
 
             <!-- Deskripsi -->
-            <div>
+            <div v-if="!props.syncEnabled">
               <label class="mb-1.5 sm:mb-2 flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm font-semibold text-slate-700">
                 <svg class="h-3.5 w-3.5 sm:h-4 sm:w-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
@@ -155,7 +162,7 @@
           </div>
 
           <!-- Action Buttons -->
-          <div class="flex items-center gap-3 border-t border-slate-200 pt-4">
+          <div v-if="!props.syncEnabled" class="flex items-center gap-3 border-t border-slate-200 pt-4">
             <button 
               @click="saveCategory" 
               class="btn-primary flex-1"
@@ -169,6 +176,26 @@
             </button>
             <button 
               v-if="editingCategory" 
+              @click="cancelEdit" 
+              class="btn-secondary"
+            >
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+          <!-- Sync enabled: printer-only save button -->
+          <div v-if="props.syncEnabled && editingCategory" class="flex items-center gap-3 border-t border-slate-200 pt-4">
+            <button 
+              @click="saveCategory" 
+              class="btn-primary flex-1"
+            >
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+              </svg>
+              Simpan Printer
+            </button>
+            <button 
               @click="cancelEdit" 
               class="btn-secondary"
             >
@@ -195,7 +222,7 @@
               </div>
               <div class="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
                 <button
-                  v-if="selectedCategories.length > 0"
+                  v-if="selectedCategories.length > 0 && !props.syncEnabled"
                   @click="bulkDeleteCategories"
                   class="flex items-center gap-1.5 sm:gap-2 rounded-lg bg-red-50 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold text-red-600 transition-all hover:bg-red-100 flex-1 sm:flex-initial justify-center"
                 >
@@ -233,6 +260,7 @@
                 <!-- Header Checkbox (Select All) -->
               <template #header-checkbox>
                 <input
+                  v-if="!props.syncEnabled"
                   type="checkbox"
                   v-model="allSelected"
                   :disabled="selectableCategories.length === 0"
@@ -243,7 +271,7 @@
               
               <!-- Checkbox -->
               <template #cell-checkbox="{ item }">
-                <div class="flex items-center justify-center">
+                <div v-if="!props.syncEnabled" class="flex items-center justify-center">
                   <input
                     type="checkbox"
                     :value="item.id"
@@ -290,13 +318,14 @@
                   <button 
                     @click="editCategory(item)" 
                     class="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-700 transition-all hover:bg-blue-100"
-                    title="Edit Kategori"
+                    :title="props.syncEnabled ? 'Atur Printer' : 'Edit Kategori'"
                   >
                     <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
                     </svg>
                   </button>
                   <button 
+                    v-if="!props.syncEnabled"
                     @click="deleteCategory(item)" 
                     class="flex h-8 w-8 items-center justify-center rounded-lg bg-red-50 text-red-600 transition-all hover:bg-red-100"
                     title="Hapus Kategori"
@@ -327,6 +356,10 @@ const { success, error, confirm } = useNotification()
 
 const props = defineProps({
   isOpen: {
+    type: Boolean,
+    default: false
+  },
+  syncEnabled: {
     type: Boolean,
     default: false
   }
@@ -465,14 +498,18 @@ const fetchPrinters = async () => {
 }
 
 const saveCategory = async () => {
-  if (!form.value.name.trim()) {
+  if (!props.syncEnabled && !form.value.name.trim()) {
     error('Nama kategori harus diisi!')
     return
   }
 
   try {
     if (editingCategory.value) {
-      const response = await api.put(`/categories/${editingCategory.value.id}`, form.value)
+      // When sync enabled, only send printer_id (name locked by backend)
+      const payload = props.syncEnabled
+        ? { printer_id: form.value.printer_id }
+        : form.value
+      const response = await api.put(`/categories/${editingCategory.value.id}`, payload)
       if (response.data.success) {
         await fetchCategories()
         resetForm()

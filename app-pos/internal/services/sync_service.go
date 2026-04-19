@@ -203,6 +203,23 @@ func (s *syncService) enrichTransactionPayload(ctx context.Context, data map[str
 			data["change_amount"] = changeAmount
 		}
 	}
+
+	// Tambahkan tax_amount dari order_additional_charges (charge yang merupakan pajak)
+	orderID := getString(data, "order_id")
+	if orderID != "" {
+		var taxAmount float64
+		err := s.db.QueryRowContext(ctx, `
+			SELECT COALESCE(SUM(oac.applied_amount), 0)
+			FROM order_additional_charges oac
+			JOIN additional_charges ac ON ac.id = oac.charge_id
+			WHERE oac.order_id = ?
+			  AND ac.charge_type = 'percentage'
+			  AND LOWER(ac.name) LIKE '%pajak%'
+		`, orderID).Scan(&taxAmount)
+		if err == nil && taxAmount > 0 {
+			data["tax_amount"] = taxAmount
+		}
+	}
 }
 
 // PushPendingData pushes all pending sync items to cloud
@@ -677,6 +694,14 @@ func (s *syncService) FullPullFromCloud(ctx context.Context) error {
 		}
 	}
 
+	// 3. Fetch outlet info (including tax settings) and sync tax charge
+	outletInfo, err := s.cloudClient.GetOutletInfo(ctx)
+	if err != nil {
+		log.Printf("FullPullFromCloud: gagal fetch outlet info (tax settings): %v", err)
+	} else {
+		s.syncTaxFromCloud(ctx, outletInfo.TaxEnabled, outletInfo.TaxRate, outletInfo.TaxName)
+	}
+
 	if err := s.syncRepo.UpdateLastSync(ctx); err != nil {
 		log.Printf("Warning: gagal update last sync: %v", err)
 	}
@@ -687,6 +712,55 @@ func (s *syncService) FullPullFromCloud(ctx context.Context) error {
 // GetSyncStatus returns current sync status
 func (s *syncService) GetSyncStatus(ctx context.Context) (*models.SyncStatus, error) {
 	return s.syncRepo.GetSyncStatus(ctx)
+}
+
+// syncTaxFromCloud creates or updates a local additional_charge entry from cloud tax settings
+func (s *syncService) syncTaxFromCloud(ctx context.Context, taxEnabled bool, taxRate float64, taxName string) {
+	if taxName == "" {
+		taxName = "Pajak Restoran (PB1)"
+	}
+
+	charges, err := s.syncRepo.ListAdditionalCharges(ctx)
+	if err != nil {
+		log.Printf("syncTaxFromCloud: gagal list additional charges: %v", err)
+		return
+	}
+
+	var existingTax *models.AdditionalCharge
+	for i, ch := range charges {
+		if ch.ChargeType == "percentage" && (ch.Name == taxName || strings.HasPrefix(strings.ToLower(ch.Name), "pajak")) {
+			existingTax = &charges[i]
+			break
+		}
+	}
+
+	if existingTax != nil {
+		existingTax.Name = taxName
+		existingTax.Value = taxRate
+		existingTax.IsActive = taxEnabled
+		if err := s.syncRepo.UpdateAdditionalCharge(ctx, existingTax); err != nil {
+			log.Printf("syncTaxFromCloud: gagal update tax charge: %v", err)
+			return
+		}
+		log.Printf("syncTaxFromCloud: tax charge updated: name=%s rate=%.2f enabled=%v", taxName, taxRate, taxEnabled)
+	} else {
+		newCharge := &models.AdditionalCharge{
+			Name:       taxName,
+			ChargeType: "percentage",
+			Value:      taxRate,
+			IsActive:   taxEnabled,
+		}
+		if err := s.syncRepo.CreateAdditionalCharge(ctx, newCharge); err != nil {
+			log.Printf("syncTaxFromCloud: gagal create tax charge: %v", err)
+			return
+		}
+		log.Printf("syncTaxFromCloud: tax charge created: name=%s rate=%.2f enabled=%v", taxName, taxRate, taxEnabled)
+	}
+
+	// Recalculate open orders
+	if err := s.syncRepo.RefreshOpenOrderTotalsForAdditionalCharges(ctx); err != nil {
+		log.Printf("syncTaxFromCloud: gagal refresh open orders: %v", err)
+	}
 }
 
 // GetLastSyncTime returns the last sync timestamp from DB

@@ -33,6 +33,15 @@ func NewConfigHandler(syncRepo repositories.SyncRepository) *ConfigHandler {
 	}
 }
 
+// isSyncEnabled checks if cloud sync is active
+func (h *ConfigHandler) isSyncEnabled(c *echo.Context) bool {
+	config, err := h.syncRepo.GetOutletConfig((*c).Request().Context())
+	if err != nil || config == nil {
+		return false
+	}
+	return config.SyncEnabled
+}
+
 // SetSyncWorker sets the sync worker instance (called after worker is created)
 func (h *ConfigHandler) SetSyncWorker(worker *workers.SyncWorker) {
 	h.syncWorker = worker
@@ -41,6 +50,15 @@ func (h *ConfigHandler) SetSyncWorker(worker *workers.SyncWorker) {
 // SetSyncService sets the sync service instance for cloud client refresh
 func (h *ConfigHandler) SetSyncService(svc services.SyncService) {
 	h.syncService = svc
+}
+
+// GetSyncStatus returns whether cloud sync is enabled (lightweight, all authenticated users)
+func (h *ConfigHandler) GetSyncEnabledStatus(c *echo.Context) error {
+	config, err := h.syncRepo.GetOutletConfig((*c).Request().Context())
+	if err != nil || config == nil {
+		return SuccessResponse(c, "Sync status", map[string]bool{"sync_enabled": false})
+	}
+	return SuccessResponse(c, "Sync status", map[string]bool{"sync_enabled": config.SyncEnabled})
 }
 
 // GetOutletConfig returns current outlet configuration
@@ -397,6 +415,13 @@ func (h *ConfigHandler) GetAdditionalCharges(c *echo.Context) error {
 }
 
 func (h *ConfigHandler) CreateAdditionalCharge(c *echo.Context) error {
+	if h.isSyncEnabled(c) {
+		return (*c).JSON(http.StatusLocked, map[string]interface{}{
+			"success": false,
+			"message": "Sync aktif. Biaya tambahan harus dikelola melalui cloud.",
+		})
+	}
+
 	var req struct {
 		Name       string  `json:"name"`
 		ChargeType string  `json:"charge_type"`
@@ -472,6 +497,13 @@ func (h *ConfigHandler) CreateAdditionalCharge(c *echo.Context) error {
 }
 
 func (h *ConfigHandler) UpdateAdditionalCharge(c *echo.Context) error {
+	if h.isSyncEnabled(c) {
+		return (*c).JSON(http.StatusLocked, map[string]interface{}{
+			"success": false,
+			"message": "Sync aktif. Biaya tambahan harus dikelola melalui cloud.",
+		})
+	}
+
 	var req struct {
 		Name       string  `json:"name"`
 		ChargeType string  `json:"charge_type"`
@@ -553,6 +585,13 @@ func (h *ConfigHandler) UpdateAdditionalCharge(c *echo.Context) error {
 }
 
 func (h *ConfigHandler) DeleteAdditionalCharge(c *echo.Context) error {
+	if h.isSyncEnabled(c) {
+		return (*c).JSON(http.StatusLocked, map[string]interface{}{
+			"success": false,
+			"message": "Sync aktif. Biaya tambahan harus dikelola melalui cloud.",
+		})
+	}
+
 	id, err := strconv.ParseInt((*c).Param("id"), 10, 64)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{
@@ -687,13 +726,16 @@ func (h *ConfigHandler) TestCloudConnection(c *echo.Context) error {
 	var cloudResp struct {
 		Success bool `json:"success"`
 		Data    struct {
-			ID        string `json:"id"`
-			Code      string `json:"code"`
-			Name      string `json:"name"`
-			Address   string `json:"address"`
-			IsActive  bool   `json:"is_active"`
-			CreatedAt string `json:"created_at"`
-			UpdatedAt string `json:"updated_at"`
+			ID         string  `json:"id"`
+			Code       string  `json:"code"`
+			Name       string  `json:"name"`
+			Address    string  `json:"address"`
+			IsActive   bool    `json:"is_active"`
+			CreatedAt  string  `json:"created_at"`
+			UpdatedAt  string  `json:"updated_at"`
+			TaxEnabled bool    `json:"tax_enabled"`
+			TaxRate    float64 `json:"tax_rate"`
+			TaxName    string  `json:"tax_name"`
 		} `json:"data"`
 		Error string `json:"error"`
 	}
@@ -741,6 +783,9 @@ func (h *ConfigHandler) TestCloudConnection(c *echo.Context) error {
 		}
 	}
 
+	// Step 5: Sync tax settings from cloud → local additional_charges
+	h.syncTaxFromCloud((*c).Request().Context(), cloudResp.Data.TaxEnabled, cloudResp.Data.TaxRate, cloudResp.Data.TaxName)
+
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"success":   true,
 		"connected": true,
@@ -762,6 +807,59 @@ func maskAPIKey(key string) string {
 		return "****"
 	}
 	return key[:4] + "****" + key[len(key)-4:]
+}
+
+// syncTaxFromCloud syncs tax settings from cloud into local additional_charges.
+// It creates or updates a single "tax" additional_charge entry.
+func (h *ConfigHandler) syncTaxFromCloud(ctx context.Context, taxEnabled bool, taxRate float64, taxName string) {
+	if taxName == "" {
+		taxName = "Pajak Restoran (PB1)"
+	}
+
+	// Find existing tax charge by name pattern
+	charges, err := h.syncRepo.ListAdditionalCharges(ctx)
+	if err != nil {
+		log.Printf("Warning: failed to list additional charges for tax sync: %v", err)
+		return
+	}
+
+	var existingTax *models.AdditionalCharge
+	for i, ch := range charges {
+		if ch.ChargeType == "percentage" && (ch.Name == taxName || strings.HasPrefix(strings.ToLower(ch.Name), "pajak")) {
+			existingTax = &charges[i]
+			break
+		}
+	}
+
+	if existingTax != nil {
+		// Update existing
+		existingTax.Name = taxName
+		existingTax.Value = taxRate
+		existingTax.IsActive = taxEnabled
+		if err := h.syncRepo.UpdateAdditionalCharge(ctx, existingTax); err != nil {
+			log.Printf("Warning: failed to update tax charge: %v", err)
+			return
+		}
+		log.Printf("Tax charge updated: name=%s rate=%.2f enabled=%v", taxName, taxRate, taxEnabled)
+	} else {
+		// Create new
+		newCharge := &models.AdditionalCharge{
+			Name:       taxName,
+			ChargeType: "percentage",
+			Value:      taxRate,
+			IsActive:   taxEnabled,
+		}
+		if err := h.syncRepo.CreateAdditionalCharge(ctx, newCharge); err != nil {
+			log.Printf("Warning: failed to create tax charge: %v", err)
+			return
+		}
+		log.Printf("Tax charge created: name=%s rate=%.2f enabled=%v", taxName, taxRate, taxEnabled)
+	}
+
+	// Recalculate open orders with new tax settings
+	if err := h.syncRepo.RefreshOpenOrderTotalsForAdditionalCharges(ctx); err != nil {
+		log.Printf("Warning: failed to refresh open orders after tax sync: %v", err)
+	}
 }
 
 // ToggleSync toggles sync on/off

@@ -918,22 +918,20 @@ func (r *orderRepository) ApplyOrderDiscount(ctx context.Context, orderID string
 			return err
 		}
 
-		if _, _, err := r.recalculateOrderTotals(ctx, q, tx, orderID); err != nil {
-			return err
-		}
-
-		order, err = q.GetOrderWithItems(ctx, orderID)
+		subtotal, chargesTotal, err := r.recalculateOrderTotals(ctx, q, tx, orderID)
 		if err != nil {
 			return err
 		}
-		currentTotal := order.TotalAmount
+
+		currentTotal := subtotal + chargesTotal
 		if currentTotal <= 0 {
 			return fmt.Errorf("total order sudah nol")
 		}
 
+		// Diskon dihitung dari subtotal (sebelum PB1/service), bukan dari total
 		discountAbs := value
 		if chargeType == "percentage" {
-			discountAbs = currentTotal * value / 100
+			discountAbs = subtotal * value / 100
 		}
 		discountAbs = math.Round(discountAbs)
 		if discountAbs <= 0 {
@@ -1595,6 +1593,11 @@ func (r *orderRepository) SplitBillPayment(ctx context.Context, orderID string, 
 			if matched != len(qtyByID) {
 				return fmt.Errorf("item_id tidak ditemukan")
 			}
+
+			// Recalculate order totals after reducing items
+			if _, _, err := r.recalculateOrderTotals(ctx, q, tx, orderID); err != nil {
+				return fmt.Errorf("gagal recalculate totals setelah split: %w", err)
+			}
 		}
 
 		// Create payment record
@@ -1909,6 +1912,11 @@ func (r *orderRepository) VoidOrder(ctx context.Context, orderID string, voidedB
 	if paymentStatus == "paid" {
 		_ = tx.Rollback()
 		return ErrOrderAlreadyPaid
+	}
+
+	if paymentStatus == "partial" {
+		_ = tx.Rollback()
+		return fmt.Errorf("order memiliki pembayaran parsial, tidak bisa di-void")
 	}
 
 	_, err = tx.ExecContext(ctx, `

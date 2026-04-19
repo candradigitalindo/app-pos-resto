@@ -414,10 +414,21 @@
                     <p class="hidden sm:block text-sm text-slate-500">Tambahkan pajak, service, atau biaya lainnya</p>
                   </div>
                 </div>
-                <button v-if="!isEditingCharge" @click="startAddCharge" class="btn-primary">Tambah Biaya</button>
+                <button v-if="!isEditingCharge && !syncStatus.sync_enabled" @click="startAddCharge" class="btn-primary">Tambah Biaya</button>
               </div>
 
-              <div v-if="isEditingCharge" class="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <!-- Sync active banner -->
+              <div v-if="syncStatus.sync_enabled" class="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <svg class="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                  <p class="text-sm font-semibold text-amber-800">Sinkronisasi Aktif</p>
+                  <p class="text-xs text-amber-700">Biaya tambahan dikelola melalui cloud. Untuk menambah, mengubah, atau menghapus biaya, gunakan dashboard cloud.</p>
+                </div>
+              </div>
+
+              <div v-if="isEditingCharge && !syncStatus.sync_enabled" class="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <div class="grid gap-4 sm:grid-cols-2">
                   <div>
                     <label class="mb-2 block text-sm font-semibold text-slate-700">Nama</label>
@@ -496,7 +507,7 @@
                             type="checkbox"
                             class="peer sr-only"
                             :checked="item.is_active"
-                            :disabled="togglingCharges[item.id]"
+                            :disabled="togglingCharges[item.id] || syncStatus.sync_enabled"
                             @change="toggleChargeStatus(item, $event.target.checked)"
                           />
                           <div class="peer h-5 w-9 rounded-full bg-slate-300 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:bg-emerald-600 peer-checked:after:translate-x-full peer-disabled:opacity-50"></div>
@@ -504,10 +515,11 @@
                       </div>
                     </template>
                     <template #cell-actions="{ item }">
-                      <div class="flex items-center justify-end gap-2">
+                      <div v-if="!syncStatus.sync_enabled" class="flex items-center justify-end gap-2">
                         <button @click="startEditCharge(item)" class="btn-secondary px-3">Edit</button>
                         <button @click="deleteCharge(item)" class="btn-secondary px-3 hover:bg-red-50 hover:text-red-600">Hapus</button>
                       </div>
+                      <span v-else class="text-xs text-slate-400">—</span>
                     </template>
                   </DataTable>
                 </div>
