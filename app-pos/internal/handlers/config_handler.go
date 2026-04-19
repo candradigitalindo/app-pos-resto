@@ -92,6 +92,7 @@ func (h *ConfigHandler) GetOutletConfig(c *echo.Context) error {
 		"is_active":             config.IsActive,
 		"sync_enabled":          config.SyncEnabled,
 		"sync_interval_minutes": config.SyncIntervalMin,
+		"data_retention_days":   config.DataRetentionDays,
 		"last_sync_at":          config.LastSyncAt,
 		"created_at":            config.CreatedAt,
 		"updated_at":            config.UpdatedAt,
@@ -118,6 +119,7 @@ func (h *ConfigHandler) UpdateOutletConfig(c *echo.Context) error {
 		CloudAPIKey       string `json:"cloud_api_key,omitempty"` // Optional - only update if provided
 		SyncEnabled       *bool  `json:"sync_enabled,omitempty"`
 		SyncIntervalMin   *int   `json:"sync_interval_minutes,omitempty"`
+		DataRetentionDays *int   `json:"data_retention_days,omitempty"`
 	}
 
 	if err := (*c).Bind(&req); err != nil {
@@ -191,6 +193,14 @@ func (h *ConfigHandler) UpdateOutletConfig(c *echo.Context) error {
 			})
 		}
 		config.SyncIntervalMin = *req.SyncIntervalMin
+	}
+	if req.DataRetentionDays != nil {
+		if *req.DataRetentionDays < 0 {
+			return c.JSON(http.StatusBadRequest, map[string]string{
+				"error": "Data retention days must be non-negative (0 = keep forever)",
+			})
+		}
+		config.DataRetentionDays = *req.DataRetentionDays
 	}
 
 	// Update in database

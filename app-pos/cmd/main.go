@@ -343,6 +343,11 @@ func main() {
 	go printWorker.Start(ctx)
 	log.Println("🖨️  Print worker started")
 
+	// Start retention worker in background
+	retentionWorker := workers.NewRetentionWorker(sqlDB, syncRepo)
+	ctxRetention, cancelRetention := context.WithCancel(context.Background())
+	go retentionWorker.Start(ctxRetention)
+
 	// Routes
 	api := e.Group("/api/v1")
 
@@ -620,6 +625,10 @@ func main() {
 	// Stop print worker gracefully
 	cancelPrint()
 	log.Println("🖨️  Print worker stopped")
+
+	// Stop retention worker gracefully
+	cancelRetention()
+	retentionWorker.Stop()
 
 	// Close the server
 	log.Println("Server exited")

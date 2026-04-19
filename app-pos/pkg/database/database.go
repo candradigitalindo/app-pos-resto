@@ -1917,6 +1917,19 @@ func runMigrations(db *sql.DB) error {
 		}
 	}
 
+	// Migration: Add data_retention_days to outlet_config
+	{
+		var colCount int
+		err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('outlet_config') WHERE name='data_retention_days'").Scan(&colCount)
+		if err == nil && colCount == 0 {
+			_, err = db.Exec("ALTER TABLE outlet_config ADD COLUMN data_retention_days INTEGER NOT NULL DEFAULT 0")
+			if err != nil {
+				return err
+			}
+			log.Println("✅ Added data_retention_days column to outlet_config table")
+		}
+	}
+
 	return nil
 }
 

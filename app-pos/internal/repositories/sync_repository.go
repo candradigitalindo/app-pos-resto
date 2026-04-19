@@ -250,7 +250,9 @@ func (r *syncRepositoryImpl) GetOutletConfig(ctx context.Context) (*models.Outle
 		       COALESCE(social_media, '') as social_media,
 		       COALESCE(target_spend_per_pax, 0) as target_spend_per_pax,
 		       cloud_api_url, cloud_api_key,
-		       is_active, sync_enabled, sync_interval_minutes, last_sync_at, created_at, updated_at
+		       is_active, sync_enabled, sync_interval_minutes,
+		       COALESCE(data_retention_days, 0) as data_retention_days,
+		       last_sync_at, created_at, updated_at
 		FROM outlet_config
 		LIMIT 1
 	`
@@ -262,7 +264,7 @@ func (r *syncRepositoryImpl) GetOutletConfig(ctx context.Context) (*models.Outle
 		&config.ID, &config.OutletID, &config.OutletName, &config.OutletCode,
 		&config.OutletAddress, &config.OutletPhone, &config.ReceiptFooter, &config.SocialMedia,
 		&config.TargetSpendPerPax, &config.CloudAPIURL, &config.CloudAPIKey, &config.IsActive, &config.SyncEnabled,
-		&config.SyncIntervalMin, &lastSyncAt, &config.CreatedAt, &config.UpdatedAt,
+		&config.SyncIntervalMin, &config.DataRetentionDays, &lastSyncAt, &config.CreatedAt, &config.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -284,15 +286,15 @@ func (r *syncRepositoryImpl) CreateOutletConfig(ctx context.Context, config *mod
 		INSERT INTO outlet_config (
 			outlet_id, outlet_name, outlet_code, outlet_address, outlet_phone,
 			receipt_footer, social_media, target_spend_per_pax, cloud_api_url, cloud_api_key,
-			is_active, sync_enabled, sync_interval_minutes
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			is_active, sync_enabled, sync_interval_minutes, data_retention_days
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := r.db.ExecContext(ctx, query,
 		config.OutletID, config.OutletName, config.OutletCode,
 		config.OutletAddress, config.OutletPhone, config.ReceiptFooter, config.SocialMedia,
 		config.TargetSpendPerPax, config.CloudAPIURL, config.CloudAPIKey,
-		config.IsActive, config.SyncEnabled, config.SyncIntervalMin,
+		config.IsActive, config.SyncEnabled, config.SyncIntervalMin, config.DataRetentionDays,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create outlet config: %w", err)
@@ -313,14 +315,14 @@ func (r *syncRepositoryImpl) UpdateOutletConfig(ctx context.Context, config *mod
 		UPDATE outlet_config
 		SET outlet_id = ?, outlet_name = ?, outlet_code = ?, outlet_address = ?, outlet_phone = ?,
 		    receipt_footer = ?, social_media = ?, target_spend_per_pax = ?, cloud_api_url = ?, cloud_api_key = ?,
-		    sync_enabled = ?, sync_interval_minutes = ?, updated_at = CURRENT_TIMESTAMP
+		    sync_enabled = ?, sync_interval_minutes = ?, data_retention_days = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`
 
 	_, err := r.db.ExecContext(ctx, query,
 		config.OutletID, config.OutletName, config.OutletCode, config.OutletAddress, config.OutletPhone,
 		config.ReceiptFooter, config.SocialMedia, config.TargetSpendPerPax, config.CloudAPIURL, config.CloudAPIKey,
-		config.SyncEnabled, config.SyncIntervalMin, config.ID,
+		config.SyncEnabled, config.SyncIntervalMin, config.DataRetentionDays, config.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update outlet config: %w", err)

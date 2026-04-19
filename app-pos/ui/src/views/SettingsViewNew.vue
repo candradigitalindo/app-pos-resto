@@ -102,6 +102,16 @@
               </svg>
               Log Cetak Gagal
             </button>
+            <button
+              @click="activeSection = 'data_retention'"
+              class="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition"
+              :class="activeSection === 'data_retention' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'"
+            >
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Retensi Data
+            </button>
           </div>
         </div>
 
@@ -534,6 +544,59 @@
           <div v-if="activeSection === 'print_logs'">
             <PrinterManagement :show-printers="false" :show-failed-logs="true" @success="handlePrinterSuccess" @error="handlePrinterError" />
           </div>
+
+          <div v-if="activeSection === 'data_retention'" class="space-y-6">
+            <div class="card space-y-4">
+              <div class="flex items-start justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-orange-100">
+                    <svg class="h-6 w-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 class="text-base sm:text-lg font-semibold text-slate-900">Retensi Data</h2>
+                    <p class="hidden sm:block text-sm text-slate-500">Atur berapa lama data transaksi disimpan di perangkat</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-4">
+                <div>
+                  <label class="mb-2 block text-sm font-semibold text-slate-700">Durasi Penyimpanan Data</label>
+                  <select v-model="retentionDays" class="input" @change="saveRetention">
+                    <option :value="0">Simpan Selamanya</option>
+                    <option :value="7">7 Hari</option>
+                    <option :value="14">14 Hari</option>
+                    <option :value="30">30 Hari (1 Bulan)</option>
+                    <option :value="60">60 Hari (2 Bulan)</option>
+                    <option :value="90">90 Hari (3 Bulan)</option>
+                    <option :value="180">180 Hari (6 Bulan)</option>
+                    <option :value="365">365 Hari (1 Tahun)</option>
+                  </select>
+                  <p class="mt-1 text-xs text-slate-500">
+                    {{ retentionDays === 0 ? 'Semua data transaksi akan disimpan tanpa batas waktu.' : `Data transaksi yang lebih lama dari ${retentionDays} hari akan otomatis dihapus.` }}
+                  </p>
+                </div>
+
+                <div v-if="retentionDays > 0" class="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <svg class="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div>
+                    <p class="text-sm font-semibold text-amber-800">Perhatian</p>
+                    <p class="text-xs text-amber-700">Data yang dihapus tidak dapat dikembalikan. Hanya transaksi yang sudah selesai (completed/cancelled) dan order yang sudah dibayar/void yang akan dihapus. Data shift kasir yang sudah ditutup juga akan dihapus.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="retentionSaving" class="flex items-center gap-2 text-sm text-slate-500">
+                <div class="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-emerald-600"></div>
+                Menyimpan...
+              </div>
+              <div v-if="retentionSuccess" class="text-sm text-emerald-600 font-semibold">✅ Pengaturan retensi tersimpan</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -605,6 +668,7 @@ const config = ref({
   is_active: true,
   sync_enabled: false,
   sync_interval_minutes: 5,
+  data_retention_days: 0,
   last_sync_at: null,
   created_at: null,
   updated_at: null
@@ -638,6 +702,27 @@ function onSpendPerPaxInput(e) {
 }
 
 const chargeValueDisplay = ref('')
+
+// Retention state
+const retentionDays = ref(0)
+const retentionSaving = ref(false)
+const retentionSuccess = ref(false)
+
+const saveRetention = async () => {
+  retentionSaving.value = true
+  retentionSuccess.value = false
+  try {
+    await api.put('/config/outlet', { data_retention_days: Number(retentionDays.value) })
+    config.value.data_retention_days = Number(retentionDays.value)
+    retentionSuccess.value = true
+    setTimeout(() => { retentionSuccess.value = false }, 3000)
+  } catch (error) {
+    errorMessage.value = 'Gagal menyimpan pengaturan retensi: ' + (error.response?.data?.error || error.message)
+  } finally {
+    retentionSaving.value = false
+  }
+}
+
 function onChargeValueInput(e) {
   const num = parseRupiahInput(e.target.value)
   chargeForm.value.value = num
@@ -678,11 +763,13 @@ const fetchConfig = async () => {
         is_active: data.is_active,
         sync_enabled: data.sync_enabled,
         sync_interval_minutes: data.sync_interval_minutes || 5,
+        data_retention_days: data.data_retention_days || 0,
         last_sync_at: data.last_sync_at,
         created_at: data.created_at,
         updated_at: data.updated_at
       }
       spendPerPaxDisplay.value = config.value.target_spend_per_pax ? fmtRupiahInput(config.value.target_spend_per_pax) : ''
+      retentionDays.value = config.value.data_retention_days || 0
     }
 
     await fetchSyncStatus()

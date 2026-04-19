@@ -34,6 +34,7 @@ type OutletConfig struct {
 	IsActive          bool       `json:"is_active"`
 	SyncEnabled       bool       `json:"sync_enabled"`
 	SyncIntervalMin   int        `json:"sync_interval_minutes"`
+	DataRetentionDays int        `json:"data_retention_days"`
 	LastSyncAt        *time.Time `json:"last_sync_at,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
