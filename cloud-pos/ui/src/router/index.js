@@ -66,6 +66,12 @@ const ManagerDashboard = () => import('@/pages/ManagerDashboard.vue')
 const CompanyIdentity     = () => import('@/pages/CompanyIdentity.vue')
 const TimezoneSettings    = () => import('@/pages/TimezoneSettings.vue')
 const TaxSettings         = () => import('@/pages/TaxSettings.vue')
+const Warehouses          = () => import('@/pages/Warehouses.vue')
+const StockItems          = () => import('@/pages/StockItems.vue')
+const StockWastes         = () => import('@/pages/StockWastes.vue')
+const StockTransfers      = () => import('@/pages/StockTransfers.vue')
+const StockLedger         = () => import('@/pages/StockLedger.vue')
+const Recipes             = () => import('@/pages/Recipes.vue')
 const DashboardLayout = () => import('@/layouts/DashboardLayout.vue')
 const AuthLayout     = () => import('@/layouts/AuthLayout.vue')
 
@@ -297,6 +303,43 @@ const routes = [
         name: 'TaxSettings',
         component: TaxSettings,
         meta: { title: 'Pengaturan Pajak — Cloud POS', requiresAuth: true, permission: 'settings.view' },
+      },
+      // ── Warehouse / Gudang ──────────────────────────────
+      {
+        path: 'warehouses',
+        name: 'Warehouses',
+        component: Warehouses,
+        meta: { title: 'Gudang — Cloud POS', requiresAuth: true, permission: 'warehouse.view' },
+      },
+      {
+        path: 'stock-items',
+        name: 'StockItems',
+        component: StockItems,
+        meta: { title: 'Item Stok — Cloud POS', requiresAuth: true, permission: 'warehouse.view' },
+      },
+      {
+        path: 'stock-transfers',
+        name: 'StockTransfers',
+        component: StockTransfers,
+        meta: { title: 'Transfer Stok — Cloud POS', requiresAuth: true, permission: 'warehouse.view' },
+      },
+      {
+        path: 'stock-wastes',
+        name: 'StockWastes',
+        component: StockWastes,
+        meta: { title: 'Stok Rusak/Hilang — Cloud POS', requiresAuth: true, permission: 'warehouse.view' },
+      },
+      {
+        path: 'stock-ledger',
+        name: 'StockLedger',
+        component: StockLedger,
+        meta: { title: 'Buku Stok — Cloud POS', requiresAuth: true, permission: 'warehouse.view' },
+      },
+      {
+        path: 'recipes',
+        name: 'Recipes',
+        component: Recipes,
+        meta: { title: 'Resep — Cloud POS', requiresAuth: true, permission: 'warehouse.view' },
       },
     ],
   },

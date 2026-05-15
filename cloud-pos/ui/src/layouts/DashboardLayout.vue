@@ -414,6 +414,24 @@ const NAV_ITEMS_DATA = [
     ],
   },
   {
+    label: 'Gudang',
+    permission: 'warehouse.view',
+    icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
+        d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10"/>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
+        d="M21 6v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6m2 4h3m-3 4h2.5m-.5 4h.5"/>
+    </svg>`,
+    children: [
+      { to: '/warehouses',      label: 'Gudang', permission: 'warehouse.view' },
+      { to: '/stock-items',     label: 'Item Stok', permission: 'warehouse.view' },
+      { to: '/stock-transfers', label: 'Transfer Stok', permission: 'warehouse.view' },
+      { to: '/stock-wastes',    label: 'Stok Rusak/Hilang', permission: 'warehouse.view' },
+      { to: '/stock-ledger',    label: 'Buku Stok', permission: 'warehouse.view' },
+      { to: '/recipes',         label: 'Resep', permission: 'warehouse.view' },
+    ],
+  },
+  {
     label: 'Pengaturan',
     permission: 'settings.view',
     icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
