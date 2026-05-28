@@ -1,6 +1,7 @@
 # Binaries
 bin/
 pos-app
+pos-app-*
 *.exe
 *.exe~
 *.dll
@@ -13,7 +14,7 @@ pos-app
 # Output of the go coverage tool
 *.out
 
-# Database
+# Database files
 *.db
 *.db-shm
 *.db-wal
@@ -34,3 +35,9 @@ Thumbs.db
 
 # Dependency directories
 vendor/
+
+# Air live reload temp
+tmp/
+
+# Frontend build output in cmd/web/dist
+cmd/web/dist/

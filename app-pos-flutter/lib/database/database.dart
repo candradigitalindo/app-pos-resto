@@ -1,0 +1,540 @@
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+
+class AppDatabase {
+  static final AppDatabase instance = AppDatabase._();
+  static Database? _database;
+
+  AppDatabase._();
+
+  Future<Database> get database async {
+    if (_database != null) return _database!;
+    _database = await _initDb();
+    return _database!;
+  }
+
+  Future<Database> _initDb() async {
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, 'pos_resto.db');
+
+    return openDatabase(
+      path,
+      version: 1,
+      onCreate: _onCreate,
+      onConfigure: _onConfigure,
+    );
+  }
+
+  Future<void> _onConfigure(Database db) async {
+    await db.execute('PRAGMA foreign_keys = ON');
+  }
+
+  Future<void> _onCreate(Database db, int version) async {
+    // Users
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY CHECK (length(id) = 26),
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        full_name TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('admin', 'waiter', 'kitchen', 'bar', 'cashier', 'manager')),
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
+
+    // Customers
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS customers (
+        id TEXT PRIMARY KEY CHECK (length(id) = 26),
+        name TEXT NOT NULL,
+        phone TEXT NOT NULL UNIQUE,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone)',
+    );
+
+    // Tables
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS tables (
+        id TEXT PRIMARY KEY CHECK (length(id) = 26),
+        table_number TEXT NOT NULL UNIQUE,
+        capacity INTEGER NOT NULL DEFAULT 4 CHECK (capacity > 0),
+        status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'occupied', 'reserved')),
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_tables_status ON tables(status)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_tables_number ON tables(table_number)',
+    );
+
+    // Printers
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS printers (
+        id TEXT PRIMARY KEY CHECK (length(id) = 26),
+        name TEXT NOT NULL,
+        ip_address TEXT NOT NULL,
+        port INTEGER NOT NULL DEFAULT 9100,
+        printer_type TEXT NOT NULL CHECK (printer_type IN ('kitchen', 'bar', 'cashier', 'checker', 'struk')),
+        paper_size TEXT NOT NULL DEFAULT '80mm' CHECK (paper_size IN ('58mm', '80mm')),
+        connection_timeout INTEGER DEFAULT 3,
+        write_timeout INTEGER DEFAULT 5,
+        retry_attempts INTEGER DEFAULT 2,
+        print_density INTEGER DEFAULT 50 CHECK (print_density >= 0 AND print_density <= 100),
+        print_speed TEXT DEFAULT 'normal' CHECK (print_speed IN ('slow', 'normal', 'fast')),
+        cut_mode TEXT DEFAULT 'partial' CHECK (cut_mode IN ('full', 'partial', 'none')),
+        enable_beep INTEGER DEFAULT 1,
+        auto_cut INTEGER DEFAULT 1,
+        charset TEXT DEFAULT 'latin',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
+
+    // Categories
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS categories (
+        id TEXT PRIMARY KEY CHECK (length(id) = 26),
+        name TEXT NOT NULL UNIQUE,
+        description TEXT,
+        printer_id TEXT,
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE SET NULL
+      )
+    ''');
+
+    // Products
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS products (
+        id TEXT PRIMARY KEY CHECK (length(id) = 26),
+        name TEXT NOT NULL,
+        code TEXT UNIQUE,
+        description TEXT,
+        price REAL NOT NULL,
+        stock INTEGER NOT NULL,
+        category_id TEXT,
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)',
+    );
+
+    // Product Notes
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS product_notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id TEXT NOT NULL,
+        note TEXT NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+      )
+    ''');
+
+    // Product Addons
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS product_addons (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        price REAL NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+      )
+    ''');
+
+    // Orders
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS orders (
+        id TEXT PRIMARY KEY,
+        table_number TEXT NOT NULL,
+        customer_name TEXT,
+        customer_phone TEXT,
+        customer_id TEXT,
+        pax INTEGER NOT NULL DEFAULT 1 CHECK (pax > 0),
+        basket_size INTEGER NOT NULL DEFAULT 0 CHECK (basket_size >= 0),
+        total_amount REAL NOT NULL,
+        paid_amount REAL NOT NULL DEFAULT 0,
+        order_status TEXT NOT NULL DEFAULT 'cooking' CHECK (order_status IN ('cooking', 'ready', 'served')),
+        created_by TEXT,
+        payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK (payment_status IN ('unpaid', 'partial', 'paid')),
+        merged_from TEXT,
+        is_merged INTEGER NOT NULL DEFAULT 0,
+        voided_at DATETIME,
+        voided_by TEXT,
+        void_reason TEXT,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_orders_table_number ON orders(table_number)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(order_status, payment_status)',
+    );
+
+    // Order Items
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS order_items (
+        id TEXT PRIMARY KEY CHECK (length(id) = 26),
+        order_id TEXT NOT NULL,
+        product_name TEXT NOT NULL,
+        qty INTEGER NOT NULL CHECK (qty > 0),
+        price REAL NOT NULL CHECK (price >= 0),
+        destination TEXT NOT NULL CHECK (destination IN ('kitchen', 'bar')),
+        item_status TEXT NOT NULL DEFAULT 'pending' CHECK (item_status IN ('pending', 'cooking', 'ready', 'served')),
+        notes TEXT NOT NULL DEFAULT '',
+        addons TEXT NOT NULL DEFAULT '',
+        waiter_name TEXT NOT NULL DEFAULT '',
+        is_additional INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_order_items_status ON order_items(item_status)',
+    );
+
+    // Additional Charges (Master)
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS additional_charges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        outlet_id TEXT,
+        name TEXT NOT NULL,
+        charge_type TEXT NOT NULL CHECK (charge_type IN ('percentage', 'fixed')),
+        value REAL NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
+
+    // Order Additional Charges
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS order_additional_charges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id TEXT NOT NULL,
+        charge_id INTEGER,
+        name TEXT NOT NULL,
+        charge_type TEXT NOT NULL,
+        value REAL NOT NULL,
+        applied_amount REAL NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
+
+    // Transactions
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS transactions (
+        id TEXT PRIMARY KEY CHECK (length(id) = 26),
+        order_id TEXT NOT NULL DEFAULT '',
+        total_amount REAL NOT NULL,
+        payment_method TEXT NOT NULL,
+        status TEXT NOT NULL,
+        transaction_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_by TEXT,
+        cancelled_at DATETIME,
+        cancelled_by TEXT,
+        cancel_reason TEXT,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(transaction_date)',
+    );
+
+    // Transaction Items
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS transaction_items (
+        id TEXT PRIMARY KEY CHECK (length(id) = 26),
+        transaction_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        price REAL NOT NULL,
+        FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE
+      )
+    ''');
+
+    // Payments
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS payments (
+        id TEXT PRIMARY KEY CHECK (length(id) = 26),
+        order_id TEXT NOT NULL,
+        amount REAL NOT NULL CHECK (amount > 0),
+        payment_method TEXT NOT NULL CHECK (payment_method IN ('cash', 'card', 'qris', 'transfer')),
+        payment_note TEXT,
+        created_by TEXT NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(order_id)',
+    );
+
+    // Print Queue
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS print_queue (
+        id TEXT PRIMARY KEY,
+        printer_id TEXT NOT NULL,
+        data TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'done', 'failed')),
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        error_message TEXT,
+        locked_at DATETIME,
+        locked_by TEXT,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
+
+    // Cashier Shifts
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS cashier_shifts (
+        id TEXT PRIMARY KEY,
+        opened_by TEXT NOT NULL,
+        opened_at DATETIME NOT NULL,
+        opening_cash REAL NOT NULL DEFAULT 0,
+        closed_at DATETIME,
+        closed_by TEXT,
+        closing_cash REAL,
+        closing_card REAL,
+        closing_qris REAL,
+        closing_transfer REAL,
+        carry_over_cash REAL,
+        previous_shift_id TEXT,
+        handover_to TEXT,
+        status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+        notes TEXT,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
+
+    // Cashier Cash Movements
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS cashier_cash_movements (
+        id TEXT PRIMARY KEY,
+        shift_id TEXT NOT NULL,
+        movement_type TEXT NOT NULL CHECK (movement_type IN ('in', 'out')),
+        amount REAL NOT NULL,
+        counterpart_name TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
+
+    // Sync Queue
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sync_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'success', 'failed', 'bundled')),
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        max_retries INTEGER NOT NULL DEFAULT 3,
+        error_message TEXT,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        processed_at DATETIME,
+        synced_at DATETIME
+      )
+    ''');
+
+    // Sync Logs
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sync_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sync_type TEXT NOT NULL,
+        entity_type TEXT,
+        entity_count INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        error_message TEXT,
+        started_at DATETIME NOT NULL,
+        completed_at DATETIME,
+        duration_ms INTEGER,
+        details TEXT
+      )
+    ''');
+
+    // Outlet Config
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS outlet_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        outlet_id TEXT,
+        outlet_name TEXT,
+        outlet_code TEXT,
+        outlet_address TEXT,
+        outlet_phone TEXT,
+        receipt_footer TEXT,
+        social_media TEXT,
+        target_spend_per_pax INTEGER DEFAULT 0,
+        cloud_api_url TEXT,
+        cloud_api_key TEXT,
+        is_active INTEGER DEFAULT 1,
+        sync_enabled INTEGER DEFAULT 0,
+        sync_interval_minutes INTEGER DEFAULT 5,
+        data_retention_days INTEGER NOT NULL DEFAULT 0,
+        last_sync_at DATETIME,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
+
+    // Entity Versions
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS entity_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        version INTEGER DEFAULT 1,
+        cloud_version INTEGER DEFAULT 0,
+        last_modified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_synced_at TIMESTAMP,
+        sync_status TEXT DEFAULT 'pending' CHECK (sync_status IN ('pending', 'synced', 'conflict')),
+        UNIQUE(entity_type, entity_id)
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_entity_versions_sync ON entity_versions(sync_status)',
+    );
+
+    // Registered Devices
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS registered_devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id TEXT NOT NULL UNIQUE,
+        device_name TEXT NOT NULL,
+        device_type TEXT NOT NULL DEFAULT 'tablet',
+        ip_address TEXT NOT NULL,
+        user_agent TEXT DEFAULT '',
+        is_active INTEGER DEFAULT 1,
+        last_seen_at DATETIME,
+        registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        registered_by TEXT
+      )
+    ''');
+
+    // Seed default manager user (PIN: 1234)
+    await db.execute('''
+      INSERT OR IGNORE INTO users (id, username, password_hash, full_name, role)
+      VALUES ('01HZ0000000000000000000000', 'admin', '\$2a\$10\$dummyhashforcandradigitalpos', 'Manager', 'manager')
+    ''');
+
+    // Seed default outlet config (data_retention_days = 90 = 3 bulan)
+    await db.execute('''
+      INSERT OR IGNORE INTO outlet_config (id, outlet_name, outlet_code, is_active, data_retention_days)
+      VALUES (1, 'POS Resto', 'OUTLET-001', 1, 90)
+    ''');
+  }
+
+  // Generic query helpers
+  Future<List<Map<String, dynamic>>> query(
+    String table, {
+    bool? distinct,
+    List<String>? columns,
+    String? where,
+    List<Object?>? whereArgs,
+    String? groupBy,
+    String? having,
+    String? orderBy,
+    int? limit,
+    int? offset,
+  }) async {
+    final db = await database;
+    return db.query(
+      table,
+      distinct: distinct,
+      columns: columns,
+      where: where,
+      whereArgs: whereArgs,
+      groupBy: groupBy,
+      having: having,
+      orderBy: orderBy,
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  Future<Map<String, dynamic>> insert(
+    String table,
+    Map<String, dynamic> values,
+  ) async {
+    final db = await database;
+    final id = await db.insert(table, values);
+    return {'id': id, ...values};
+  }
+
+  Future<int> update(
+    String table,
+    Map<String, dynamic> values, {
+    String? where,
+    List<Object?>? whereArgs,
+  }) async {
+    final db = await database;
+    return db.update(table, values, where: where, whereArgs: whereArgs);
+  }
+
+  Future<int> delete(
+    String table, {
+    String? where,
+    List<Object?>? whereArgs,
+  }) async {
+    final db = await database;
+    return db.delete(table, where: where, whereArgs: whereArgs);
+  }
+
+  Future<List<Map<String, dynamic>>> rawQuery(
+    String sql, [
+    List<Object?>? arguments,
+  ]) async {
+    final db = await database;
+    return db.rawQuery(sql, arguments);
+  }
+
+  Future<int> rawInsert(String sql, [List<Object?>? arguments]) async {
+    final db = await database;
+    return db.rawInsert(sql, arguments);
+  }
+
+  Future<int> rawUpdate(String sql, [List<Object?>? arguments]) async {
+    final db = await database;
+    return db.rawUpdate(sql, arguments);
+  }
+
+  Future<void> close() async {
+    final db = await database;
+    await db.close();
+    _database = null;
+  }
+}

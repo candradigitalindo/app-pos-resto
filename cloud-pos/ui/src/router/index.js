@@ -378,9 +378,8 @@ router.beforeEach(async (to) => {
   }
 
   // Always refresh permissions from API on first navigation after page load
-  if (auth.isAuthenticated && !auth._permsSynced) {
+  if (auth.isAuthenticated && !auth.permsSynced) {
     await auth.fetchPermissions()
-    auth._permsSynced = true
   }
 
   // Check permission-based access

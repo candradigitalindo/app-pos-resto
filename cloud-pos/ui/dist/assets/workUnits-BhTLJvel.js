@@ -1,1 +1,0 @@
-import{a as t}from"./index-zHdjuG0G.js";const r={list:()=>t.get("/admin/work-units"),myWorkUnits:()=>t.get("/admin/my-work-units"),get:i=>t.get(`/admin/work-units/${i}`),getMyWorkUnit:()=>t.get("/admin/work-units/me"),create:i=>t.post("/admin/work-units",i),update:(i,n)=>t.put(`/admin/work-units/${i}`,n)};export{r as w};

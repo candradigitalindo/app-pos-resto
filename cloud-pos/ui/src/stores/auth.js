@@ -35,6 +35,10 @@ export const useAuthStore = defineStore('auth', () => {
   const scopeType = ref(localStorage.getItem(SCOPE_KEY) || 'all')
   const scopeOutletIDs = ref(JSON.parse(localStorage.getItem(SCOPE_IDS_KEY) || 'null'))
   const redirectTo = ref(localStorage.getItem(REDIRECT_KEY) || '/')
+  let _permsSynced = false
+
+  // Expose _permsSynced as a getter
+  const permsSynced = computed(() => _permsSynced)
 
   // ── Getters ──────────────────────────────────────────────
   /** True when a valid token exists */
@@ -125,6 +129,7 @@ export const useAuthStore = defineStore('auth', () => {
       .then(data => {
         const perms = Array.isArray(data) ? data : data.permissions ?? []
         setPermissions(perms)
+        _permsSynced = true
         if (data.scope_type) {
           scopeType.value = data.scope_type
           scopeOutletIDs.value = data.scope_outlet_ids ?? null
@@ -152,5 +157,6 @@ export const useAuthStore = defineStore('auth', () => {
     setPermissions,
     fetchPermissions,
     logout,
+    permsSynced,
   }
 })
