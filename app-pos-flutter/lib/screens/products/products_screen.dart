@@ -228,10 +228,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
-                  value: selectedCatId,
+                  initialValue: selectedCatId,
                   decoration: const InputDecoration(
                       labelText: 'Kategori', border: OutlineInputBorder()),
-                  // ignore: deprecated_member_use
                   items: _categories
                       .map((c) =>
                           DropdownMenuItem(value: c.id, child: Text(c.name)))

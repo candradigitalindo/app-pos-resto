@@ -123,20 +123,19 @@ class ReceiptData {
 
 // ─── ESC/POS Commands ─────────────────────────────────────────────────────────
 
-// ignore: constant_identifier_names
 class _Esc {
-  static const int ESC = 0x1B;
-  static const int GS = 0x1D;
+  static const int esc = 0x1B;
+  static const int gs = 0x1D;
 
-  static List<int> init() => [ESC, 0x40];
+  static List<int> init() => [esc, 0x40];
   static List<int> feedLine([int n = 1]) => List.filled(n, 0x0A);
-  static List<int> boldOn() => [ESC, 0x45, 0x01];
-  static List<int> boldOff() => [ESC, 0x45, 0x00];
-  static List<int> centerAlign() => [ESC, 0x61, 0x01];
-  static List<int> leftAlign() => [ESC, 0x61, 0x00];
-  static List<int> fontLarge() => [GS, 0x21, 0x11];
-  static List<int> fontNormal() => [GS, 0x21, 0x00];
-  static List<int> cutPartial() => [GS, 0x56, 0x41, 0x03];
+  static List<int> boldOn() => [esc, 0x45, 0x01];
+  static List<int> boldOff() => [esc, 0x45, 0x00];
+  static List<int> centerAlign() => [esc, 0x61, 0x01];
+  static List<int> leftAlign() => [esc, 0x61, 0x00];
+  static List<int> fontLarge() => [gs, 0x21, 0x11];
+  static List<int> fontNormal() => [gs, 0x21, 0x00];
+  static List<int> cutPartial() => [gs, 0x56, 0x41, 0x03];
   static List<int> line(String s) => [...s.codeUnits, 0x0A];
 }
 
