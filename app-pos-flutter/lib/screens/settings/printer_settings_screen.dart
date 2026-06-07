@@ -99,6 +99,12 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen>
     }
   }
 
+  /// Ubah peran printer tersimpan (Dapur / Bar / Kasir / -).
+  Future<void> _setRole(PrinterDevice device, String role) async {
+    await _service.savePrinter(device.copyWith(role: role));
+    await _loadSaved();
+  }
+
   Future<void> _remove(PrinterDevice device) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -208,6 +214,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen>
         onSave: null,
         onRemove: () => _remove(_saved[i]),
         onTest: () => _testPrint(_saved[i]),
+        onRoleChange: (role) => _setRole(_saved[i], role),
       ),
     );
   }
@@ -349,6 +356,7 @@ class _PrinterTile extends StatelessWidget {
   final VoidCallback? onSave;
   final VoidCallback? onRemove;
   final VoidCallback? onTest;
+  final void Function(String role)? onRoleChange;
 
   const _PrinterTile({
     required this.device,
@@ -356,6 +364,7 @@ class _PrinterTile extends StatelessWidget {
     required this.onSave,
     required this.onRemove,
     required this.onTest,
+    this.onRoleChange,
   });
 
   @override
@@ -367,7 +376,10 @@ class _PrinterTile extends StatelessWidget {
       margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
           children: [
             // Icon
             Container(
@@ -442,7 +454,57 @@ class _PrinterTile extends StatelessWidget {
               ],
             ),
           ],
+            ),
+            if (isSaved && onRoleChange != null) _buildRoleSelector(),
+          ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildRoleSelector() {
+    const roles = [
+      [PrinterRole.kitchen, 'Dapur'],
+      [PrinterRole.bar, 'Bar'],
+      [PrinterRole.cashier, 'Kasir'],
+      [PrinterRole.none, '-'],
+    ];
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        children: [
+          const Text('Peran:',
+              style: TextStyle(fontSize: 11, color: Color(0xFF8E8E93))),
+          const SizedBox(width: 8),
+          ...roles.map((r) {
+            final value = r[0];
+            final label = r[1];
+            final selected = device.role == value;
+            return Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: GestureDetector(
+                onTap: () => onRoleChange!(value),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? const Color(0xFF059669)
+                        : const Color(0xFFF2F2F7),
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: Text(label,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color:
+                            selected ? Colors.white : const Color(0xFF8E8E93),
+                      )),
+                ),
+              ),
+            );
+          }),
+        ],
       ),
     );
   }

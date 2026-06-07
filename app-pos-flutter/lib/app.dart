@@ -86,7 +86,7 @@ class PosRestoApp extends StatelessWidget {
         title: 'POS Resto',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
-          colorSchemeSeed: const Color(0xFF1565C0),
+          colorSchemeSeed: const Color(0xFF10B981),
           useMaterial3: true,
           brightness: Brightness.light,
         ),
@@ -109,7 +109,7 @@ class AuthWrapper extends ConsumerWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.restaurant, size: 80, color: Color(0xFF1565C0)),
+              Icon(Icons.restaurant, size: 80, color: Color(0xFF10B981)),
               SizedBox(height: 16),
               CircularProgressIndicator(),
               SizedBox(height: 16),

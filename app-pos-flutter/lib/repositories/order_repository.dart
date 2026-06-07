@@ -1,10 +1,17 @@
+import 'package:flutter/foundation.dart';
+
 import '../database/database.dart';
 import '../models/models.dart';
+import '../services/print_queue_service.dart';
+import '../services/printer_service.dart';
+import '../services/receipt_builder.dart';
 import '../utils/ulid.dart';
 import '../utils/currency.dart';
+import 'sync_queue_repository.dart';
 
 class OrderRepository {
   final AppDatabase _db = AppDatabase.instance;
+  final SyncQueueRepository _sync = SyncQueueRepository();
 
   // ==================== CREATE ORDER ====================
 
@@ -36,7 +43,7 @@ class OrderRepository {
         productName: product.name,
         qty: input.qty,
         price: product.price,
-        destination: _determineDestination(product),
+        destination: await _determineDestination(product),
         itemStatus: 'pending',
         notes: input.notes ?? '',
         addons: input.addons ?? '',
@@ -83,6 +90,14 @@ class OrderRepository {
 
     // Apply auto charges
     await _applyAutoCharges(orderId);
+
+    // Enqueue tiket dapur/bar (durable + retry). Tidak memblokir return.
+    await enqueueKitchenPrints(
+      order: order,
+      items: orderItems,
+      isAdditional: false,
+      waiterName: waiterName ?? '',
+    );
 
     return order;
   }
@@ -133,31 +148,43 @@ class OrderRepository {
     if (order.isPaid) throw Exception('Order sudah dibayar');
     if (order.isVoided) throw Exception('Order sudah di-void');
 
-    await db.transaction((txn) async {
-      for (final input in items) {
-        final product = await _getProduct(input.productId);
-        if (product == null) throw Exception('Produk tidak ditemukan');
+    // Fetch products before transaction to avoid locking _db inside txn
+    final orderItems = <OrderItem>[];
+    for (final input in items) {
+      final product = await _getProduct(input.productId);
+      if (product == null) throw Exception('Produk tidak ditemukan');
+      orderItems.add(OrderItem(
+        id: Ulid.generate(),
+        orderId: orderId,
+        productName: product.name,
+        qty: input.qty,
+        price: product.price,
+        destination: await _determineDestination(product),
+        itemStatus: 'pending',
+        notes: input.notes ?? '',
+        addons: input.addons ?? '',
+        waiterName: waiterName,
+        isAdditional: 1,
+        createdAt: now,
+        updatedAt: now,
+      ));
+    }
 
-        final item = OrderItem(
-          id: Ulid.generate(),
-          orderId: orderId,
-          productName: product.name,
-          qty: input.qty,
-          price: product.price,
-          destination: _determineDestination(product),
-          itemStatus: 'pending',
-          notes: input.notes ?? '',
-          addons: input.addons ?? '',
-          waiterName: waiterName,
-          isAdditional: 1,
-          createdAt: now,
-          updatedAt: now,
-        );
+    await db.transaction((txn) async {
+      for (final item in orderItems) {
         await txn.insert('order_items', item.toMap());
       }
     });
 
     await _recalculateOrderTotal(orderId);
+
+    // Enqueue tiket tambahan ke dapur/bar
+    await enqueueKitchenPrints(
+      order: order,
+      items: orderItems,
+      isAdditional: true,
+      waiterName: waiterName,
+    );
   }
 
   // ==================== UPDATE ITEM STATUS ====================
@@ -266,6 +293,9 @@ class OrderRepository {
       updatedAt: now,
     );
 
+    // Fetch order items before transaction to avoid locking _db inside txn
+    final orderItems = await getOrderItems(orderId);
+
     await db.transaction((txn) async {
       // Insert payment
       await txn.insert('payments', payment.toMap());
@@ -274,7 +304,6 @@ class OrderRepository {
       await txn.insert('transactions', transaction.toMap());
 
       // Insert transaction items
-      final orderItems = await getOrderItems(orderId);
       for (final item in orderItems) {
         await txn.insert(
           'transaction_items',
@@ -321,6 +350,17 @@ class OrderRepository {
       );
     });
 
+    // Outbox: kirim transaksi ke cloud dengan breakdown penjualan/pajak/charge
+    await _enqueueTransaction(
+      transaction: transaction,
+      order: order,
+      items: orderItems,
+      paymentMethod: paymentMethod,
+      paidAmount: paidAmount,
+      changeAmount: change,
+      cashierId: createdBy ?? '',
+    );
+
     return {
       'order_id': orderId,
       'total_amount': order.totalAmount,
@@ -331,6 +371,73 @@ class OrderRepository {
       'payment': payment,
       'transaction': transaction,
     };
+  }
+
+  /// Bangun payload transaksi untuk cloud dengan pemisahan jelas:
+  /// subtotal (penjualan bersih), charges[] (tiap tambahan), tax_amount
+  /// (charge persentase), other_charges_total (charge fixed), total.
+  Future<void> _enqueueTransaction({
+    required Transaction transaction,
+    required Order order,
+    required List<OrderItem> items,
+    required String paymentMethod,
+    required double paidAmount,
+    required double changeAmount,
+    required String cashierId,
+  }) async {
+    try {
+      final charges = await getOrderCharges(order.id);
+
+      final subtotal = items.fold(0.0, (sum, i) => sum + i.subtotal);
+      double taxTotal = 0; // charge persentase (pajak/PB1)
+      double otherChargesTotal = 0; // charge fixed (kemasan, dll)
+      for (final c in charges) {
+        if (c.chargeType == 'percentage') {
+          taxTotal += c.appliedAmount;
+        } else {
+          otherChargesTotal += c.appliedAmount;
+        }
+      }
+
+      await _sync.enqueue(
+        entityType: 'transaction',
+        entityId: transaction.id,
+        operation: 'create',
+        payload: {
+          'local_id': transaction.id,
+          'order_id': order.id,
+          // Pemisahan uang yang jelas:
+          'subtotal': subtotal, // penjualan bersih (sebelum pajak/charge)
+          'tax_amount': taxTotal, // pajak (charge persentase)
+          'other_charges_total': otherChargesTotal, // tambahan lain (fixed)
+          'charges': charges
+              .map((c) => {
+                    'name': c.name,
+                    'charge_type': c.chargeType,
+                    'value': c.value,
+                    'amount': c.appliedAmount,
+                  })
+              .toList(),
+          'total_amount': order.totalAmount, // grand total
+          'payment_method': paymentMethod,
+          'cash_amount': paymentMethod == 'cash' ? paidAmount : 0,
+          'change_amount': changeAmount,
+          'cashier_name': '',
+          'created_by': cashierId,
+          'items': items
+              .map((i) => {
+                    'product_name': i.productName,
+                    'quantity': i.qty,
+                    'price': i.price,
+                    'subtotal': i.subtotal,
+                  })
+              .toList(),
+          'created_at': transaction.createdAt.toIso8601String(),
+        },
+      );
+    } catch (e) {
+      debugPrint('enqueueTransaction error: $e');
+    }
   }
 
   Future<Map<String, dynamic>> splitBillPayment({
@@ -364,6 +471,10 @@ class OrderRepository {
     final newPaymentStatus =
         newPaidAmount >= order.totalAmount ? 'paid' : 'partial';
 
+    // Items diambil sebelum txn untuk payload sync (jika lunas)
+    final splitItems = await getOrderItems(orderId);
+    Transaction? completedTx;
+
     await db.transaction((txn) async {
       await txn.insert('payments', payment.toMap());
 
@@ -391,6 +502,7 @@ class OrderRepository {
           createdAt: now,
           updatedAt: now,
         );
+        completedTx = transaction;
         await txn.insert('transactions', transaction.toMap());
 
         await txn.update(
@@ -421,6 +533,19 @@ class OrderRepository {
         );
       }
     });
+
+    // Outbox: kirim transaksi ke cloud saat order lunas via split bill
+    if (completedTx != null) {
+      await _enqueueTransaction(
+        transaction: completedTx!,
+        order: order,
+        items: splitItems,
+        paymentMethod: paymentMethod,
+        paidAmount: order.totalAmount,
+        changeAmount: 0,
+        cashierId: createdBy ?? '',
+      );
+    }
 
     return {
       'order_id': orderId,
@@ -559,6 +684,18 @@ class OrderRepository {
         whereArgs: [order.tableNumber],
       );
     });
+
+    // Outbox: kirim transaksi compliment (total 0) ke cloud
+    final complimentItems = await getOrderItems(orderId);
+    await _enqueueTransaction(
+      transaction: transaction,
+      order: order,
+      items: complimentItems,
+      paymentMethod: 'compliment',
+      paidAmount: 0,
+      changeAmount: 0,
+      cashierId: createdBy ?? '',
+    );
   }
 
   // ==================== MOVE TABLE ====================
@@ -676,6 +813,54 @@ class OrderRepository {
     return results.map((m) => Payment.fromMap(m)).toList();
   }
 
+  // ==================== ADDITIONAL CHARGES (master) ====================
+
+  Future<List<AdditionalCharge>> getActiveCharges() async {
+    final results = await _db.query(
+      'additional_charges',
+      orderBy: 'name ASC',
+    );
+    return results.map((m) => AdditionalCharge.fromMap(m)).toList();
+  }
+
+  Future<void> createAdditionalCharge({
+    required String name,
+    required String chargeType,
+    required double value,
+    required bool isActive,
+  }) async {
+    final now = DateTime.now().toIso8601String();
+    await _db.insert('additional_charges', {
+      'name': name,
+      'charge_type': chargeType,
+      'value': value,
+      'is_active': isActive ? 1 : 0,
+      'created_at': now,
+      'updated_at': now,
+    });
+  }
+
+  Future<void> updateAdditionalCharge({
+    required int id,
+    required String name,
+    required String chargeType,
+    required double value,
+    required bool isActive,
+  }) async {
+    await _db.update(
+      'additional_charges',
+      {
+        'name': name,
+        'charge_type': chargeType,
+        'value': value,
+        'is_active': isActive ? 1 : 0,
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   // ==================== ORDER CHARGES ====================
 
   Future<List<OrderAdditionalCharge>> getOrderCharges(String orderId) async {
@@ -709,9 +894,62 @@ class OrderRepository {
     return OrderItem.fromMap(results.first);
   }
 
-  String _determineDestination(Product product) {
-    // Default to kitchen; in production this would check category → printer assignment
-    return 'kitchen';
+  /// Kelompokkan item per destination (kitchen/bar), bangun tiket ESC/POS,
+  /// lalu masukkan ke antrian cetak. Dipanggil dari SEMUA jalur pembuatan order
+  /// (kasir, waiter, station API) sehingga dapur/bar tidak pernah ter-skip.
+  Future<void> enqueueKitchenPrints({
+    required Order order,
+    required List<OrderItem> items,
+    required bool isAdditional,
+    String waiterName = '',
+  }) async {
+    try {
+      final byDest = <String, List<OrderItem>>{};
+      for (final it in items) {
+        (byDest[it.destination] ??= []).add(it);
+      }
+
+      const builder = ReceiptBuilder(paperWidth: 32);
+      for (final entry in byDest.entries) {
+        final role = entry.key; // 'kitchen' | 'bar'
+        if (role != PrinterRole.kitchen && role != PrinterRole.bar) continue;
+        final label = role == PrinterRole.bar ? 'BAR' : 'DAPUR';
+
+        final bytes = builder.buildKitchenOrder(
+          orderId: order.id,
+          tableNumber: order.tableNumber,
+          waiterName: waiterName,
+          items: entry.value,
+          dateTime: DateTime.now(),
+          printerLabel: label,
+          isAdditional: isAdditional,
+        );
+
+        await PrintQueueService.instance.enqueueForRole(
+          role: role,
+          bytes: bytes,
+          label: 'Meja ${order.tableNumber} ($label)',
+        );
+      }
+    } catch (e) {
+      // Order sudah tersimpan; kegagalan enqueue tidak boleh membatalkan order.
+      debugPrint('enqueueKitchenPrints error: $e');
+    }
+  }
+
+  Future<String> _determineDestination(Product product) async {
+    if (product.categoryId == null) return 'kitchen';
+    final cats = await _db.query('categories',
+        where: 'id = ?', whereArgs: [product.categoryId]);
+    if (cats.isEmpty) return 'kitchen';
+    final printerId = cats.first['printer_id'];
+    if (printerId == null) return 'kitchen';
+    final printers = await _db.query('printers',
+        where: 'id = ?', whereArgs: [printerId]);
+    if (printers.isEmpty) return 'kitchen';
+    final type = printers.first['printer_type'] as String? ?? 'kitchen';
+    // only 'kitchen' and 'bar' are valid display destinations
+    return (type == 'bar') ? 'bar' : 'kitchen';
   }
 
   Future<void> _applyAutoCharges(String orderId) async {

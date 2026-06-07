@@ -1,0 +1,487 @@
+import 'package:flutter/foundation.dart' hide Category;
+
+import '../models/models.dart';
+import '../repositories/order_repository.dart';
+import '../repositories/product_repository.dart';
+import '../repositories/table_repository.dart';
+import '../services/local_api_server.dart';
+import '../services/printer_service.dart';
+import '../services/receipt_builder.dart';
+
+/// State untuk WaiterScreen - mandiri, tidak bergantung ke CashierScreen
+class WaiterState {
+  // Tables
+  final List<RestaurantTable> tables;
+  final Map<String, Order?> tableOrders;
+
+  // Products
+  final List<Category> categories;
+  final List<Product> products;
+  final Category? selectedCategory;
+
+  // Cart (for creating new orders)
+  final RestaurantTable? selectedTable;
+  final Map<String, int> cart;
+  final Map<String, String> cartNotes;
+  final Map<String, Product> productCache;
+
+  // Existing order detail
+  final Order? currentOrder;
+  final List<OrderItem> currentOrderItems;
+
+  // UI state
+  final bool isLoading;
+  final bool isProcessing;
+  final String? errorMessage;
+  final String? successMessage;
+
+  // View mode: 'tables' | 'order' | 'detail'
+  final String viewMode;
+
+  const WaiterState({
+    this.tables = const [],
+    this.tableOrders = const {},
+    this.categories = const [],
+    this.products = const [],
+    this.selectedCategory,
+    this.selectedTable,
+    this.cart = const {},
+    this.cartNotes = const {},
+    this.productCache = const {},
+    this.currentOrder,
+    this.currentOrderItems = const [],
+    this.isLoading = false,
+    this.isProcessing = false,
+    this.errorMessage,
+    this.successMessage,
+    this.viewMode = 'tables',
+  });
+
+  int get availableCount => tables.where((t) => t.status == 'available').length;
+  int get occupiedCount => tables.where((t) => t.status == 'occupied').length;
+
+  double get cartTotal => cart.entries.fold(0.0, (sum, e) {
+        final p = productCache[e.key];
+        return sum + (p?.price ?? 0) * e.value;
+      });
+
+  int get cartItemCount => cart.values.fold(0, (sum, qty) => sum + qty);
+
+  WaiterState copyWith({
+    List<RestaurantTable>? tables,
+    Map<String, Order?>? tableOrders,
+    List<Category>? categories,
+    List<Product>? products,
+    Category? selectedCategory,
+    bool clearSelectedCategory = false,
+    RestaurantTable? selectedTable,
+    bool clearSelectedTable = false,
+    Map<String, int>? cart,
+    Map<String, String>? cartNotes,
+    Map<String, Product>? productCache,
+    Order? currentOrder,
+    bool clearCurrentOrder = false,
+    List<OrderItem>? currentOrderItems,
+    bool? isLoading,
+    bool? isProcessing,
+    String? errorMessage,
+    bool clearError = false,
+    String? successMessage,
+    bool clearSuccess = false,
+    String? viewMode,
+  }) {
+    return WaiterState(
+      tables: tables ?? this.tables,
+      tableOrders: tableOrders ?? this.tableOrders,
+      categories: categories ?? this.categories,
+      products: products ?? this.products,
+      selectedCategory: clearSelectedCategory
+          ? null
+          : (selectedCategory ?? this.selectedCategory),
+      selectedTable:
+          clearSelectedTable ? null : (selectedTable ?? this.selectedTable),
+      cart: cart ?? this.cart,
+      cartNotes: cartNotes ?? this.cartNotes,
+      productCache: productCache ?? this.productCache,
+      currentOrder:
+          clearCurrentOrder ? null : (currentOrder ?? this.currentOrder),
+      currentOrderItems: currentOrderItems ?? this.currentOrderItems,
+      isLoading: isLoading ?? this.isLoading,
+      isProcessing: isProcessing ?? this.isProcessing,
+      errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
+      successMessage:
+          clearSuccess ? null : (successMessage ?? this.successMessage),
+      viewMode: viewMode ?? this.viewMode,
+    );
+  }
+}
+
+/// Controller untuk WaiterScreen - mandiri dengan kemampuan order lengkap
+class WaiterController extends ChangeNotifier {
+  final OrderRepository _orderRepo;
+  final ProductRepository _productRepo;
+  final TableRepository _tableRepo;
+
+  WaiterState _state = const WaiterState();
+  WaiterState get state => _state;
+
+  WaiterController({
+    OrderRepository? orderRepo,
+    ProductRepository? productRepo,
+    TableRepository? tableRepo,
+  })  : _orderRepo = orderRepo ?? OrderRepository(),
+        _productRepo = productRepo ?? ProductRepository(),
+        _tableRepo = tableRepo ?? TableRepository();
+
+  void _setState(WaiterState newState) {
+    _state = newState;
+    notifyListeners();
+  }
+
+  // ── Load Tables ──────────────────────────────────────────────────────────
+
+  Future<void> loadTables() async {
+    _setState(_state.copyWith(isLoading: true, clearError: true));
+    try {
+      final tables = await _tableRepo.getTables();
+
+      final orderFutures = tables.map(
+        (t) => _orderRepo.getOrderByTable(t.tableNumber),
+      );
+      final orders = await Future.wait(orderFutures);
+
+      final tableOrders = <String, Order?>{};
+      for (var i = 0; i < tables.length; i++) {
+        tableOrders[tables[i].tableNumber] = orders[i];
+      }
+
+      _setState(_state.copyWith(
+        tables: tables,
+        tableOrders: tableOrders,
+        isLoading: false,
+      ));
+    } catch (e) {
+      _setState(_state.copyWith(
+        isLoading: false,
+        errorMessage: 'Gagal memuat meja: $e',
+      ));
+    }
+  }
+
+  // ── Select Table & Enter Order Mode ──────────────────────────────────────
+
+  Future<void> selectTableForOrder(RestaurantTable table) async {
+    _setState(_state.copyWith(
+      selectedTable: table,
+      viewMode: 'order',
+      cart: {},
+      clearCurrentOrder: true,
+      currentOrderItems: [],
+      isLoading: true,
+      clearError: true,
+    ));
+
+    try {
+      // Load categories + products in parallel
+      final results = await Future.wait([
+        _productRepo.getCategories(),
+        _productRepo.getProducts(),
+      ]);
+      final categories = results[0] as List<Category>;
+      final products = results[1] as List<Product>;
+
+      final productCache = <String, Product>{};
+      for (final p in products) {
+        productCache[p.id] = p;
+      }
+
+      _setState(_state.copyWith(
+        categories: categories,
+        products: products,
+        selectedCategory: categories.isNotEmpty ? categories.first : null,
+        productCache: productCache,
+        isLoading: false,
+      ));
+    } catch (e) {
+      _setState(_state.copyWith(
+        isLoading: false,
+        errorMessage: 'Gagal memuat menu: $e',
+      ));
+    }
+  }
+
+  // ── View Existing Order Detail ───────────────────────────────────────────
+
+  Future<void> viewOrderDetail(RestaurantTable table) async {
+    final order = _state.tableOrders[table.tableNumber];
+    if (order == null) return;
+
+    _setState(_state.copyWith(
+      selectedTable: table,
+      currentOrder: order,
+      viewMode: 'detail',
+      isLoading: true,
+      clearError: true,
+    ));
+
+    try {
+      final items = await _orderRepo.getOrderItems(order.id);
+      _setState(_state.copyWith(
+        currentOrderItems: items,
+        isLoading: false,
+      ));
+    } catch (e) {
+      _setState(_state.copyWith(
+        isLoading: false,
+        errorMessage: 'Gagal memuat detail order: $e',
+      ));
+    }
+  }
+
+  // ── Category & Product Filtering ─────────────────────────────────────────
+
+  Future<void> selectCategory(Category? cat) async {
+    _setState(_state.copyWith(
+      selectedCategory: cat,
+      clearSelectedCategory: cat == null,
+    ));
+    try {
+      final products = await _productRepo.getProducts(categoryId: cat?.id);
+      final productCache = Map<String, Product>.from(_state.productCache);
+      for (final p in products) {
+        productCache[p.id] = p;
+      }
+      _setState(_state.copyWith(
+        products: products,
+        productCache: productCache,
+      ));
+    } catch (e) {
+      _setState(_state.copyWith(errorMessage: 'Gagal memuat produk: $e'));
+    }
+  }
+
+  // ── Cart Management ──────────────────────────────────────────────────────
+
+  void addToCart(Product product) {
+    final updated = Map<String, int>.from(_state.cart);
+    updated[product.id] = (updated[product.id] ?? 0) + 1;
+    final cache = Map<String, Product>.from(_state.productCache);
+    cache[product.id] = product;
+    _setState(_state.copyWith(cart: updated, productCache: cache));
+  }
+
+  void removeFromCart(String productId) {
+    final updated = Map<String, int>.from(_state.cart);
+    if ((updated[productId] ?? 0) <= 1) {
+      updated.remove(productId);
+      final notes = Map<String, String>.from(_state.cartNotes)
+        ..remove(productId);
+      _setState(_state.copyWith(cart: updated, cartNotes: notes));
+    } else {
+      updated[productId] = updated[productId]! - 1;
+      _setState(_state.copyWith(cart: updated));
+    }
+  }
+
+  void clearCart() {
+    _setState(_state.copyWith(cart: {}, cartNotes: {}));
+  }
+
+  void updateCartNote(String productId, String note) {
+    final notes = Map<String, String>.from(_state.cartNotes);
+    if (note.isEmpty) {
+      notes.remove(productId);
+    } else {
+      notes[productId] = note;
+    }
+    _setState(_state.copyWith(cartNotes: notes));
+  }
+
+  // ── Create Order ─────────────────────────────────────────────────────────
+
+  Future<bool> createOrder({String? customerName, int pax = 1}) async {
+    if (_state.selectedTable == null) {
+      _setState(_state.copyWith(errorMessage: 'Pilih meja terlebih dahulu'));
+      return false;
+    }
+    if (_state.cart.isEmpty) {
+      _setState(_state.copyWith(errorMessage: 'Tambahkan item ke pesanan'));
+      return false;
+    }
+
+    _setState(_state.copyWith(isProcessing: true, clearError: true));
+    try {
+      final items = _state.cart.entries
+          .map((e) => OrderItemInput(
+                productId: e.key,
+                qty: e.value,
+                notes: _state.cartNotes[e.key],
+              ))
+          .toList();
+
+      final order = await _orderRepo.createOrder(
+        tableNumber: _state.selectedTable!.tableNumber,
+        items: items,
+        customerName: customerName,
+        pax: pax,
+      );
+
+      // Broadcast ke waiter stations yang terhubung
+      LocalApiServer.instance.broadcast('order_created', order.toMap());
+
+      // Cetak tiket dapur/bar ditangani oleh OrderRepository (print queue).
+
+      // Refresh tables
+      await loadTables();
+
+      _setState(_state.copyWith(
+        isProcessing: false,
+        successMessage:
+            'Order berhasil dibuat untuk Meja ${_state.selectedTable!.tableNumber}',
+        viewMode: 'tables',
+        cart: {},
+        cartNotes: {},
+        clearSelectedTable: true,
+        clearCurrentOrder: true,
+        currentOrderItems: [],
+      ));
+      return true;
+    } catch (e) {
+      _setState(_state.copyWith(
+        isProcessing: false,
+        errorMessage: 'Gagal membuat order: $e',
+      ));
+      return false;
+    }
+  }
+
+  // ── Add Items to Existing Order ──────────────────────────────────────────
+
+  Future<bool> addItemsToExistingOrder({
+    required String orderId,
+    required List<OrderItemInput> items,
+  }) async {
+    _setState(_state.copyWith(isProcessing: true, clearError: true));
+    try {
+      await _orderRepo.addItemToOrder(
+        orderId: orderId,
+        items: items,
+      );
+
+      // Broadcast ke waiter stations yang terhubung
+      final updated = await _orderRepo.getOrderById(orderId);
+      if (updated != null) {
+        LocalApiServer.instance.broadcast('order_items_added', updated.toMap());
+      }
+
+      // Cetak tiket dapur/bar ditangani oleh OrderRepository (print queue).
+
+      _setState(_state.copyWith(
+        isProcessing: false,
+        successMessage: 'Item berhasil ditambahkan',
+      ));
+      await loadTables();
+      return true;
+    } catch (e) {
+      _setState(_state.copyWith(
+        isProcessing: false,
+        errorMessage: 'Gagal menambah item: $e',
+      ));
+      return false;
+    }
+  }
+
+  // ── Print Bill ───────────────────────────────────────────────────────────
+
+  Future<void> printBill(String orderId) async {
+    _setState(_state.copyWith(isProcessing: true, clearError: true));
+    try {
+      final order = await _orderRepo.getOrderById(orderId);
+      if (order == null) throw Exception('Order tidak ditemukan');
+
+      final items = await _orderRepo.getOrderItems(orderId);
+      final charges = await _orderRepo.getOrderCharges(orderId);
+
+      final printerService = PrinterService();
+      final savedPrinters = await printerService.getSavedPrinters();
+      if (savedPrinters.isEmpty) {
+        throw Exception('Tidak ada printer tersimpan');
+      }
+
+      final subtotal = items.fold(0.0, (sum, i) => sum + i.subtotal);
+      final chargesTotal = charges.fold(0.0, (sum, c) => sum + c.appliedAmount);
+
+      final receiptData = ReceiptData(
+        orderId: order.id,
+        receiptNumber: 'BILL-${order.id.substring(0, 8).toUpperCase()}',
+        tableNumber: order.tableNumber,
+        customerName: order.customerName,
+        pax: order.pax,
+        items: items
+            .map((i) => ReceiptItem(
+                  name: i.productName,
+                  quantity: i.qty,
+                  price: i.price,
+                  total: i.subtotal,
+                  notes: i.notes.isNotEmpty ? i.notes : null,
+                ))
+            .toList(),
+        subtotal: subtotal,
+        charges: charges
+            .map((c) => ReceiptCharge(name: c.name, amount: c.appliedAmount))
+            .toList(),
+        chargesTotal: chargesTotal,
+        total: order.totalAmount,
+        dateTime: DateTime.now(),
+        isBill: true,
+      );
+
+      const builder = ReceiptBuilder(paperWidth: 32);
+      final bytes = builder.buildReceipt(receiptData);
+
+      // Bill → printer kasir; fallback ke printer non-dapur/bar, lalu pertama.
+      final cashierPrinters =
+          savedPrinters.where((p) => p.role == PrinterRole.cashier).toList();
+      final printer = cashierPrinters.isNotEmpty
+          ? cashierPrinters.first
+          : savedPrinters.firstWhere(
+              (p) =>
+                  p.role != PrinterRole.kitchen && p.role != PrinterRole.bar,
+              orElse: () => savedPrinters.first,
+            );
+      if (printer.type == PrinterType.bluetooth) {
+        await printerService.sendBluetooth(printer.address, bytes);
+      } else {
+        await printerService.sendLan(printer.address, bytes);
+      }
+
+      _setState(_state.copyWith(
+        isProcessing: false,
+        successMessage: 'Bill berhasil dicetak',
+      ));
+    } catch (e) {
+      _setState(_state.copyWith(
+        isProcessing: false,
+        errorMessage: 'Gagal cetak bill: $e',
+      ));
+    }
+  }
+
+  // ── Navigation ───────────────────────────────────────────────────────────
+
+  void goBackToTables() {
+    _setState(_state.copyWith(
+      viewMode: 'tables',
+      cart: {},
+      clearSelectedTable: true,
+      clearSelectedCategory: true,
+      clearCurrentOrder: true,
+      currentOrderItems: [],
+    ));
+    loadTables();
+  }
+
+  void clearMessages() {
+    _setState(_state.copyWith(clearError: true, clearSuccess: true));
+  }
+}

@@ -37,6 +37,24 @@ class TableRepository {
     return table;
   }
 
+  Future<void> updateTable({
+    required String tableId,
+    int? capacity,
+    String? status,
+  }) async {
+    final values = <String, dynamic>{
+      'updated_at': DateTime.now().toIso8601String(),
+    };
+    if (capacity != null) values['capacity'] = capacity;
+    if (status != null) values['status'] = status;
+    await _db.update(
+      'tables',
+      values,
+      where: 'id = ?',
+      whereArgs: [tableId],
+    );
+  }
+
   Future<void> updateTableStatus(String tableNumber, String status) async {
     await _db.update(
       'tables',

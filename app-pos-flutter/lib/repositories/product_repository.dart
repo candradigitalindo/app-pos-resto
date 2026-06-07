@@ -1,9 +1,33 @@
 import '../database/database.dart';
 import '../models/models.dart';
 import '../utils/ulid.dart';
+import 'sync_queue_repository.dart';
 
 class ProductRepository {
   final AppDatabase _db = AppDatabase.instance;
+  final SyncQueueRepository _sync = SyncQueueRepository();
+
+  // ── Sync payload helpers ────────────────────────────────────────────────────
+
+  Map<String, dynamic> _categoryPayload(Category c) => {
+        'local_id': c.id,
+        'id': c.id,
+        'name': c.name,
+        'description': c.description ?? '',
+        'version': 1,
+      };
+
+  Map<String, dynamic> _productPayload(Product p) => {
+        'local_id': p.id,
+        'id': p.id,
+        'name': p.name,
+        'code': p.code ?? '',
+        'description': p.description ?? '',
+        'price': p.price,
+        'stock': p.stock,
+        'category_id': p.categoryId ?? '',
+        'version': 1,
+      };
 
   // ==================== CATEGORIES ====================
 
@@ -31,6 +55,12 @@ class ProductRepository {
       updatedAt: now,
     );
     await _db.insert('categories', category.toMap());
+    await _sync.enqueue(
+      entityType: 'category',
+      entityId: category.id,
+      operation: 'create',
+      payload: _categoryPayload(category),
+    );
     return category;
   }
 
@@ -41,14 +71,31 @@ class ProductRepository {
       where: 'id = ?',
       whereArgs: [category.id],
     );
+    await _sync.enqueue(
+      entityType: 'category',
+      entityId: category.id,
+      operation: 'update',
+      payload: _categoryPayload(category),
+    );
   }
 
   Future<void> deleteCategory(String id) async {
+    // Cloud DeleteCategory mengidentifikasi via NAME, jadi sertakan name.
+    final rows = await _db.query('categories',
+        where: 'id = ?', whereArgs: [id], limit: 1);
+    final name = rows.isNotEmpty ? (rows.first['name'] as String? ?? '') : '';
+
     await _db.update(
       'categories',
       {'is_deleted': 1},
       where: 'id = ?',
       whereArgs: [id],
+    );
+    await _sync.enqueue(
+      entityType: 'category',
+      entityId: id,
+      operation: 'delete',
+      payload: {'local_id': id, 'id': id, 'name': name},
     );
   }
 
@@ -115,6 +162,12 @@ class ProductRepository {
       updatedAt: now,
     );
     await _db.insert('products', product.toMap());
+    await _sync.enqueue(
+      entityType: 'product',
+      entityId: product.id,
+      operation: 'create',
+      payload: _productPayload(product),
+    );
     return product;
   }
 
@@ -125,6 +178,12 @@ class ProductRepository {
       where: 'id = ?',
       whereArgs: [product.id],
     );
+    await _sync.enqueue(
+      entityType: 'product',
+      entityId: product.id,
+      operation: 'update',
+      payload: _productPayload(product),
+    );
   }
 
   Future<void> deleteProduct(String id) async {
@@ -133,6 +192,12 @@ class ProductRepository {
       {'is_deleted': 1},
       where: 'id = ?',
       whereArgs: [id],
+    );
+    await _sync.enqueue(
+      entityType: 'product',
+      entityId: id,
+      operation: 'delete',
+      payload: {'local_id': id, 'id': id},
     );
   }
 

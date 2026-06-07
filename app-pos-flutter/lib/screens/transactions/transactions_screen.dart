@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../controllers/transactions_controller.dart';
 import '../../models/models.dart';
-import '../../repositories/order_repository.dart';
 import '../../utils/currency.dart';
 
 class TransactionsScreen extends StatefulWidget {
@@ -12,236 +12,131 @@ class TransactionsScreen extends StatefulWidget {
 }
 
 class _TransactionsScreenState extends State<TransactionsScreen> {
-  final _orderRepo = OrderRepository();
+  late final TransactionsController _controller;
   final _scrollController = ScrollController();
-
-  static const _pageSize = 20;
-
-  List<Order> _orders = [];
-  bool _isLoading = true;
-  bool _isLoadingMore = false;
-  bool _hasMore = true;
-  int _offset = 0;
-  String _filter = 'all';
 
   @override
   void initState() {
     super.initState();
-    _loadOrders(reset: true);
+    _controller = TransactionsController();
+    _controller.addListener(_onStateChanged);
+    _controller.loadOrders(reset: true);
     _scrollController.addListener(_onScroll);
   }
 
   @override
+  void deactivate() {
+    _controller.removeListener(_onStateChanged);
+    super.deactivate();
+  }
+
+  @override
   void dispose() {
+    _controller.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _onStateChanged() {
+    if (!mounted) return;
+    final errorMsg = _controller.state.errorMessage;
+
+    if (errorMsg != null) _controller.clearError();
+
+    if (!mounted) return;
+    setState(() {});
+
+    if (errorMsg != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMsg)),
+        );
+      });
+    }
   }
 
   void _onScroll() {
     if (_scrollController.position.pixels >=
             _scrollController.position.maxScrollExtent - 200 &&
-        !_isLoadingMore &&
-        _hasMore) {
-      _loadMore();
+        !_controller.state.isLoadingMore &&
+        _controller.state.hasMore) {
+      _controller.loadMore();
     }
   }
-
-  Future<void> _loadOrders({bool reset = false}) async {
-    if (reset) {
-      setState(() {
-        _isLoading = true;
-        _orders = [];
-        _offset = 0;
-        _hasMore = true;
-      });
-    }
-
-    try {
-      final newOrders =
-          await _orderRepo.listOrders(limit: _pageSize, offset: _offset);
-      setState(() {
-        _orders.addAll(newOrders);
-        _offset += newOrders.length;
-        _hasMore = newOrders.length == _pageSize;
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() => _isLoading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
-      }
-    }
-  }
-
-  Future<void> _loadMore() async {
-    if (_isLoadingMore || !_hasMore) return;
-    setState(() => _isLoadingMore = true);
-    try {
-      final newOrders =
-          await _orderRepo.listOrders(limit: _pageSize, offset: _offset);
-      setState(() {
-        _orders.addAll(newOrders);
-        _offset += newOrders.length;
-        _hasMore = newOrders.length == _pageSize;
-        _isLoadingMore = false;
-      });
-    } catch (_) {
-      setState(() => _isLoadingMore = false);
-    }
-  }
-
-  List<Order> get _filteredOrders {
-    switch (_filter) {
-      case 'paid':
-        return _orders.where((o) => o.isPaid).toList();
-      case 'unpaid':
-        return _orders.where((o) => !o.isPaid && !o.isVoided).toList();
-      case 'voided':
-        return _orders.where((o) => o.isVoided).toList();
-      default:
-        return _orders;
-    }
-  }
-
-  double get _totalRevenue =>
-      _orders.where((o) => o.isPaid).fold(0.0, (sum, o) => sum + o.totalAmount);
 
   @override
   Widget build(BuildContext context) {
-    final filtered = _filteredOrders;
+    final state = _controller.state;
+    final filtered = state.filteredOrders;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Transaksi'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
-        ),
-        actions: [
-          IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: () => _loadOrders(reset: true)),
-        ],
-      ),
+      backgroundColor: const Color(0xFFF2F2F7),
       body: Column(
         children: [
-          // Summary row
+          // ── Header ──
+          _buildHeader(state),
+
+          // ── Revenue Card ──
           Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                _StatItem(
-                    label: 'Total',
-                    value: '${_orders.length}',
-                    color: Colors.grey),
-                const SizedBox(width: 16),
-                _StatItem(
-                    label: 'Lunas',
-                    value: '${_orders.where((o) => o.isPaid).length}',
-                    color: Colors.green),
-                const SizedBox(width: 16),
-                _StatItem(
-                    label: 'Belum',
-                    value:
-                        '${_orders.where((o) => !o.isPaid && !o.isVoided).length}',
-                    color: Colors.orange),
-                const SizedBox(width: 16),
-                _StatItem(
-                    label: 'Void',
-                    value: '${_orders.where((o) => o.isVoided).length}',
-                    color: Colors.red),
-              ],
-            ),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: _RevenueCard(state: state),
           ),
 
-          // Revenue card
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.green.withValues(alpha: 0.06),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.account_balance_wallet,
-                    color: Colors.green, size: 24),
-                const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Pendapatan',
-                        style: TextStyle(fontSize: 12, color: Colors.grey)),
-                    Text(
-                      CurrencyHelper.format(_totalRevenue),
-                      style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          // Filter chips
+          // ── Filter Segmented Control ──
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            child: Row(
-              children: [
-                _filterChip('Semua', 'all'),
-                const SizedBox(width: 6),
-                _filterChip('Lunas', 'paid'),
-                const SizedBox(width: 6),
-                _filterChip('Belum', 'unpaid'),
-                const SizedBox(width: 6),
-                _filterChip('Void', 'voided'),
-                const Spacer(),
-                Text('${filtered.length}${_hasMore ? '+' : ''}',
-                    style: TextStyle(color: Colors.grey[500], fontSize: 13)),
-              ],
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: _FilterControl(
+              current: state.filter,
+              onChanged: _controller.setFilter,
+              counts: {
+                'all': state.orders.length,
+                'paid': state.paidCount,
+                'unpaid': state.unpaidCount,
+                'voided': state.voidedCount,
+              },
             ),
           ),
 
-          // List with infinite scroll
+          const SizedBox(height: 12),
+
+          // ── List ──
           Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+            child: state.isLoading && filtered.isEmpty
+                ? const Center(
+                    child: CircularProgressIndicator(
+                        color: Color(0xFF10B981)))
                 : filtered.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.receipt_long,
-                                size: 64, color: Colors.grey[300]),
-                            const SizedBox(height: 12),
-                            Text('Tidak ada transaksi',
-                                style: TextStyle(
-                                    color: Colors.grey[400], fontSize: 16)),
-                          ],
+                    ? _EmptyState(
+                        onRefresh: () => _controller.loadOrders(reset: true))
+                    : RefreshIndicator(
+                        color: const Color(0xFF10B981),
+                        onRefresh: () => _controller.loadOrders(reset: true),
+                        child: ListView.separated(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                          itemCount:
+                              filtered.length + (state.isLoadingMore ? 1 : 0),
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 8),
+                          itemBuilder: (context, index) {
+                            if (index == filtered.length) {
+                              return const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 16),
+                                child: Center(
+                                  child: SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Color(0xFF10B981)),
+                                  ),
+                                ),
+                              );
+                            }
+                            return _OrderCard(order: filtered[index]);
+                          },
                         ),
-                      )
-                    : ListView.separated(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 4),
-                        itemCount: filtered.length + (_isLoadingMore ? 1 : 0),
-                        separatorBuilder: (_, __) => const SizedBox(height: 6),
-                        itemBuilder: (context, index) {
-                          // Loading indicator at bottom
-                          if (index == filtered.length) {
-                            return const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 16),
-                              child: Center(child: CircularProgressIndicator()),
-                            );
-                          }
-
-                          final order = filtered[index];
-                          return _OrderTile(order: order);
-                        },
                       ),
           ),
         ],
@@ -249,68 +144,327 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     );
   }
 
-  Widget _filterChip(String label, String value) {
-    final selected = _filter == value;
-    return ChoiceChip(
-      label: Text(label, style: const TextStyle(fontSize: 12)),
-      selected: selected,
-      onSelected: (_) => setState(() => _filter = value),
-      visualDensity: VisualDensity.compact,
+  Widget _buildHeader(TransactionsState state) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF059669), Color(0xFF10B981)],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Color(0x20000000),
+            blurRadius: 12,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              _NavButton(
+                icon: Icons.arrow_back,
+                onTap: () => Navigator.pop(context),
+              ),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Transaksi',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          letterSpacing: -0.3,
+                        )),
+                    Text('Riwayat & laporan pendapatan',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFFA7F3D0),
+                        )),
+                  ],
+                ),
+              ),
+              _NavButton(
+                icon: Icons.refresh,
+                onTap: state.isLoading
+                    ? null
+                    : () => _controller.loadOrders(reset: true),
+                isLoading: state.isLoading,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
 
-// ─── Extracted const-friendly widgets ────────────────────────────────────────
+// ── Revenue Card ──────────────────────────────────────────────────────────────
 
-class _StatItem extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color color;
-
-  const _StatItem(
-      {required this.label, required this.value, required this.color});
+class _RevenueCard extends StatelessWidget {
+  final TransactionsState state;
+  const _RevenueCard({required this.state});
 
   @override
   Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF065F46), Color(0xFF059669)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF059669).withValues(alpha: 0.3),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.account_balance_wallet,
+                    color: Colors.white, size: 18),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'Total Pendapatan',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.8),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            CurrencyHelper.format(state.totalRevenue),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 32,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -1,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              _miniStat('${state.paidCount}', 'Lunas',
+                  const Color(0xFF34D399)),
+              const SizedBox(width: 20),
+              _miniStat('${state.unpaidCount}', 'Belum',
+                  const Color(0xFFFBBF24)),
+              const SizedBox(width: 20),
+              _miniStat('${state.voidedCount}', 'Void',
+                  const Color(0xFFFCA5A5)),
+              const Spacer(),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${state.orders.length}${state.hasMore ? '+' : ''} order',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _miniStat(String value, String label, Color color) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(value,
             style: TextStyle(
-                fontWeight: FontWeight.bold, fontSize: 18, color: color)),
-        Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+              color: color,
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+            )),
+        Text(label,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.6),
+              fontSize: 11,
+            )),
       ],
     );
   }
 }
 
-class _OrderTile extends StatelessWidget {
-  final Order order;
+// ── Filter Segmented Control ──────────────────────────────────────────────────
 
-  const _OrderTile({required this.order});
+class _FilterControl extends StatelessWidget {
+  final String current;
+  final ValueChanged<String> onChanged;
+  final Map<String, int> counts;
+
+  const _FilterControl({
+    required this.current,
+    required this.onChanged,
+    required this.counts,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFE5E5EA),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      padding: const EdgeInsets.all(3),
+      child: Row(
+        children: [
+          _seg('all', 'Semua'),
+          _seg('paid', 'Lunas'),
+          _seg('unpaid', 'Belum'),
+          _seg('voided', 'Void'),
+        ],
+      ),
+    );
+  }
+
+  Widget _seg(String value, String label) {
+    final selected = current == value;
+    final count = counts[value] ?? 0;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => onChanged(value),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: selected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 4,
+                      offset: const Offset(0, 1),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight:
+                      selected ? FontWeight.w700 : FontWeight.w500,
+                  color: selected
+                      ? const Color(0xFF059669)
+                      : const Color(0xFF8E8E93),
+                ),
+              ),
+              if (count > 0)
+                Text(
+                  '$count',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: selected
+                        ? const Color(0xFF059669)
+                        : const Color(0xFFAEAEB2),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Order Card ────────────────────────────────────────────────────────────────
+
+class _OrderCard extends StatelessWidget {
+  final Order order;
+  const _OrderCard({required this.order});
 
   @override
   Widget build(BuildContext context) {
     final color = order.isVoided
-        ? Colors.red
+        ? const Color(0xFFEF4444)
         : order.isPaid
-            ? Colors.green
-            : Colors.orange;
+            ? const Color(0xFF10B981)
+            : const Color(0xFFF59E0B);
 
-    return Material(
-      color: Colors.grey[50],
-      borderRadius: BorderRadius.circular(10),
+    final statusLabel = order.isVoided
+        ? 'VOID'
+        : order.paymentStatus == 'paid'
+            ? 'LUNAS'
+            : order.paymentStatus == 'partial'
+                ? 'SEBAGIAN'
+                : 'BELUM';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           children: [
-            // Status dot
+            // Status indicator
             Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                order.isVoided
+                    ? Icons.cancel_outlined
+                    : order.isPaid
+                        ? Icons.check_circle_outline
+                        : Icons.pending_outlined,
+                color: color,
+                size: 22,
+              ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 14),
+
             // Info
             Expanded(
               child: Column(
@@ -320,27 +474,60 @@ class _OrderTile extends StatelessWidget {
                     children: [
                       Text('Meja ${order.tableNumber}',
                           style: const TextStyle(
-                              fontWeight: FontWeight.w600, fontSize: 14)),
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15,
+                            color: Color(0xFF0F172A),
+                          )),
                       const SizedBox(width: 8),
-                      _StatusBadge(order: order, color: color),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Text(statusLabel,
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: color,
+                              letterSpacing: 0.3,
+                            )),
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 3),
                   Text(
                     '${order.basketSize} item · ${_formatDate(order.createdAt)}',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                    style: const TextStyle(
+                        fontSize: 12, color: Color(0xFF8E8E93)),
                   ),
                 ],
               ),
             ),
+
             // Amount
-            Text(
-              CurrencyHelper.format(order.totalAmount),
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: order.isVoided ? Colors.grey : null,
-                decoration: order.isVoided ? TextDecoration.lineThrough : null,
-              ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  CurrencyHelper.format(order.totalAmount),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                    color: order.isVoided
+                        ? const Color(0xFFAEAEB2)
+                        : const Color(0xFF0F172A),
+                    decoration: order.isVoided
+                        ? TextDecoration.lineThrough
+                        : null,
+                  ),
+                ),
+                if (order.pax > 0)
+                  Text('${order.pax} pax',
+                      style: const TextStyle(
+                          fontSize: 11, color: Color(0xFFAEAEB2))),
+              ],
             ),
           ],
         ),
@@ -349,28 +536,105 @@ class _OrderTile extends StatelessWidget {
   }
 
   String _formatDate(DateTime dt) {
-    return '${dt.day}/${dt.month}/${dt.year} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
+    final now = DateTime.now();
+    if (dt.year == now.year && dt.month == now.month && dt.day == now.day) {
+      return '${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
+    }
+    return '${dt.day}/${dt.month} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }
 
-class _StatusBadge extends StatelessWidget {
-  final Order order;
-  final Color color;
+// ── Empty State ───────────────────────────────────────────────────────────────
 
-  const _StatusBadge({required this.order, required this.color});
+class _EmptyState extends StatelessWidget {
+  final VoidCallback onRefresh;
+  const _EmptyState({required this.onRefresh});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(4),
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: const Color(0xFFE5E5EA),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: const Icon(Icons.receipt_long_outlined,
+                size: 40, color: Color(0xFFAEAEB2)),
+          ),
+          const SizedBox(height: 16),
+          const Text('Tidak ada transaksi',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF3C3C43),
+              )),
+          const SizedBox(height: 6),
+          const Text('Transaksi akan muncul di sini',
+              style: TextStyle(fontSize: 14, color: Color(0xFF8E8E93))),
+          const SizedBox(height: 24),
+          GestureDetector(
+            onTap: onRefresh,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF10B981),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Text('Refresh',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  )),
+            ),
+          ),
+        ],
       ),
-      child: Text(
-        order.isVoided ? 'VOID' : order.paymentStatus.toUpperCase(),
-        style:
-            TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: color),
+    );
+  }
+}
+
+// ── Shared Nav Button ─────────────────────────────────────────────────────────
+
+class _NavButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback? onTap;
+  final bool isLoading;
+
+  const _NavButton({
+    required this.icon,
+    this.onTap,
+    this.isLoading = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.15),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: SizedBox(
+          width: 42,
+          height: 42,
+          child: isLoading
+              ? const Center(
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
+                  ),
+                )
+              : Icon(icon, color: Colors.white, size: 20),
+        ),
       ),
     );
   }

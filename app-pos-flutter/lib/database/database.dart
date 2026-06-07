@@ -19,11 +19,39 @@ class AppDatabase {
 
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
     );
   }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute(_kitchenPrintJobsSql);
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_kpj_status ON kitchen_print_jobs(status, created_at)',
+      );
+    }
+  }
+
+  // Antrian cetak dapur/bar (durable + retry). Struk kasir TIDAK lewat sini.
+  static const String _kitchenPrintJobsSql = '''
+    CREATE TABLE IF NOT EXISTS kitchen_print_jobs (
+      id TEXT PRIMARY KEY,
+      printer_address TEXT NOT NULL,
+      printer_type TEXT NOT NULL,
+      role TEXT NOT NULL,
+      payload BLOB NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'done', 'failed')),
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT,
+      locked_at DATETIME,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  ''';
 
   Future<void> _onConfigure(Database db) async {
     await db.execute('PRAGMA foreign_keys = ON');
@@ -444,6 +472,12 @@ class AppDatabase {
         registered_by TEXT
       )
     ''');
+
+    // Kitchen/Bar Print Jobs (durable queue + retry)
+    await db.execute(_kitchenPrintJobsSql);
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_kpj_status ON kitchen_print_jobs(status, created_at)',
+    );
 
     // Seed default manager user (PIN: 1234)
     await db.execute('''
