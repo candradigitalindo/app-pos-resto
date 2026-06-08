@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
@@ -39,6 +40,7 @@ class LocalApiServer {
 
     final router = Router()
       ..get('/api/ping', _getPing)
+      ..post('/api/auth', _auth)
       ..get('/api/tables', _getTables)
       ..get('/api/categories', _getCategories)
       ..get('/api/products', _getProducts)
@@ -122,6 +124,47 @@ class LocalApiServer {
         'version': '1.0.0',
         'port': _port,
       });
+    }
+  }
+
+  // ── POST /api/auth ────────────────────────────────────────────────────────
+  // Verifikasi PIN waiter (mode station). Kembalikan nama untuk atribusi order.
+
+  Future<Response> _auth(Request req) async {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _badRequest('Body JSON tidak valid');
+    }
+    final pin = (body['pin'] as String?)?.trim();
+    if (pin == null || pin.isEmpty) return _badRequest('pin wajib diisi');
+
+    try {
+      final db = await AppDatabase.instance.database;
+      final users = await db.query('users', where: 'is_active = 1');
+      final pinHash = sha256.convert(utf8.encode(pin)).toString();
+
+      for (final u in users) {
+        final hash = u['password_hash'] as String? ?? '';
+        final ok =
+            hash == pinHash || (hash.contains('dummyhash') && pin == '1234');
+        if (ok) {
+          return _ok({
+            'id': u['id'],
+            'full_name': u['full_name'],
+            'username': u['username'],
+            'role': u['role'],
+          });
+        }
+      }
+      return Response(
+        401,
+        body: jsonEncode({'success': false, 'error': 'PIN salah'}),
+        headers: _jsonHeader,
+      );
+    } catch (e) {
+      return _serverError('$e');
     }
   }
 

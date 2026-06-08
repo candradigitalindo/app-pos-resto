@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../../app.dart';
 import '../../controllers/settings_controller.dart';
 import '../../models/models.dart';
 import '../../repositories/order_repository.dart';
 import '../../services/cloud_sync_service.dart';
+import '../../services/device_role_service.dart';
 import 'print_queue_screen.dart';
 import 'printer_settings_screen.dart';
 import 'sync_status_screen.dart';
@@ -432,11 +434,45 @@ class _SettingsScreenState extends State<SettingsScreen>
         ),
         _div(),
         _settingRow(
+          Icons.devices_other_outlined,
+          'Peran Perangkat',
+          'Saat ini: Kasir Utama (Main POS)',
+          onTap: _changeDeviceRole,
+        ),
+        _div(),
+        _settingRow(
           Icons.info_outline,
           'Versi Aplikasi',
           'POS Resto v1.0.0',
         ),
       ]),
+    );
+  }
+
+  Future<void> _changeDeviceRole() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ganti Peran Perangkat?'),
+        content: const Text(
+            'Perangkat akan kembali ke layar pemilihan peran. Gunakan ini bila '
+            'ingin menjadikan perangkat ini sebagai Station pelayan.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Batal')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Lanjut')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await DeviceRoleService.instance.clear();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const RootGate()),
+      (route) => false,
     );
   }
 

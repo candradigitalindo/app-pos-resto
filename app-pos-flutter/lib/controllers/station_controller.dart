@@ -34,7 +34,8 @@ class StationController extends ChangeNotifier {
   Map<String, dynamic>? currentOrder; // {...order, items}
   bool isAddingToOrder = false; // true = mode tambah item ke order aktif
 
-  String get waiterName => 'Station';
+  /// Verifikasi PIN waiter ke Main POS. Null = PIN salah.
+  Future<Map<String, dynamic>?> authPin(String pin) => _api.authPin(pin);
 
   int get cartItemCount => cart.values.fold(0, (a, b) => a + b);
   double get cartTotal {
@@ -204,8 +205,12 @@ class StationController extends ChangeNotifier {
           })
       .toList();
 
-  /// Kirim order baru ke Main POS.
-  Future<bool> submitOrder({String? customerName, int pax = 1}) async {
+  /// Kirim order baru ke Main POS. [waiterName] = waiter terverifikasi PIN.
+  Future<bool> submitOrder({
+    required String waiterName,
+    String? customerName,
+    int pax = 1,
+  }) async {
     if (selectedTable == null) {
       errorMessage = 'Pilih meja dulu';
       notifyListeners();
@@ -226,7 +231,7 @@ class StationController extends ChangeNotifier {
         pax: pax,
         waiterName: waiterName,
       );
-      successMessage = 'Order terkirim ke Main POS';
+      successMessage = 'Order terkirim ke Main POS (oleh $waiterName)';
       cart.clear();
       cartNotes.clear();
       viewMode = 'tables';
@@ -243,8 +248,10 @@ class StationController extends ChangeNotifier {
     }
   }
 
-  /// Tambah item ke order aktif yang sedang dilihat (detail).
-  Future<bool> submitAddItems() async {
+  /// Tambah item ke order aktif. [waiterName] = waiter terverifikasi PIN yang
+  /// menambah item (boleh beda dari pembuat order asli — tiap item tercatat
+  /// nama penambahnya).
+  Future<bool> submitAddItems({required String waiterName}) async {
     final order = currentOrder;
     if (order == null || cart.isEmpty) return false;
     isProcessing = true;
@@ -255,7 +262,7 @@ class StationController extends ChangeNotifier {
         items: _cartItemsPayload(),
         waiterName: waiterName,
       );
-      successMessage = 'Item ditambahkan';
+      successMessage = 'Item ditambahkan (oleh $waiterName)';
       cart.clear();
       cartNotes.clear();
       isProcessing = false;

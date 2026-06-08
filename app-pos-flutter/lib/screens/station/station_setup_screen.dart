@@ -57,7 +57,7 @@ class _StationSetupScreenState extends State<StationSetupScreen> {
       setState(() => _error = 'Tidak dapat terhubung ke $baseUrl');
       return;
     }
-    await _api.save(server.baseUrl);
+    await _api.save(server.baseUrl, outletCode: server.outletCode);
     if (!mounted) return;
     Navigator.pushReplacement(
       context,

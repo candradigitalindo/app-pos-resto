@@ -2,9 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app.dart';
-import '../../services/station_api_client.dart';
-import '../station/station_screen.dart';
-import '../station/station_setup_screen.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -109,16 +106,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
                   // Login card
                   _buildLoginCard(authState),
-                  const SizedBox(height: 16),
-
-                  // Station mode (tablet pelayan → connect ke Main POS)
-                  TextButton.icon(
-                    onPressed: _openStationMode,
-                    icon: const Icon(Icons.tablet_mac_outlined,
-                        color: Colors.white70, size: 18),
-                    label: const Text('Mode Station (Tablet Pelayan)',
-                        style: TextStyle(color: Colors.white70)),
-                  ),
                 ],
               ),
             ),
@@ -126,24 +113,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         ),
       ),
     );
-  }
-
-  Future<void> _openStationMode() async {
-    final api = StationApiClient.instance;
-    final saved = await api.loadSaved();
-    if (!mounted) return;
-    // Sudah pernah set Main POS → cek masih hidup, kalau ya langsung masuk.
-    if (saved != null) {
-      final server = await api.ping(saved);
-      if (!mounted) return;
-      if (server != null) {
-        Navigator.push(context,
-            MaterialPageRoute(builder: (_) => const StationScreen()));
-        return;
-      }
-    }
-    Navigator.push(context,
-        MaterialPageRoute(builder: (_) => const StationSetupScreen()));
   }
 
   Widget _buildBranding() {

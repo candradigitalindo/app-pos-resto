@@ -1,21 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'app.dart';
-import 'services/cloud_sync_service.dart';
-import 'services/local_api_server.dart';
-import 'services/print_queue_service.dart';
+import 'services/device_role_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Start local API server for waiter stations (port 7070)
-  await LocalApiServer.instance.start();
-
-  // Start kitchen/bar print queue worker (durable + retry, no skip)
-  PrintQueueService.instance.start();
-
-  // Start cloud sync worker (push outbox → cloud-pos, jika diaktifkan)
-  await CloudSyncService.instance.start();
+  // Server API 7070 + print queue + cloud sync HANYA untuk Main POS.
+  // Mode Station (atau peran belum dipilih) tidak membuka port apa pun.
+  final role = await DeviceRoleService.instance.getRole();
+  if (role == DeviceRole.mainPos) {
+    await DeviceRoleService.instance.startMainPosServices();
+  }
 
   // Hide system UI (status bar + navigation bar) — immersive sticky mode
   // System UI will temporarily appear on edge swipe, then auto-hide again

@@ -12,11 +12,13 @@ import '../models/models.dart';
 class StationServer {
   final String baseUrl; // http://IP:port
   final String outletName;
+  final String outletCode; // identitas stabil → cocokkan saat IP berubah
   final int connectedStations;
 
   const StationServer({
     required this.baseUrl,
     required this.outletName,
+    this.outletCode = '',
     this.connectedStations = 0,
   });
 }
@@ -35,8 +37,12 @@ class StationApiClient {
   ));
 
   static const _prefKey = 'station_main_pos_url';
+  static const _prefCodeKey = 'station_outlet_code';
 
   String? _baseUrl;
+  String? _outletCode; // identitas Main POS untuk auto-rediscovery
+  bool _rediscovering = false;
+
   String? get baseUrl => _baseUrl;
   bool get isConnected => _baseUrl != null;
 
@@ -49,21 +55,82 @@ class StationApiClient {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString(_prefKey);
     if (saved != null && saved.isNotEmpty) _baseUrl = saved;
+    _outletCode = prefs.getString(_prefCodeKey);
     return _baseUrl;
   }
 
-  Future<void> save(String url) async {
+  /// Simpan koneksi Main POS. [outletCode] dipakai untuk menemukan kembali
+  /// server yang sama bila IP berubah (DHCP).
+  Future<void> save(String url, {String? outletCode}) async {
     setBaseUrl(url);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefKey, _baseUrl!);
+    if (outletCode != null && outletCode.isNotEmpty) {
+      _outletCode = outletCode;
+      await prefs.setString(_prefCodeKey, outletCode);
+    }
   }
 
   Future<void> clear() async {
     _baseUrl = null;
+    _outletCode = null;
     disconnectWebSocket();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_prefKey);
+    await prefs.remove(_prefCodeKey);
   }
+
+  // ── Auto-rediscovery (IP Main POS berubah) ────────────────────────────────────
+
+  /// Scan jaringan, temukan Main POS dengan outlet_code yang sama, perbarui
+  /// baseUrl + WebSocket. Mengembalikan true bila berhasil pindah ke IP baru.
+  Future<bool> rediscover() async {
+    if (_rediscovering) return false;
+    _rediscovering = true;
+    try {
+      final servers = await discover();
+      StationServer? match;
+      for (final s in servers) {
+        if (_outletCode == null || _outletCode!.isEmpty) {
+          match = s; // tak ada identitas → ambil yang pertama ditemukan
+          break;
+        }
+        if (s.outletCode == _outletCode) {
+          match = s;
+          break;
+        }
+      }
+      if (match == null) return false;
+      final wasWs = _ws != null;
+      await save(match.baseUrl, outletCode: match.outletCode);
+      if (wasWs && _wsOnEvent != null) {
+        connectWebSocket(_wsOnEvent!); // sambungkan ulang ke IP baru
+      }
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      _rediscovering = false;
+    }
+  }
+
+  /// Jalankan request; bila gagal koneksi, coba rediscover lalu ulangi sekali.
+  Future<T> _withRetry<T>(Future<T> Function() call) async {
+    try {
+      return await call();
+    } on DioException catch (e) {
+      if (_isConnError(e) && await rediscover()) {
+        return await call(); // ulangi sekali setelah pindah IP
+      }
+      rethrow;
+    }
+  }
+
+  bool _isConnError(DioException e) =>
+      e.type == DioExceptionType.connectionError ||
+      e.type == DioExceptionType.connectionTimeout ||
+      e.type == DioExceptionType.receiveTimeout ||
+      e.type == DioExceptionType.sendTimeout;
 
   // ── Discovery ───────────────────────────────────────────────────────────────
 
@@ -82,6 +149,7 @@ class StationApiClient {
               ? baseUrl.substring(0, baseUrl.length - 1)
               : baseUrl,
           outletName: (data['outlet_name'] as String?) ?? 'POS Resto',
+          outletCode: (data['outlet_code'] as String?) ?? '',
           connectedStations: (data['connected_stations'] as num?)?.toInt() ?? 0,
         );
       }
@@ -153,9 +221,11 @@ class StationApiClient {
   }
 
   Future<List<dynamic>> _getList(String path) async {
-    final resp = await _dio.get('$_base$path');
-    final data = resp.data is Map ? resp.data['data'] : null;
-    return data is List ? data : [];
+    return _withRetry(() async {
+      final resp = await _dio.get('$_base$path');
+      final data = resp.data is Map ? resp.data['data'] : null;
+      return data is List ? data : <dynamic>[];
+    });
   }
 
   /// Daftar meja + order aktif (field 'active_order' pada tiap item).
@@ -186,9 +256,26 @@ class StationApiClient {
   }
 
   Future<Map<String, dynamic>?> getOrder(String id) async {
-    final resp = await _dio.get('$_base/api/orders/$id');
-    final data = resp.data is Map ? resp.data['data'] : null;
-    return data is Map ? data.cast<String, dynamic>() : null;
+    return _withRetry(() async {
+      final resp = await _dio.get('$_base/api/orders/$id');
+      final data = resp.data is Map ? resp.data['data'] : null;
+      return data is Map ? data.cast<String, dynamic>() : null;
+    });
+  }
+
+  // ── Auth (verifikasi PIN waiter di Main POS) ──────────────────────────────────
+
+  /// Verifikasi PIN ke Main POS. Mengembalikan data waiter {id, full_name,
+  /// role}, atau null jika PIN salah.
+  Future<Map<String, dynamic>?> authPin(String pin) async {
+    try {
+      final resp = await _dio.post('$_base/api/auth', data: {'pin': pin});
+      final data = resp.data is Map ? resp.data['data'] : null;
+      return data is Map ? data.cast<String, dynamic>() : null;
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 401) return null; // PIN salah
+      rethrow;
+    }
   }
 
   // ── Mutasi (POST) ────────────────────────────────────────────────────────────
@@ -201,15 +288,17 @@ class StationApiClient {
     int pax = 1,
     String? waiterName,
   }) async {
-    final resp = await _dio.post('$_base/api/orders', data: {
-      'table_number': tableNumber,
-      'items': items,
-      if (customerName != null) 'customer_name': customerName,
-      'pax': pax,
-      if (waiterName != null) 'waiter_name': waiterName,
+    return _withRetry(() async {
+      final resp = await _dio.post('$_base/api/orders', data: {
+        'table_number': tableNumber,
+        'items': items,
+        if (customerName != null) 'customer_name': customerName,
+        'pax': pax,
+        if (waiterName != null) 'waiter_name': waiterName,
+      });
+      final data = resp.data is Map ? resp.data['data'] : null;
+      return data is Map ? data.cast<String, dynamic>() : <String, dynamic>{};
     });
-    final data = resp.data is Map ? resp.data['data'] : null;
-    return data is Map ? data.cast<String, dynamic>() : {};
   }
 
   Future<void> addItems({
@@ -217,9 +306,11 @@ class StationApiClient {
     required List<Map<String, dynamic>> items,
     String? waiterName,
   }) async {
-    await _dio.post('$_base/api/orders/$orderId/items', data: {
-      'items': items,
-      if (waiterName != null) 'waiter_name': waiterName,
+    return _withRetry(() async {
+      await _dio.post('$_base/api/orders/$orderId/items', data: {
+        'items': items,
+        if (waiterName != null) 'waiter_name': waiterName,
+      });
     });
   }
 
@@ -227,10 +318,12 @@ class StationApiClient {
 
   WebSocketChannel? _ws;
   StreamSubscription? _wsSub;
+  void Function(String event, Map data)? _wsOnEvent;
 
   /// Terhubung ke /ws untuk menerima event order_created / order_items_added.
   /// [onEvent] dipanggil dengan (event, data).
   void connectWebSocket(void Function(String event, Map data) onEvent) {
+    _wsOnEvent = onEvent;
     disconnectWebSocket();
     final b = _baseUrl;
     if (b == null) return;

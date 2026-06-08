@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../../app.dart';
 import '../../controllers/station_controller.dart';
+import '../../services/device_role_service.dart';
 import '../../services/station_api_client.dart';
 import '../../utils/currency.dart';
 import 'station_setup_screen.dart';
@@ -16,18 +20,64 @@ class StationScreen extends StatefulWidget {
 class _StationScreenState extends State<StationScreen> {
   final _controller = StationController();
 
+  // Auto-logout saat idle (mengikuti aturan waiter): tak ada interaksi
+  // selama _idleSeconds → peringatan _warnSeconds detik → terkunci.
+  static const _idleSeconds = 60;
+  static const _warnSeconds = 10;
+  Timer? _idleTimer;
+  bool _warningShown = false;
+  bool _locked = false;
+
   @override
   void initState() {
     super.initState();
     _controller.addListener(_onChange);
     _controller.init();
+    _resetIdle();
   }
 
   @override
   void dispose() {
+    _idleTimer?.cancel();
     _controller.removeListener(_onChange);
     _controller.dispose();
     super.dispose();
+  }
+
+  // ── Inactivity ────────────────────────────────────────────────────────────────
+
+  void _resetIdle() {
+    _idleTimer?.cancel();
+    if (_locked || _warningShown) return;
+    _idleTimer = Timer(const Duration(seconds: _idleSeconds), _onIdle);
+  }
+
+  Future<void> _onIdle() async {
+    if (!mounted || _warningShown || _locked) return;
+    _warningShown = true;
+    final stay = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _IdleWarningDialog(seconds: _warnSeconds),
+    );
+    _warningShown = false;
+    if (!mounted) return;
+    if (stay == true) {
+      _resetIdle(); // waiter masih di sini
+    } else {
+      _logout(); // waktu habis → kunci
+    }
+  }
+
+  void _logout() {
+    _idleTimer?.cancel();
+    _controller.goBackToTables(); // bersihkan keranjang & kembali ke daftar meja
+    setState(() => _locked = true);
+  }
+
+  void _unlock() {
+    setState(() => _locked = false);
+    _resetIdle();
   }
 
   void _onChange() {
@@ -57,16 +107,96 @@ class _StationScreenState extends State<StationScreen> {
     );
   }
 
+  Future<void> _exitStationMode() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Keluar Mode Station?'),
+        content: const Text(
+            'Perangkat kembali ke pemilihan peran. Koneksi Main POS yang '
+            'tersimpan akan dihapus.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Batal')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Keluar')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await StationApiClient.instance.clear();
+    await DeviceRoleService.instance.clear();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const RootGate()),
+      (route) => false,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF2F2F7),
-      body: SafeArea(
-        child: Column(
+      body: Listener(
+        // Setiap sentuhan mereset timer idle.
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => _resetIdle(),
+        child: Stack(
           children: [
-            _header(),
-            Expanded(child: _body()),
+            SafeArea(
+              child: Column(
+                children: [
+                  _header(),
+                  Expanded(child: _body()),
+                ],
+              ),
+            ),
+            if (_locked) _lockOverlay(),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _lockOverlay() {
+    return Positioned.fill(
+      child: GestureDetector(
+        onTap: _unlock,
+        child: Container(
+          color: const Color(0xFF064E3B),
+          alignment: Alignment.center,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.lock_outline, size: 64, color: Colors.white),
+              const SizedBox(height: 16),
+              const Text('Sesi terkunci',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text('Keranjang dikosongkan karena tidak aktif.',
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      fontSize: 14)),
+              const SizedBox(height: 28),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: const Color(0xFF065F46),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 28, vertical: 14),
+                ),
+                onPressed: _unlock,
+                icon: const Icon(Icons.touch_app_outlined),
+                label: const Text('Ketuk untuk mulai',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -103,10 +233,16 @@ class _StationScreenState extends State<StationScreen> {
               icon: const Icon(Icons.refresh, color: Colors.white),
               onPressed: _controller.loadTables,
             ),
-            IconButton(
-              icon: const Icon(Icons.lan_outlined, color: Colors.white),
-              tooltip: 'Ganti Main POS',
-              onPressed: _changeServer,
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert, color: Colors.white),
+              onSelected: (v) {
+                if (v == 'server') _changeServer();
+                if (v == 'exit') _exitStationMode();
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 'server', child: Text('Ganti Main POS')),
+                PopupMenuItem(value: 'exit', child: Text('Keluar Mode Station')),
+              ],
             ),
           ],
         ],
@@ -371,8 +507,7 @@ class _StationScreenState extends State<StationScreen> {
                     backgroundColor: const Color(0xFF059669)),
                 onPressed: _controller.isProcessing
                     ? null
-                    : () =>
-                        isAdd ? _controller.submitAddItems() : _submitOrder(),
+                    : () => _submitWithPin(isAdd),
                 child: _controller.isProcessing
                     ? const SizedBox(
                         width: 18,
@@ -389,7 +524,25 @@ class _StationScreenState extends State<StationScreen> {
     );
   }
 
-  void _submitOrder() => _controller.submitOrder();
+  /// Minta PIN waiter dulu, lalu kirim order / tambah item dengan namanya.
+  Future<void> _submitWithPin(bool isAdd) async {
+    final name = await _showWaiterPinDialog();
+    if (name == null || !mounted) return;
+    if (isAdd) {
+      await _controller.submitAddItems(waiterName: name);
+    } else {
+      await _controller.submitOrder(waiterName: name);
+    }
+  }
+
+  /// Dialog PIN: verifikasi ke Main POS, kembalikan nama waiter (atau null).
+  Future<String?> _showWaiterPinDialog() {
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _WaiterPinDialog(controller: _controller),
+    );
+  }
 
   void _showCartSheet() {
     showModalBottomSheet(
@@ -536,6 +689,175 @@ class _StationScreenState extends State<StationScreen> {
               onPressed: _controller.startAddItems,
             ),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Dialog peringatan idle: hitung mundur [seconds] detik. Pop true bila waiter
+/// menekan "Saya masih di sini"; pop false otomatis saat waktu habis.
+class _IdleWarningDialog extends StatefulWidget {
+  final int seconds;
+  const _IdleWarningDialog({required this.seconds});
+
+  @override
+  State<_IdleWarningDialog> createState() => _IdleWarningDialogState();
+}
+
+class _IdleWarningDialogState extends State<_IdleWarningDialog> {
+  late int _remaining = widget.seconds;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return;
+      setState(() => _remaining--);
+      if (_remaining <= 0) {
+        t.cancel();
+        Navigator.pop(context, false); // waktu habis → logout
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      icon: const Icon(Icons.timer_outlined,
+          color: Color(0xFFF59E0B), size: 40),
+      title: const Text('Masih di sana?'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('Sesi akan terkunci dalam $_remaining detik karena tidak aktif.',
+              textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: 56,
+            height: 56,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                CircularProgressIndicator(
+                  value: _remaining / widget.seconds,
+                  color: const Color(0xFFF59E0B),
+                ),
+                Text('$_remaining',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 18)),
+              ],
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Saya masih di sini'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Dialog verifikasi PIN waiter sebelum mengirim order/tambahan.
+class _WaiterPinDialog extends StatefulWidget {
+  final StationController controller;
+  const _WaiterPinDialog({required this.controller});
+
+  @override
+  State<_WaiterPinDialog> createState() => _WaiterPinDialogState();
+}
+
+class _WaiterPinDialogState extends State<_WaiterPinDialog> {
+  final _ctrl = TextEditingController();
+  bool _verifying = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _verify() async {
+    final pin = _ctrl.text.trim();
+    if (pin.isEmpty) return;
+    setState(() {
+      _verifying = true;
+      _error = null;
+    });
+    try {
+      final user = await widget.controller.authPin(pin);
+      if (!mounted) return;
+      if (user == null) {
+        setState(() {
+          _verifying = false;
+          _error = 'PIN salah';
+          _ctrl.clear();
+        });
+        return;
+      }
+      Navigator.pop(context, user['full_name'] as String? ?? 'Waiter');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _verifying = false;
+        _error = 'Gagal verifikasi: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('PIN Waiter'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('Masukkan PIN untuk verifikasi nama pemesan.',
+              style: TextStyle(fontSize: 13, color: Color(0xFF64748B))),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _ctrl,
+            autofocus: true,
+            obscureText: true,
+            keyboardType: TextInputType.number,
+            textAlign: TextAlign.center,
+            maxLength: 6,
+            style: const TextStyle(fontSize: 24, letterSpacing: 8),
+            decoration: InputDecoration(
+              counterText: '',
+              hintText: '••••',
+              border: const OutlineInputBorder(),
+              errorText: _error,
+            ),
+            onSubmitted: (_) => _verify(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _verifying ? null : () => Navigator.pop(context),
+          child: const Text('Batal'),
+        ),
+        FilledButton(
+          onPressed: _verifying ? null : _verify,
+          child: _verifying
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child:
+                      CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Text('Verifikasi'),
         ),
       ],
     );
