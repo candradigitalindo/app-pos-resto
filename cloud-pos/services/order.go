@@ -5,6 +5,7 @@ import (
 	"cloud-pos/models"
 	"encoding/json"
 	"fmt"
+	"log"
 )
 
 func SaveOrder(outletID string, req models.PushOrderRequest) (string, error) {
@@ -95,15 +96,25 @@ func SaveTransaction(outletID string, req models.PushTransactionRequest) (string
 		itemsJSON = string(b)
 	}
 
+	chargesJSON := "[]"
+	if len(req.Charges) > 0 {
+		b, _ := json.Marshal(req.Charges)
+		chargesJSON = string(b)
+	}
+
 	err := database.DB.QueryRow(
 		`INSERT INTO cloud_transactions (id, local_id, outlet_id, outlet_code, order_id,
-			total_amount, tax_amount, payment_method, cash_amount, change_amount, cashier_name,
+			subtotal, total_amount, tax_amount, other_charges_total, charges,
+			payment_method, cash_amount, change_amount, cashier_name,
 			items, version, created_at, synced_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
 		ON CONFLICT (outlet_id, local_id) DO UPDATE SET
 			id = EXCLUDED.id,
+			subtotal = EXCLUDED.subtotal,
 			total_amount = EXCLUDED.total_amount,
 			tax_amount = EXCLUDED.tax_amount,
+			other_charges_total = EXCLUDED.other_charges_total,
+			charges = EXCLUDED.charges,
 			payment_method = EXCLUDED.payment_method,
 			cash_amount = EXCLUDED.cash_amount,
 			change_amount = EXCLUDED.change_amount,
@@ -113,9 +124,9 @@ func SaveTransaction(outletID string, req models.PushTransactionRequest) (string
 			synced_at = NOW()
 		RETURNING id`,
 		cloudID, cloudID, outletID, req.OutletCode, req.OrderID,
-		req.TotalAmount, req.TaxAmount, req.PaymentMethod, req.CashAmount,
-		req.ChangeAmount, req.CashierName, itemsJSON, req.Version,
-		parseTime(req.CreatedAt),
+		req.Subtotal, req.TotalAmount, req.TaxAmount, req.OtherChargesTotal, chargesJSON,
+		req.PaymentMethod, req.CashAmount, req.ChangeAmount, req.CashierName,
+		itemsJSON, req.Version, parseTime(req.CreatedAt),
 	).Scan(&cloudID)
 
 	if err != nil {
@@ -123,6 +134,21 @@ func SaveTransaction(outletID string, req models.PushTransactionRequest) (string
 	}
 
 	go logSync(outletID, "push_transaction", "transaction", 1, "success", "")
+
+	// Auto-deduct stok bahan baku via resep produk (lenient: gagal dicatat,
+	// transaksi tetap commit — selisih stok lebih baik daripada transaksi gagal sync).
+	// Catatan: saat ini akan no-op untuk item tanpa product_id (app outlet belum
+	// mengirim local_id produk di payload transaksi — lihat memory project_cloud_pos_overview).
+	for _, item := range req.Items {
+		if item.ProductID == "" || item.Quantity <= 0 {
+			continue
+		}
+		if derr := DeductStockByRecipe(outletID, item.ProductID, float64(item.Quantity), cloudID, req.LocalID); derr != nil {
+			log.Printf("DeductStockByRecipe gagal (outlet=%s produk=%s transaksi=%s): %v", outletID, item.ProductID, cloudID, derr)
+			go logSync(outletID, "deduct_stock", "stock_movement", 1, "failed", derr.Error())
+		}
+	}
+
 	return cloudID, nil
 }
 

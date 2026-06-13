@@ -550,6 +550,12 @@ func RunMigrations() error {
 		ON CONFLICT (key) DO NOTHING`,
 		// Add tax_amount column to cloud_transactions
 		`ALTER TABLE cloud_transactions ADD COLUMN IF NOT EXISTS tax_amount DECIMAL(15,2) DEFAULT 0`,
+		// Pemisahan penjualan vs pajak vs tambahan lainnya (DPP & charges)
+		`ALTER TABLE cloud_transactions ADD COLUMN IF NOT EXISTS subtotal DECIMAL(15,2) DEFAULT 0`,
+		`ALTER TABLE cloud_transactions ADD COLUMN IF NOT EXISTS other_charges_total DECIMAL(15,2) DEFAULT 0`,
+		`ALTER TABLE cloud_transactions ADD COLUMN IF NOT EXISTS charges JSONB`,
+		// Laporan shift lengkap: jumlah transaksi per metode + kas masuk/keluar
+		`ALTER TABLE cloud_cashier_shifts ADD COLUMN IF NOT EXISTS report JSONB`,
 	}
 
 	for _, m := range settingsMigrations {
@@ -694,6 +700,181 @@ func RunMigrations() error {
 	for _, m := range paymentHistMigrations {
 		if _, err := DB.Exec(m); err != nil {
 			log.Printf("Payment histories migration skipped: %v", err)
+		}
+	}
+
+	// Warehouse / inventory module — referenced by services/warehouse.go but
+	// previously created by hand on dev DBs (never had migration code).
+	warehouseMigrations := []string{
+		`CREATE TABLE IF NOT EXISTS stock_item_categories (
+			id CHAR(26) PRIMARY KEY,
+			name VARCHAR(100) NOT NULL UNIQUE,
+			notes TEXT DEFAULT '',
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
+		)`,
+		`CREATE TABLE IF NOT EXISTS stock_items (
+			id CHAR(26) PRIMARY KEY,
+			code VARCHAR(50) NOT NULL UNIQUE,
+			name VARCHAR(200) NOT NULL,
+			category VARCHAR(100) DEFAULT '',
+			base_unit VARCHAR(20) NOT NULL DEFAULT 'pcs',
+			dist_unit VARCHAR(20) NOT NULL DEFAULT 'pcs',
+			dist_ratio DECIMAL(15,4) NOT NULL DEFAULT 1,
+			dist_unit_label VARCHAR(50) DEFAULT '',
+			avg_cost DECIMAL(15,2) NOT NULL DEFAULT 0,
+			min_stock DECIMAL(15,4) NOT NULL DEFAULT 0,
+			notes TEXT DEFAULT '',
+			is_active BOOLEAN DEFAULT true,
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
+		)`,
+		`CREATE TABLE IF NOT EXISTS warehouses (
+			id CHAR(26) PRIMARY KEY,
+			code VARCHAR(50) NOT NULL UNIQUE,
+			name VARCHAR(200) NOT NULL,
+			type VARCHAR(10) NOT NULL DEFAULT 'central',
+			outlet_id CHAR(26) REFERENCES outlets(id) ON DELETE SET NULL,
+			address TEXT DEFAULT '',
+			is_active BOOLEAN DEFAULT true,
+			notes TEXT DEFAULT '',
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_warehouses_unique_outlet_warehouse
+			ON warehouses(outlet_id) WHERE type = 'outlet'`,
+		`CREATE TABLE IF NOT EXISTS stock_ledger (
+			id CHAR(26) PRIMARY KEY,
+			item_id CHAR(26) NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
+			warehouse_id CHAR(26) NOT NULL REFERENCES warehouses(id) ON DELETE CASCADE,
+			qty_base DECIMAL(15,4) NOT NULL DEFAULT 0,
+			avg_cost DECIMAL(15,2) NOT NULL DEFAULT 0,
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			UNIQUE(item_id, warehouse_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS stock_batches (
+			id CHAR(26) PRIMARY KEY,
+			item_id CHAR(26) NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
+			warehouse_id CHAR(26) NOT NULL REFERENCES warehouses(id) ON DELETE CASCADE,
+			qty_base DECIMAL(15,4) NOT NULL,
+			cost_per_base DECIMAL(15,2) NOT NULL DEFAULT 0,
+			expiry_date DATE,
+			ref_id VARCHAR(50) DEFAULT '',
+			ref_type VARCHAR(30) DEFAULT '',
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_stock_batches_fifo ON stock_batches(item_id, warehouse_id, created_at)`,
+		`CREATE TABLE IF NOT EXISTS stock_movements (
+			id CHAR(26) PRIMARY KEY,
+			item_id CHAR(26) NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
+			warehouse_id CHAR(26) NOT NULL REFERENCES warehouses(id) ON DELETE CASCADE,
+			movement_type VARCHAR(30) NOT NULL,
+			qty_base DECIMAL(15,4) NOT NULL,
+			qty_dist DECIMAL(15,4),
+			unit_used VARCHAR(20) DEFAULT '',
+			cost_per_base DECIMAL(15,2) NOT NULL DEFAULT 0,
+			balance_after DECIMAL(15,4),
+			ref_id VARCHAR(50),
+			ref_type VARCHAR(30) DEFAULT '',
+			ref_number VARCHAR(50) DEFAULT '',
+			notes TEXT DEFAULT '',
+			created_by VARCHAR(100) DEFAULT '',
+			expiry_date DATE,
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_stock_movements_item_wh ON stock_movements(item_id, warehouse_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_stock_movements_ref ON stock_movements(ref_type, ref_number)`,
+		`CREATE TABLE IF NOT EXISTS stock_transfers (
+			id CHAR(26) PRIMARY KEY,
+			transfer_number VARCHAR(30) NOT NULL UNIQUE,
+			from_warehouse_id CHAR(26) NOT NULL REFERENCES warehouses(id),
+			to_warehouse_id CHAR(26) NOT NULL REFERENCES warehouses(id),
+			status VARCHAR(20) NOT NULL DEFAULT 'draft',
+			notes TEXT DEFAULT '',
+			created_by VARCHAR(100) DEFAULT '',
+			approved_by VARCHAR(100),
+			approved_at TIMESTAMP,
+			sent_by VARCHAR(100),
+			sent_at TIMESTAMP,
+			received_by VARCHAR(100),
+			received_at TIMESTAMP,
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
+		)`,
+		`CREATE TABLE IF NOT EXISTS stock_transfer_items (
+			id CHAR(26) PRIMARY KEY,
+			transfer_id CHAR(26) NOT NULL REFERENCES stock_transfers(id) ON DELETE CASCADE,
+			item_id CHAR(26) NOT NULL REFERENCES stock_items(id),
+			qty_dist DECIMAL(15,4) NOT NULL,
+			qty_base DECIMAL(15,4) NOT NULL,
+			unit_used VARCHAR(20) DEFAULT '',
+			received_qty_base DECIMAL(15,4),
+			notes TEXT DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS product_recipes (
+			id CHAR(26) PRIMARY KEY,
+			product_id CHAR(26) NOT NULL,
+			item_id CHAR(26) NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
+			qty_dist DECIMAL(15,4) NOT NULL,
+			qty_base DECIMAL(15,4) NOT NULL,
+			unit_used VARCHAR(20) DEFAULT '',
+			visibility VARCHAR(10) NOT NULL DEFAULT 'public',
+			notes TEXT DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_product_recipes_product ON product_recipes(product_id)`,
+		`CREATE TABLE IF NOT EXISTS recipe_masters (
+			id CHAR(26) PRIMARY KEY,
+			name VARCHAR(200) NOT NULL,
+			description TEXT DEFAULT '',
+			visibility VARCHAR(10) NOT NULL DEFAULT 'public',
+			instructions TEXT DEFAULT '',
+			total_time INTEGER DEFAULT 0,
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),
+			updated_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
+		)`,
+		`CREATE TABLE IF NOT EXISTS recipe_items (
+			id CHAR(26) PRIMARY KEY,
+			recipe_master_id CHAR(26) NOT NULL REFERENCES recipe_masters(id) ON DELETE CASCADE,
+			item_id CHAR(26) NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
+			qty_base DECIMAL(15,4) NOT NULL,
+			notes TEXT DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS recipe_outlet_access (
+			recipe_master_id CHAR(26) NOT NULL REFERENCES recipe_masters(id) ON DELETE CASCADE,
+			outlet_id CHAR(26) NOT NULL REFERENCES outlets(id) ON DELETE CASCADE,
+			PRIMARY KEY (recipe_master_id, outlet_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS stock_item_recipes (
+			id CHAR(26) PRIMARY KEY,
+			parent_item_id CHAR(26) NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
+			child_item_id CHAR(26) NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
+			qty_base DECIMAL(15,4) NOT NULL,
+			notes TEXT DEFAULT '',
+			visibility VARCHAR(10) NOT NULL DEFAULT 'public'
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_stock_item_recipes_parent ON stock_item_recipes(parent_item_id)`,
+		`CREATE TABLE IF NOT EXISTS stock_wastes (
+			id CHAR(26) PRIMARY KEY,
+			waste_number VARCHAR(30) NOT NULL UNIQUE,
+			warehouse_id CHAR(26) NOT NULL REFERENCES warehouses(id),
+			item_id CHAR(26) NOT NULL REFERENCES stock_items(id),
+			qty_base DECIMAL(15,4) NOT NULL,
+			qty_dist DECIMAL(15,4),
+			unit_used VARCHAR(20) DEFAULT '',
+			cost_per_base DECIMAL(15,2) NOT NULL DEFAULT 0,
+			total_cost DECIMAL(15,2) NOT NULL DEFAULT 0,
+			reason VARCHAR(20) DEFAULT '',
+			notes TEXT DEFAULT '',
+			created_by VARCHAR(100) DEFAULT '',
+			created_at TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
+		)`,
+		// Link cloud_products to the warehouse module (stock type, single-item link, master recipe)
+		`ALTER TABLE cloud_products ADD COLUMN IF NOT EXISTS stock_type VARCHAR(10) NOT NULL DEFAULT 'none'`,
+		`ALTER TABLE cloud_products ADD COLUMN IF NOT EXISTS linked_stock_item_id CHAR(26) REFERENCES stock_items(id) ON DELETE SET NULL`,
+		`ALTER TABLE cloud_products ADD COLUMN IF NOT EXISTS recipe_master_id CHAR(26) REFERENCES recipe_masters(id) ON DELETE SET NULL`,
+	}
+	for _, m := range warehouseMigrations {
+		if _, err := DB.Exec(m); err != nil {
+			log.Printf("Warehouse migration skipped: %v", err)
 		}
 	}
 

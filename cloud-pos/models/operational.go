@@ -31,10 +31,11 @@ type PushCashierShiftRequest struct {
 	ClosingQris     float64 `json:"closing_qris"`
 	ClosingTransfer float64 `json:"closing_transfer"`
 	CarryOverCash   float64 `json:"carry_over_cash"`
-	PreviousShiftID string  `json:"previous_shift_id"`
-	HandoverTo      string  `json:"handover_to"`
-	Status          string  `json:"status"`
-	Notes           string  `json:"notes"`
+	PreviousShiftID string      `json:"previous_shift_id"`
+	HandoverTo      string      `json:"handover_to"`
+	Status          string      `json:"status"`
+	Notes           string      `json:"notes"`
+	Report          interface{} `json:"report"` // jumlah transaksi per metode + kas masuk/keluar
 }
 
 type CloudCashierShift struct {

@@ -78,12 +78,19 @@ func SaveCashierShift(outletID string, req models.PushCashierShiftRequest) (stri
 		closedAt = parseTime(req.ClosedAt)
 	}
 
+	var reportJSON interface{}
+	if req.Report != nil {
+		if b, err := json.Marshal(req.Report); err == nil {
+			reportJSON = string(b)
+		}
+	}
+
 	err := database.DB.QueryRow(
 		`INSERT INTO cloud_cashier_shifts (id, local_id, outlet_id, opened_by, opened_at,
 			opening_cash, closed_at, closed_by, closing_cash, closing_card, closing_qris,
-			closing_transfer, carry_over_cash, previous_shift_id, handover_to, status, notes,
+			closing_transfer, carry_over_cash, previous_shift_id, handover_to, status, notes, report,
 			created_at, updated_at, synced_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW(), NOW())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW(), NOW())
 		ON CONFLICT (outlet_id, local_id) DO UPDATE SET
 			id = EXCLUDED.id,
 			opened_by = EXCLUDED.opened_by,
@@ -100,13 +107,14 @@ func SaveCashierShift(outletID string, req models.PushCashierShiftRequest) (stri
 			handover_to = EXCLUDED.handover_to,
 			status = EXCLUDED.status,
 			notes = EXCLUDED.notes,
+			report = EXCLUDED.report,
 			updated_at = NOW(),
 			synced_at = NOW()
 		RETURNING id`,
 		cloudID, cloudID, outletID, req.OpenedBy, parseTime(req.OpenedAt),
 		req.OpeningCash, closedAt, req.ClosedBy, req.ClosingCash, req.ClosingCard,
 		req.ClosingQris, req.ClosingTransfer, req.CarryOverCash, req.PreviousShiftID,
-		req.HandoverTo, req.Status, req.Notes,
+		req.HandoverTo, req.Status, req.Notes, reportJSON,
 	).Scan(&cloudID)
 
 	if err != nil {
