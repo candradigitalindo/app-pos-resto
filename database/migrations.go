@@ -982,7 +982,7 @@ func RunMigrations() error {
 		"reports": {
 			"reports.sales.view", "reports.product_sales.view", "reports.ledger.view",
 			"reports.cashflow.view", "reports.pnl.view", "reports.balance.view",
-			"reports.tax.view", "reports.void.view",
+			"reports.tax.view", "reports.void.view", "reports.discount.view",
 		},
 		"warehouse.view": {
 			"warehouse_dashboard.view", "warehouses.view", "stockitems.view",

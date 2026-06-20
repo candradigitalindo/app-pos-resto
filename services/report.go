@@ -1411,3 +1411,99 @@ func GetVoidReport(dateFrom, dateTo, outletID string, scopeIDs []string, page, l
 		Limit:   limit,
 	}, nil
 }
+
+// GetDiscountReport aggregates order discounts and complimentary-item value.
+// Reads optional fields the Flutter POS app may send in the order JSON:
+//   payment_info.discount  → bill discount (total_amount is already net)
+//   items[].discount       → per-line discount
+//   items[].is_complimentary → free item (its subtotal counts as compliment value)
+func GetDiscountReport(dateFrom, dateTo, outletID string, scopeIDs []string, page, limit int) (*models.DiscountReport, error) {
+	offset := (page - 1) * limit
+
+	conds := []string{"NULLIF(o.payment_info->>'voided_at','') IS NULL"}
+	args := []interface{}{}
+	idx := 1
+	if outletID != "" {
+		conds = append(conds, fmt.Sprintf("o.outlet_id = $%d", idx))
+		args = append(args, outletID)
+		idx++
+	} else if scopeIDs != nil {
+		conds = append(conds, fmt.Sprintf("o.outlet_id = ANY($%d::text[])", idx))
+		args = append(args, pq.Array(scopeIDs))
+		idx++
+	}
+	if dateFrom != "" {
+		conds = append(conds, fmt.Sprintf("tz_date(o.created_at) >= $%d::date", idx))
+		args = append(args, dateFrom)
+		idx++
+	}
+	if dateTo != "" {
+		conds = append(conds, fmt.Sprintf("tz_date(o.created_at) <= $%d::date", idx))
+		args = append(args, dateTo)
+		idx++
+	}
+	where := "WHERE " + strings.Join(conds, " AND ")
+
+	// CTE computes per-order discount & compliment from the JSON.
+	base := `
+		WITH items_arr AS (
+			SELECT o.id, o.outlet_id, o.customer_name, o.created_at, o.total_amount,
+			       COALESCE(NULLIF(o.payment_info->>'discount','')::numeric, 0) AS order_discount,
+			       CASE WHEN jsonb_typeof(o.items)='array' THEN o.items ELSE '[]'::jsonb END AS items
+			FROM cloud_orders o ` + where + `
+		),
+		agg AS (
+			SELECT b.id, b.outlet_id, b.customer_name, b.created_at, b.total_amount, b.order_discount,
+			       COALESCE((SELECT SUM(COALESCE(NULLIF(it->>'discount','')::numeric,0))
+			                 FROM jsonb_array_elements(b.items) it),0) AS item_discount,
+			       COALESCE((SELECT SUM(COALESCE(NULLIF(it->>'subtotal','')::numeric,
+			                              COALESCE(NULLIF(it->>'price','')::numeric,0)*COALESCE(NULLIF(it->>'qty','')::numeric,0)))
+			                 FROM jsonb_array_elements(b.items) it
+			                 WHERE lower(COALESCE(it->>'is_complimentary','')) IN ('true','1','t','yes')),0) AS compliment
+			FROM items_arr b
+		),
+		rows AS (
+			SELECT a.id, COALESCE(out.name,'') AS outlet_name, a.customer_name,
+			       a.created_at, a.total_amount,
+			       (a.order_discount + a.item_discount) AS discount, a.compliment
+			FROM agg a LEFT JOIN outlets out ON out.id = a.outlet_id
+			WHERE (a.order_discount + a.item_discount) > 0 OR a.compliment > 0
+		)`
+
+	// Summary
+	var sum models.DiscountReportSummary
+	if err := database.DB.QueryRow(base+`
+		SELECT COUNT(*), COALESCE(SUM(total_amount),0), COALESCE(SUM(discount),0), COALESCE(SUM(compliment),0)
+		FROM rows`, args...).Scan(&sum.TotalOrders, &sum.Net, &sum.Discount, &sum.Compliment); err != nil {
+		return nil, err
+	}
+	sum.Gross = sum.Net + sum.Discount + sum.Compliment
+
+	// Rows
+	dataArgs := append(append([]interface{}{}, args...), limit, offset)
+	rows, err := database.DB.Query(base+fmt.Sprintf(`
+		SELECT id, outlet_name, customer_name, total_amount, discount, compliment, created_at::text
+		FROM rows ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, idx, idx+1), dataArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	data := make([]models.DiscountReportRow, 0)
+	for rows.Next() {
+		var r models.DiscountReportRow
+		if err := rows.Scan(&r.ID, &r.OutletName, &r.CustomerName, &r.Net, &r.Discount, &r.Compliment, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		r.Gross = r.Net + r.Discount + r.Compliment
+		data = append(data, r)
+	}
+
+	return &models.DiscountReport{
+		Summary: sum,
+		Data:    data,
+		Total:   sum.TotalOrders,
+		Page:    page,
+		Limit:   limit,
+	}, nil
+}

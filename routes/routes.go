@@ -119,6 +119,7 @@ func Setup(app *fiber.App, cfg *config.Config) {
 	admin.Get("/profit-loss-report", middleware.RequirePermission("reports.pnl.view"), handlers.GetProfitLossReport)
 	admin.Get("/general-ledger", middleware.RequirePermission("reports.ledger.view"), handlers.GetGeneralLedger)
 	admin.Get("/void-report", middleware.RequirePermission("reports.void.view"), handlers.GetVoidReport)
+	admin.Get("/discount-report", middleware.RequirePermission("reports.discount.view"), handlers.GetDiscountReport)
 
 	// Products & Categories — CRUD granular
 	admin.Get("/products", middleware.RequirePermission("products.view"), handlers.AdminGetProducts)

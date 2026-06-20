@@ -375,6 +375,7 @@ const NAV_ITEMS_DATA = [
       { to: '/balance-report',       label: 'Laporan Neraca', permission: 'reports.balance.view' },
       { to: '/tax-report',           label: 'Laporan Pajak', permission: 'reports.tax.view' },
       { to: '/void-report',          label: 'Laporan Void', permission: 'reports.void.view' },
+      { to: '/discount-report',      label: 'Diskon & Komplimen', permission: 'reports.discount.view' },
       { to: '/bank-accounts',         label: 'Data Rekening', permission: 'finance.bank.view' },
     ],
   },

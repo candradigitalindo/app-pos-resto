@@ -159,6 +159,7 @@ const CATEGORIES = [
           { key: 'reports.balance.view',       label: 'Neraca' },
           { key: 'reports.tax.view',           label: 'Pajak' },
           { key: 'reports.void.view',          label: 'Void' },
+          { key: 'reports.discount.view',      label: 'Diskon & Komplimen' },
         ],
       },
       { type: 'single', key: 'finance.payments.view', label: 'Pembayaran', icon: IC.wallet },

@@ -380,6 +380,7 @@ const REDIRECT_GROUPS = [
     { value: '/balance-report',        label: 'Laporan Neraca',           perm: 'reports.balance.view' },
     { value: '/tax-report',            label: 'Laporan Pajak',            perm: 'reports.tax.view' },
     { value: '/void-report',           label: 'Laporan Void',             perm: 'reports.void.view' },
+    { value: '/discount-report',       label: 'Diskon & Komplimen',       perm: 'reports.discount.view' },
     { value: '/bank-accounts',         label: 'Data Rekening',            perm: 'finance.bank.view' },
   ]},
   { category: 'Pengadaan', options: [

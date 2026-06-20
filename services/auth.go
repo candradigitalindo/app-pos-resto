@@ -36,6 +36,7 @@ var AllPermissions = []string{
 	"reports.balance.view",
 	"reports.tax.view",
 	"reports.void.view",
+	"reports.discount.view",
 	"finance.payments.view",
 	"finance.bank.view", "finance.bank.create", "finance.bank.update", "finance.bank.delete",
 

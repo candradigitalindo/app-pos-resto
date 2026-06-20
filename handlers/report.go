@@ -208,3 +208,26 @@ func GetVoidReport(c *fiber.Ctx) error {
 	}
 	return c.JSON(models.APIResponse{Success: true, Data: report})
 }
+
+// GetDiscountReport — laporan diskon & komplimen (per order).
+func GetDiscountReport(c *fiber.Ctx) error {
+	dateFrom, dateTo, err := getDateRange(c)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.APIResponse{Success: false, Error: err.Error()})
+	}
+	outletID := c.Query("outlet_id", "")
+	if outletID != "" && !validateOutletAccess(c, outletID) {
+		return c.Status(fiber.StatusForbidden).JSON(models.APIResponse{Success: false, Error: "Akses outlet tidak diizinkan"})
+	}
+	page, limit := getPagination(c)
+	scopeIDs := getOutletScope(c)
+
+	report, err := services.GetDiscountReport(dateFrom, dateTo, outletID, scopeIDs, page, limit)
+	if err != nil {
+		log.Printf("GetDiscountReport error: %v", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(models.APIResponse{
+			Success: false, Error: "Gagal memuat laporan diskon & komplimen.",
+		})
+	}
+	return c.JSON(models.APIResponse{Success: true, Data: report})
+}

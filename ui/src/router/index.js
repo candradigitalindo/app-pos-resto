@@ -53,6 +53,7 @@ const BalanceReport       = () => import('@/pages/BalanceReport.vue')
 const ProfitLossReport    = () => import('@/pages/ProfitLossReport.vue')
 const GeneralLedger       = () => import('@/pages/GeneralLedger.vue')
 const VoidReport          = () => import('@/pages/VoidReport.vue')
+const DiscountReport      = () => import('@/pages/DiscountReport.vue')
 const PurchaseGoods       = () => import('@/pages/PurchaseGoods.vue')
 const PurchaseServices    = () => import('@/pages/PurchaseServices.vue')
 const ProcurementDashboardPage = () => import('@/pages/ProcurementDashboard.vue')
@@ -248,6 +249,12 @@ const routes = [
         name: 'VoidReport',
         component: VoidReport,
         meta: { title: 'Laporan Void — Cloud POS', requiresAuth: true, permission: 'reports.void.view' },
+      },
+      {
+        path: 'discount-report',
+        name: 'DiscountReport',
+        component: DiscountReport,
+        meta: { title: 'Laporan Diskon & Komplimen — Cloud POS', requiresAuth: true, permission: 'reports.discount.view' },
       },
       {
         path: 'procurement-payments',
