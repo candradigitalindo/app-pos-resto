@@ -1,0 +1,25 @@
+# ── Dependencies ───────────────────────────────
+node_modules/
+ui/node_modules/
+
+# ── Build output ───────────────────────────────
+ui/dist/
+cloud-api
+cloud-api-linux
+*.exe
+
+# ── Secrets / env (keep .env.example) ──────────
+.env
+.env.local
+*.local.json
+
+# ── Runtime data ───────────────────────────────
+uploads/
+
+# ── Data exports / logs ────────────────────────
+*.xlsx
+*.log
+
+# ── OS / editor ────────────────────────────────
+.DS_Store
+*.swp

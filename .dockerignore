@@ -1,0 +1,8 @@
+cloud-api
+cloud-api-linux
+uploads/
+ui/node_modules/
+ui/dist/
+.env
+.git
+*.md

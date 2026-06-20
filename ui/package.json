@@ -1,0 +1,34 @@
+{
+  "name": "cloud-pos-ui",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Admin dashboard for Cloud POS API — Vue 3 + Tailwind CSS v4",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext .vue,.js --fix"
+  },
+  "dependencies": {
+    "@vueuse/core": "^11.0.0",
+    "apexcharts": "^5.10.0",
+    "axios": "^1.7.0",
+    "chart.js": "^4.5.1",
+    "pinia": "^2.2.0",
+    "quill": "^2.0.3",
+    "sweetalert2": "^11.26.24",
+    "vue": "^3.5.0",
+    "vue-chartjs": "^5.3.3",
+    "vue-router": "^4.4.0",
+    "vue3-apexcharts": "^1.8.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@vitejs/plugin-vue": "^5.2.0",
+    "autoprefixer": "^10.4.0",
+    "eslint": "^9.0.0",
+    "eslint-plugin-vue": "^9.0.0",
+    "tailwindcss": "^4.0.0",
+    "vite": "^6.0.0"
+  }
+}

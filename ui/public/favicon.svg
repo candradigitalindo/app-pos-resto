@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#4f46e5"/>
+  <!-- Layar POS -->
+  <rect x="14" y="10" width="36" height="26" rx="3" fill="white" opacity="0.95"/>
+  <rect x="17" y="13" width="30" height="18" rx="2" fill="#e0e7ff"/>
+  <!-- Garis layar -->
+  <rect x="20" y="16" width="18" height="2.5" rx="1" fill="#4f46e5" opacity="0.7"/>
+  <rect x="20" y="21" width="12" height="2" rx="1" fill="#4f46e5" opacity="0.4"/>
+  <rect x="20" y="25" width="15" height="2" rx="1" fill="#4f46e5" opacity="0.4"/>
+  <!-- Kaki layar -->
+  <rect x="29" y="36" width="6" height="5" rx="1" fill="white" opacity="0.8"/>
+  <rect x="24" y="41" width="16" height="2.5" rx="1" fill="white" opacity="0.8"/>
+  <!-- Keyboard/tombol -->
+  <rect x="14" y="46" width="36" height="10" rx="3" fill="white" opacity="0.15"/>
+  <rect x="17" y="49" width="6" height="4" rx="1" fill="white" opacity="0.6"/>
+  <rect x="25" y="49" width="6" height="4" rx="1" fill="white" opacity="0.6"/>
+  <rect x="33" y="49" width="6" height="4" rx="1" fill="#a5b4fc" opacity="0.9"/>
+  <rect x="41" y="49" width="6" height="4" rx="1" fill="#a5b4fc" opacity="0.9"/>
+</svg>
