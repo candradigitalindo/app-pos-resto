@@ -38,10 +38,11 @@ class TransactionsState {
     }
   }
 
-  double get totalRevenue =>
-      orders.where((o) => o.isPaid).fold(0.0, (sum, o) => sum + o.totalAmount);
+  double get totalRevenue => orders
+      .where((o) => o.isPaid && !o.isVoided)
+      .fold(0.0, (sum, o) => sum + o.totalAmount);
 
-  int get paidCount => orders.where((o) => o.isPaid).length;
+  int get paidCount => orders.where((o) => o.isPaid && !o.isVoided).length;
   int get unpaidCount => orders.where((o) => !o.isPaid && !o.isVoided).length;
   int get voidedCount => orders.where((o) => o.isVoided).length;
 

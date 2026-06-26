@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' hide Category;
 
 import '../models/models.dart';
 import '../repositories/product_repository.dart';
+import '../services/outlet_service.dart';
 
 /// State untuk ProductsScreen
 class ProductsState {
@@ -14,6 +15,10 @@ class ProductsState {
   final String? successMessage;
   final String searchQuery;
 
+  /// True bila sync cloud aktif → produk & kategori dikelola dari cloud
+  /// sehingga tidak boleh diedit lokal (akan tertimpa saat sync).
+  final bool syncEnabled;
+
   const ProductsState({
     this.categories = const [],
     this.products = const [],
@@ -23,6 +28,7 @@ class ProductsState {
     this.errorMessage,
     this.successMessage,
     this.searchQuery = '',
+    this.syncEnabled = false,
   });
 
   List<Product> get filteredProducts {
@@ -47,6 +53,7 @@ class ProductsState {
     String? successMessage,
     bool clearSuccess = false,
     String? searchQuery,
+    bool? syncEnabled,
   }) {
     return ProductsState(
       categories: categories ?? this.categories,
@@ -60,6 +67,7 @@ class ProductsState {
       successMessage:
           clearSuccess ? null : (successMessage ?? this.successMessage),
       searchQuery: searchQuery ?? this.searchQuery,
+      syncEnabled: syncEnabled ?? this.syncEnabled,
     );
   }
 }
@@ -67,12 +75,16 @@ class ProductsState {
 /// Controller untuk ProductsScreen
 class ProductsController extends ChangeNotifier {
   final ProductRepository _productRepo;
+  final OutletService _outletService;
 
   ProductsState _state = const ProductsState();
   ProductsState get state => _state;
 
-  ProductsController({ProductRepository? productRepo})
-      : _productRepo = productRepo ?? ProductRepository();
+  ProductsController({
+    ProductRepository? productRepo,
+    OutletService? outletService,
+  })  : _productRepo = productRepo ?? ProductRepository(),
+        _outletService = outletService ?? OutletService();
 
   void _setState(ProductsState newState) {
     _state = newState;
@@ -85,13 +97,16 @@ class ProductsController extends ChangeNotifier {
       final results = await Future.wait([
         _productRepo.getCategories(),
         _productRepo.getProducts(categoryId: _state.selectedCategory?.id),
+        _outletService.loadOutlet(),
       ]);
       final categories = results[0] as List<Category>;
       final products = results[1] as List<Product>;
+      final outlet = results[2] as OutletInfo;
 
       _setState(_state.copyWith(
         categories: categories,
         products: products,
+        syncEnabled: outlet.syncEnabled,
         isLoading: false,
       ));
     } catch (e) {
@@ -188,10 +203,15 @@ class ProductsController extends ChangeNotifier {
   Future<void> createCategory({
     required String name,
     String? description,
+    String printDestination = 'kitchen',
   }) async {
     _setState(_state.copyWith(isProcessing: true, clearError: true));
     try {
-      await _productRepo.createCategory(name: name, description: description);
+      await _productRepo.createCategory(
+        name: name,
+        description: description,
+        printDestination: printDestination,
+      );
       _setState(_state.copyWith(
         isProcessing: false,
         successMessage: 'Kategori "$name" berhasil ditambahkan',
@@ -201,6 +221,38 @@ class ProductsController extends ChangeNotifier {
       _setState(_state.copyWith(
         isProcessing: false,
         errorMessage: 'Gagal menambah kategori: $e',
+      ));
+    }
+  }
+
+  /// Ubah kategori (mis. nama / tujuan cetak dapur↔bar).
+  Future<void> updateCategory(
+    Category category, {
+    String? name,
+    String? printDestination,
+  }) async {
+    _setState(_state.copyWith(isProcessing: true, clearError: true));
+    try {
+      final updated = Category(
+        id: category.id,
+        name: name ?? category.name,
+        description: category.description,
+        printerId: category.printerId,
+        printDestination: printDestination ?? category.printDestination,
+        isDeleted: category.isDeleted,
+        createdAt: category.createdAt,
+        updatedAt: DateTime.now(),
+      );
+      await _productRepo.updateCategory(updated);
+      _setState(_state.copyWith(
+        isProcessing: false,
+        successMessage: 'Kategori "${updated.name}" diperbarui',
+      ));
+      await loadData();
+    } catch (e) {
+      _setState(_state.copyWith(
+        isProcessing: false,
+        errorMessage: 'Gagal memperbarui kategori: $e',
       ));
     }
   }

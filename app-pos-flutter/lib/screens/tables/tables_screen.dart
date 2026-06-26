@@ -152,6 +152,130 @@ class _TablesScreenState extends State<TablesScreen> {
     );
   }
 
+  /// Menu kelola meja (long-press) — Edit & Hapus agar mudah ditemukan.
+  void _showManageSheet(RestaurantTable table) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+              child: Row(
+                children: [
+                  const Icon(Icons.table_restaurant, color: Color(0xFF059669)),
+                  const SizedBox(width: 10),
+                  Text('Kelola Meja ${table.tableNumber}',
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_outlined, color: Color(0xFF2563EB)),
+              title: const Text('Edit Meja'),
+              subtitle: const Text('Ubah nomor & kapasitas'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showEditTableDialog(table);
+              },
+            ),
+            ListTile(
+              leading:
+                  const Icon(Icons.delete_outline, color: Color(0xFFEF4444)),
+              title: const Text('Hapus Meja',
+                  style: TextStyle(color: Color(0xFFEF4444))),
+              onTap: () {
+                Navigator.pop(ctx);
+                _confirmDelete(table);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showEditTableDialog(RestaurantTable table) {
+    final controller = TextEditingController(text: table.tableNumber);
+    int capacity = table.capacity;
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Edit Meja'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: controller,
+                decoration: InputDecoration(
+                  labelText: 'Nomor Meja',
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 12),
+                ),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  const Text('Kapasitas:',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(width: 12),
+                  DropdownButton<int>(
+                    value: [2, 4, 6, 8, 10, 12].contains(capacity)
+                        ? capacity
+                        : 4,
+                    underline: const SizedBox(),
+                    items: [2, 4, 6, 8, 10, 12]
+                        .map((n) => DropdownMenuItem(
+                            value: n, child: Text('$n kursi')))
+                        .toList(),
+                    onChanged: (v) =>
+                        setDialogState(() => capacity = v ?? capacity),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Batal'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF059669),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: () {
+                if (controller.text.trim().isNotEmpty) {
+                  Navigator.pop(context);
+                  _controller.editTable(
+                    tableId: table.id,
+                    tableNumber: controller.text.trim(),
+                    capacity: capacity,
+                  );
+                }
+              },
+              child: const Text('Simpan'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showSeedDialog() {
     showDialog(
       context: context,
@@ -313,7 +437,7 @@ class _TablesScreenState extends State<TablesScreen> {
                                   table: table,
                                   order: order,
                                   onTap: () => _onTableTap(table),
-                                  onDelete: () => _confirmDelete(table),
+                                  onDelete: () => _showManageSheet(table),
                                 );
                               },
                             );
@@ -746,7 +870,9 @@ class _TableCard extends StatelessWidget {
     final statusColor =
         isAvailable ? const Color(0xFF10B981) : const Color(0xFFF59E0B);
 
-    return Material(
+    return Stack(
+      children: [
+        Material(
       color: isAvailable ? Colors.white : const Color(0xFFFFFBEB),
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
@@ -848,6 +974,26 @@ class _TableCard extends StatelessWidget {
           ),
         ),
       ),
+        ),
+        // Tombol kelola (edit/hapus) — di pojok kanan atas, mudah ditemukan.
+        Positioned(
+          top: 2,
+          right: 2,
+          child: Material(
+            color: Colors.transparent,
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: onDelete,
+              child: const Padding(
+                padding: EdgeInsets.all(6),
+                child: Icon(Icons.more_vert,
+                    size: 18, color: Color(0xFF94A3B8)),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

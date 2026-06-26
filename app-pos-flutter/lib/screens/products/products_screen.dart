@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../controllers/products_controller.dart';
 import '../../models/models.dart';
 import '../../utils/currency.dart';
+import '../../widgets/menu_avatar.dart';
 
 class ProductsScreen extends StatefulWidget {
   const ProductsScreen({super.key});
@@ -74,7 +75,21 @@ class _ProductsScreenState extends State<ProductsScreen> {
     return cat?.name ?? 'Tanpa Kategori';
   }
 
+  /// Tampilkan pesan & batalkan aksi bila sync cloud aktif. True = terblokir.
+  bool _blockedBySync() {
+    if (!_controller.state.syncEnabled) return false;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+            'Sync cloud aktif — produk & kategori hanya bisa diubah dari cloud.'),
+        backgroundColor: Color(0xFFD97706),
+      ),
+    );
+    return true;
+  }
+
   void _showProductForm({Product? product}) {
+    if (_blockedBySync()) return;
     final state = _controller.state;
     final nameCtrl = TextEditingController(text: product?.name);
     final codeCtrl = TextEditingController(text: product?.code);
@@ -390,24 +405,27 @@ class _ProductsScreenState extends State<ProductsScreen> {
     );
   }
 
-  void _showCategoryForm() {
-    final nameCtrl = TextEditingController();
-    final descCtrl = TextEditingController();
+  void _showCategoryForm({Category? existing}) {
+    if (_blockedBySync()) return;
+    final isEdit = existing != null;
+    final nameCtrl = TextEditingController(text: existing?.name ?? '');
+    final descCtrl = TextEditingController(text: existing?.description ?? '');
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('Tambah Kategori'),
+        title: Text(isEdit ? 'Ubah Kategori' : 'Tambah Kategori'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             TextField(
               controller: nameCtrl,
               decoration: InputDecoration(
                 labelText: 'Nama Kategori',
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
             const SizedBox(height: 12),
@@ -415,9 +433,14 @@ class _ProductsScreenState extends State<ProductsScreen> {
               controller: descCtrl,
               decoration: InputDecoration(
                 labelText: 'Deskripsi (opsional)',
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Tujuan cetak diatur di Pengaturan → Printer (pilih kategori per printer).',
+              style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
             ),
           ],
         ),
@@ -433,8 +456,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
                   borderRadius: BorderRadius.circular(10)),
             ),
             onPressed: () {
-              if (nameCtrl.text.isNotEmpty) {
-                Navigator.pop(ctx);
+              if (nameCtrl.text.trim().isEmpty) return;
+              Navigator.pop(ctx);
+              if (isEdit) {
+                _controller.updateCategory(existing, name: nameCtrl.text.trim());
+              } else {
                 _controller.createCategory(
                   name: nameCtrl.text.trim(),
                   description: descCtrl.text.trim().isEmpty
@@ -443,7 +469,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 );
               }
             },
-            child: const Text('Tambah'),
+            child: Text(isEdit ? 'Simpan' : 'Tambah'),
           ),
         ],
       ),
@@ -451,6 +477,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   }
 
   void _confirmDelete(Product product) {
+    if (_blockedBySync()) return;
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -560,41 +587,42 @@ class _ProductsScreenState extends State<ProductsScreen> {
                         ],
                       ),
                     ),
-                    // Add category
-                    Material(
-                      color: Colors.white.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(12),
-                      child: InkWell(
+                    // Add category & product — disembunyikan saat sync aktif
+                    if (!state.syncEnabled) ...[
+                      Material(
+                        color: Colors.white.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(12),
-                        onTap: _showCategoryForm,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
-                          child: const Text('+ Kategori',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 12)),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: _showCategoryForm,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
+                            child: const Text('+ Kategori',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 12)),
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    // Add product
-                    Material(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      child: InkWell(
+                      const SizedBox(width: 8),
+                      Material(
+                        color: Colors.white,
                         borderRadius: BorderRadius.circular(12),
-                        onTap: () => _showProductForm(),
-                        child: const SizedBox(
-                          width: 42,
-                          height: 42,
-                          child: Icon(Icons.add,
-                              color: Color(0xFF059669), size: 22),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () => _showProductForm(),
+                          child: const SizedBox(
+                            width: 42,
+                            height: 42,
+                            child: Icon(Icons.add,
+                                color: Color(0xFF059669), size: 22),
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
+                      const SizedBox(width: 8),
+                    ],
                     Material(
                       color: Colors.white.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(12),
@@ -624,6 +652,30 @@ class _ProductsScreenState extends State<ProductsScreen> {
               ),
             ),
           ),
+
+          // ── Banner: dikelola via cloud ──
+          if (state.syncEnabled)
+            Container(
+              width: double.infinity,
+              color: const Color(0xFFFEF3C7),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: const Row(
+                children: [
+                  Icon(Icons.cloud_done_outlined,
+                      size: 18, color: Color(0xFF92400E)),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Sync cloud aktif — produk & kategori dikelola dari cloud, tidak bisa diedit di sini.',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF92400E),
+                          fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
           // ── Search ──
           Container(
@@ -666,6 +718,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
                       cat.name,
                       state.selectedCategory?.id == cat.id,
                       () => _controller.selectCategory(cat),
+                      onLongPress: state.syncEnabled
+                          ? null
+                          : () => _showCategoryForm(existing: cat),
                     )),
               ],
             ),
@@ -682,11 +737,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
                     : GridView.builder(
                         padding: const EdgeInsets.all(16),
                         gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 4,
-                          mainAxisSpacing: 10,
-                          crossAxisSpacing: 10,
-                          childAspectRatio: 1.5,
+                            const SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 150,
+                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                          childAspectRatio: 0.85,
                         ),
                         itemCount: filtered.length,
                         itemBuilder: (context, index) {
@@ -707,11 +762,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
     );
   }
 
-  Widget _catChip(String label, bool selected, VoidCallback onTap) {
+  Widget _catChip(String label, bool selected, VoidCallback onTap,
+      {VoidCallback? onLongPress}) {
     return Padding(
       padding: const EdgeInsets.only(right: 6),
       child: GestureDetector(
         onTap: onTap,
+        onLongPress: onLongPress,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -851,12 +908,15 @@ class _ProductCard extends StatelessWidget {
               ),
             ],
           ),
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(10),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Name
+              // Avatar besar mengisi atas kartu
+              Expanded(
+                child: MenuAvatar.fill(name: product.name),
+              ),
+              const SizedBox(height: 8),
               Text(
                 product.name,
                 style: const TextStyle(
@@ -864,13 +924,11 @@ class _ProductCard extends StatelessWidget {
                   fontSize: 13,
                   color: Color(0xFF0F172A),
                 ),
-                maxLines: 2,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-
-              // Bottom row
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              const SizedBox(height: 2),
+              Row(
                 children: [
                   Text(
                     CurrencyHelper.format(product.price),
@@ -880,23 +938,25 @@ class _ProductCard extends StatelessWidget {
                       fontSize: 13,
                     ),
                   ),
-                  const SizedBox(height: 2),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF2F2F7),
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                    child: Text(
-                      categoryName,
-                      style: const TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF8E8E93),
+                  const Spacer(),
+                  Flexible(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF2F2F7),
+                        borderRadius: BorderRadius.circular(5),
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      child: Text(
+                        categoryName,
+                        style: const TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF8E8E93),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ),
                 ],

@@ -6,7 +6,10 @@ class TableRepository {
   final AppDatabase _db = AppDatabase.instance;
 
   Future<List<RestaurantTable>> getTables() async {
-    final results = await _db.query('tables', orderBy: 'table_number ASC');
+    // Urut numerik: "2" sebelum "10" (kolom String, jadi CAST dulu).
+    // Fallback urut teks untuk nomor non-numerik (mis. "VIP").
+    final results = await _db.query('tables',
+        orderBy: 'CAST(table_number AS INTEGER) ASC, table_number ASC');
     return results.map((m) => RestaurantTable.fromMap(m)).toList();
   }
 
@@ -39,12 +42,14 @@ class TableRepository {
 
   Future<void> updateTable({
     required String tableId,
+    String? tableNumber,
     int? capacity,
     String? status,
   }) async {
     final values = <String, dynamic>{
       'updated_at': DateTime.now().toIso8601String(),
     };
+    if (tableNumber != null) values['table_number'] = tableNumber;
     if (capacity != null) values['capacity'] = capacity;
     if (status != null) values['status'] = status;
     await _db.update(

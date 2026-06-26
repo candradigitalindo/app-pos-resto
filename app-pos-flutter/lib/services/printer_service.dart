@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
 
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -11,40 +13,96 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 enum PrinterType { bluetooth, lan }
 
-/// Peran printer untuk routing cetakan order.
-/// kitchen/bar dipakai print queue; cashier untuk struk (cetak langsung).
+/// Peran KHUSUS printer (di luar kategori menu). Routing tiket dapur/bar kini
+/// ditentukan oleh KATEGORI menu yang dipilih per printer (lihat
+/// [PrinterDevice.categoryIds]), bukan oleh peran.
+/// - checker : salinan SELURUH pesanan (untuk pengecek/ekspeditor)
+/// - cashier : struk pembayaran (cetak langsung)
 class PrinterRole {
-  static const String kitchen = 'kitchen';
-  static const String bar = 'bar';
+  static const String checker = 'checker';
   static const String cashier = 'cashier';
   static const String none = 'none';
+
+  // Kompat data lama (printer pernah ber-role kitchen/bar).
+  static const String kitchen = 'kitchen';
+  static const String bar = 'bar';
+
+  /// Peran khusus yang bisa dipilih untuk satu printer (selain kategori).
+  static const List<String> selectable = [checker, cashier];
+
+  static const Map<String, String> labels = {
+    checker: 'Checker',
+    cashier: 'Kasir',
+    kitchen: 'Dapur',
+    bar: 'Bar',
+  };
 }
 
 class PrinterDevice {
   final String name;
   final String address; // BT MAC or IP:port
   final PrinterType type;
-  final String role; // kitchen | bar | cashier | none
+  final Set<String> roles; // peran khusus: checker / cashier
+  final Set<String> categoryIds; // kategori menu yang dicetak printer ini
+  final int paperCols; // lebar kertas dalam kolom: 32 (58mm) / 48 (80mm)
 
   const PrinterDevice({
     required this.name,
     required this.address,
     required this.type,
-    this.role = PrinterRole.none,
+    this.roles = const {},
+    this.categoryIds = const {},
+    this.paperCols = 48,
   });
 
-  PrinterDevice copyWith({String? role}) => PrinterDevice(
+  bool hasRole(String role) => roles.contains(role);
+  bool printsCategory(String? categoryId) =>
+      categoryId != null && categoryIds.contains(categoryId);
+
+  /// Lebar kertas dalam mm (untuk label UI).
+  int get paperMm => paperCols >= 48 ? 80 : 58;
+
+  /// Label peran khusus (mis. "Checker, Kasir"). '-' bila tak ada.
+  String get rolesLabel {
+    if (roles.isEmpty) return '-';
+    return PrinterRole.selectable
+        .where(roles.contains)
+        .map((r) => PrinterRole.labels[r] ?? r)
+        .join(', ');
+  }
+
+  PrinterDevice copyWith(
+          {Set<String>? roles, Set<String>? categoryIds, int? paperCols}) =>
+      PrinterDevice(
         name: name,
         address: address,
         type: type,
-        role: role ?? this.role,
+        roles: roles ?? this.roles,
+        categoryIds: categoryIds ?? this.categoryIds,
+        paperCols: paperCols ?? this.paperCols,
       );
+
+  /// Aktif/nonaktifkan satu peran khusus, kembalikan instance baru.
+  PrinterDevice toggleRole(String role) {
+    final next = Set<String>.from(roles);
+    if (!next.remove(role)) next.add(role);
+    return copyWith(roles: next);
+  }
+
+  /// Aktif/nonaktifkan satu kategori, kembalikan instance baru.
+  PrinterDevice toggleCategory(String categoryId) {
+    final next = Set<String>.from(categoryIds);
+    if (!next.remove(categoryId)) next.add(categoryId);
+    return copyWith(categoryIds: next);
+  }
 
   Map<String, dynamic> toMap() => {
         'name': name,
         'address': address,
         'type': type.name,
-        'role': role,
+        'roles': roles.toList(),
+        'category_ids': categoryIds.toList(),
+        'paper_cols': paperCols,
       };
 
   factory PrinterDevice.fromMap(Map<String, dynamic> m) => PrinterDevice(
@@ -54,11 +112,30 @@ class PrinterDevice {
           (t) => t.name == m['type'],
           orElse: () => PrinterType.lan,
         ),
-        role: m['role'] as String? ?? PrinterRole.none,
+        roles: _parseSet(m['roles'] ?? m['role']),
+        categoryIds: _parseSet(m['category_ids']),
+        paperCols: (m['paper_cols'] as num?)?.toInt() ?? 48,
       );
 
+  /// Toleran: terima List, String "a,b", atau tunggal — buang 'none'/kosong.
+  static Set<String> _parseSet(dynamic raw) {
+    Iterable<String> parts;
+    if (raw is List) {
+      parts = raw.map((e) => e.toString());
+    } else if (raw is String) {
+      parts = raw.split(',');
+    } else {
+      parts = const [];
+    }
+    return parts
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty && s != PrinterRole.none)
+        .toSet();
+  }
+
   @override
-  String toString() => '$name ($address) [${type.name}/$role]';
+  String toString() =>
+      '$name ($address) [${type.name}/$rolesLabel/cat:${categoryIds.length}]';
 }
 
 // ─── PrinterService ───────────────────────────────────────────────────────────
@@ -172,6 +249,12 @@ class PrinterService {
     }
   }
 
+  /// Cek apakah satu printer LAN bisa dijangkau (untuk entri manual via IP).
+  /// Timeout lebih longgar dari saat scan massal agar printer lambat tetap lolos.
+  Future<bool> pingLan(String ip, int port,
+          {Duration timeout = const Duration(seconds: 3)}) =>
+      _checkPort(ip, port, timeout);
+
   // ── Persistence ────────────────────────────────────────────────────────────
 
   Future<List<PrinterDevice>> getSavedPrinters() async {
@@ -188,26 +271,44 @@ class PrinterService {
               (t) => t.name == parts[2],
               orElse: () => PrinterType.lan,
             ),
-            // Backward-compat: printer lama (3 field) → role 'none'
-            role: parts.length >= 4 ? parts[3] : PrinterRole.none,
+            // parts[3]=peran; parts[4]=id kategori; parts[5]=lebar kolom kertas.
+            roles: parts.length >= 4
+                ? PrinterDevice._parseSet(parts[3])
+                : const {},
+            categoryIds: parts.length >= 5
+                ? PrinterDevice._parseSet(parts[4])
+                : const {},
+            paperCols: parts.length >= 6
+                ? (int.tryParse(parts[5]) ?? 48)
+                : 48,
           );
         })
         .whereType<PrinterDevice>()
         .toList();
   }
 
-  /// Printer aktif untuk satu peran (kitchen/bar/cashier). Bisa lebih dari satu.
+  /// Printer dengan peran khusus [role] (checker/cashier).
   Future<List<PrinterDevice>> getPrintersByRole(String role) async {
     final all = await getSavedPrinters();
-    return all.where((p) => p.role == role).toList();
+    return all.where((p) => p.hasRole(role)).toList();
+  }
+
+  /// Printer yang mencetak kategori [categoryId].
+  Future<List<PrinterDevice>> getPrintersByCategory(String categoryId) async {
+    final all = await getSavedPrinters();
+    return all.where((p) => p.printsCategory(categoryId)).toList();
   }
 
   Future<void> savePrinter(PrinterDevice device) async {
     final prefs = await SharedPreferences.getInstance();
     final existing = await getSavedPrinters();
-    final updated = existing.where((d) => d.address != device.address).toList()
-      ..add(device);
-    await prefs.setStringList(_prefKey, updated.map(_serialize).toList());
+    final idx = existing.indexWhere((d) => d.address == device.address);
+    if (idx >= 0) {
+      existing[idx] = device; // ganti DI TEMPAT — jaga urutan agar tile tak geser
+    } else {
+      existing.add(device);
+    }
+    await prefs.setStringList(_prefKey, existing.map(_serialize).toList());
   }
 
   Future<void> removePrinter(String address) async {
@@ -218,12 +319,12 @@ class PrinterService {
   }
 
   String _serialize(PrinterDevice d) =>
-      '${d.name}|${d.address}|${d.type.name}|${d.role}';
+      '${d.name}|${d.address}|${d.type.name}|${d.roles.join(',')}|${d.categoryIds.join(',')}|${d.paperCols}';
 
   // ── Test Print ─────────────────────────────────────────────────────────────
 
   Future<void> testPrint(PrinterDevice device) async {
-    final data = _buildTestPage();
+    final data = _buildTestPage(device);
     if (device.type == PrinterType.bluetooth) {
       await _sendBluetooth(device.address, data);
     } else {
@@ -231,53 +332,202 @@ class PrinterService {
     }
   }
 
-  List<int> _buildTestPage() {
-    const esc = 0x1B;
-    const gs = 0x1D;
+  // ── ESC/POS builder helpers ──────────────────────────────────────────────────
+  static const int _esc = 0x1B;
+  static const int _gs = 0x1D;
+  static const int _lf = 0x0A;
+
+  // Latin-1 agar karakter seperti titik ribuan & strip aman di printer ESC/POS.
+  List<int> _t(String s) => latin1.encode(s);
+  List<int> _line(String s) => [..._t(s), _lf];
+  List<int> _align(int n) => [_esc, 0x61, n]; // 0=kiri,1=tengah,2=kanan
+  List<int> _bold(bool on) => [_esc, 0x45, on ? 1 : 0];
+  // GS ! n — ukuran karakter: nibble tinggi = lebar, nibble rendah = tinggi.
+  List<int> _size(int w, int h) => [_gs, 0x21, (w << 4) | h];
+  List<int> _sep(int cols, [String ch = '-']) => _line(ch * cols);
+
+  /// Baris dua kolom (kiri rata kiri, kanan rata kanan) dalam lebar [cols].
+  List<int> _row(int cols, String left, String right) {
+    var l = left;
+    final space = cols - l.length - right.length;
+    if (space < 1) {
+      final maxLeft = cols - right.length - 1;
+      l = maxLeft > 0 ? l.substring(0, maxLeft) : '';
+      return _line('$l $right');
+    }
+    return _line(l + ' ' * space + right);
+  }
+
+  String _two(int n) => n.toString().padLeft(2, '0');
+
+  List<int> _buildTestPage(PrinterDevice device) {
+    final now = DateTime.now();
+    final tgl =
+        '${_two(now.day)}/${_two(now.month)}/${now.year} ${_two(now.hour)}:${_two(now.minute)}:${_two(now.second)}';
+    final tipe = device.type == PrinterType.bluetooth ? 'Bluetooth' : 'LAN';
+    final roleLabel = device.rolesLabel;
+    final c = device.paperCols; // lebar kolom (32/48)
+
+    // Penanda lebar kolom dinamis: "1234567890..." sepanjang kertas.
+    final ruler =
+        List.generate(c, (i) => ((i + 1) % 10).toString()).join();
+
     return [
-      esc, 0x40, // Initialize
-      esc, 0x61, 0x01, // Center align
-      esc, 0x21, 0x10, // Double height
-      ...'\nPOS RESTO\n'.codeUnits,
-      esc, 0x21, 0x00, // Normal
-      ...('-' * 32).codeUnits,
-      ...'\nTest Print OK\n'.codeUnits,
-      ...DateTime.now().toString().codeUnits,
-      ...'\n\n\n'.codeUnits,
-      gs, 0x56, 0x41, 0x03, // Cut
+      _esc, 0x40, // init
+
+      // ── Header besar ──
+      ..._align(1),
+      ..._size(1, 1), // dobel lebar & tinggi
+      ..._bold(true),
+      ..._line('POS RESTO'),
+      ..._bold(false),
+      ..._size(0, 0),
+      ..._line('Sistem Kasir Restoran'),
+      _lf,
+      ..._size(0, 1), // dobel tinggi
+      ..._line('TEST PRINT'),
+      ..._size(0, 0),
+      ..._line('Printer Berhasil Terhubung'),
+      _lf,
+
+      // ── Info printer ──
+      ..._align(0),
+      ..._sep(c, '='),
+      ..._row(c, 'Nama', device.name),
+      ..._row(c, 'Alamat', device.address),
+      ..._row(c, 'Tipe', tipe),
+      ..._row(c, 'Kertas', '${device.paperMm}mm ($c kolom)'),
+      ..._row(c, 'Peran', roleLabel),
+      ..._row(c, 'Waktu', tgl),
+      ..._sep(c, '='),
+
+      // ── Uji perataan ──
+      ..._align(1),
+      ..._line('Uji Perataan & Ukuran'),
+      ..._align(0),
+      ..._sep(c),
+      ..._row(c, 'Kiri', 'Kanan'),
+      ..._row(c, '1x Nasi Goreng', '25.000'),
+      ..._row(c, '2x Es Teh Manis', '8.000'),
+      ..._row(c, '1x Ayam Bakar', '28.000'),
+      ..._sep(c),
+      ..._bold(true),
+      ..._row(c, 'TOTAL', '61.000'),
+      ..._bold(false),
+      _lf,
+
+      // ── Uji gaya teks ──
+      ..._align(1),
+      ..._bold(true),
+      ..._line('Teks Tebal'),
+      ..._bold(false),
+      ..._line('Teks Normal'),
+      ..._size(1, 1),
+      ..._line('Teks Besar'),
+      ..._size(0, 0),
+      ..._line('Teks Kecil ABCdef 0123456789'),
+      _lf,
+
+      // ── Uji lebar kertas (penanda kolom penuh) ──
+      ..._align(0),
+      ..._line(ruler),
+      _lf,
+
+      ..._align(1),
+      ..._line('*** SELESAI ***'),
+      ..._line('Jika struk ini rapi & penuh ke kanan,'),
+      ..._line('lebar kertas sudah benar.'),
+
+      // ── Feed & potong ──
+      _lf, _lf, _lf,
+      _gs, 0x56, 0x41, 0x03, // partial cut
     ];
+  }
+
+  // ── Serialisasi cetak (anti tabrakan saat banyak transaksi) ──────────────────
+  //
+  // Plugin print_bluetooth_thermal hanya punya SATU koneksi aktif untuk seluruh
+  // aplikasi. Karena struk kasir (cetak langsung), antrian dapur/bar, dan bill
+  // waiter sama-sama bisa memicu cetak Bluetooth bersamaan, semua operasi BT
+  // HARUS antre global agar connect/write/disconnect tidak saling merusak.
+  // Lock dibuat `static` supaya dibagi lintas instance PrinterService.
+  static Future<void> _btChain = Future.value();
+
+  // LAN: cukup serialisasi per-alamat (printer sama) agar byte tidak berbaur;
+  // printer berbeda tetap boleh paralel.
+  static final Map<String, Future<void>> _lanChains = {};
+
+  static Future<T> _withBtLock<T>(Future<T> Function() action) {
+    final completer = Completer<void>();
+    final prev = _btChain;
+    _btChain = completer.future;
+    return prev.then((_) => action()).whenComplete(completer.complete);
+  }
+
+  static Future<T> _withLanLock<T>(
+      String address, Future<T> Function() action) {
+    final completer = Completer<void>();
+    final prev = _lanChains[address] ?? Future.value();
+    _lanChains[address] = completer.future;
+    return prev.then((_) => action()).whenComplete(() {
+      completer.complete();
+      // Bersihkan map bila tidak ada yang antre setelah kita.
+      if (identical(_lanChains[address], completer.future)) {
+        _lanChains.remove(address);
+      }
+    });
   }
 
   // ── Internal send ──────────────────────────────────────────────────────────
 
-  Future<void> _sendBluetooth(String address, List<int> data) async {
-    final connected = await PrintBluetoothThermal.connect(
-      macPrinterAddress: address,
-    );
-    if (!connected) throw Exception('Gagal terhubung ke printer Bluetooth');
-    try {
-      final sent = await PrintBluetoothThermal.writeBytes(
-        Uint8List.fromList(data),
-      );
-      if (!sent) throw Exception('Gagal mengirim data ke printer');
-    } finally {
-      await PrintBluetoothThermal.disconnect;
-    }
+  Future<void> _sendBluetooth(String address, List<int> data) {
+    return _withBtLock(() async {
+      try {
+        final connected = await PrintBluetoothThermal.connect(
+          macPrinterAddress: address,
+        ).timeout(const Duration(seconds: 8), onTimeout: () => false);
+        if (!connected) throw Exception('Gagal terhubung ke printer Bluetooth');
+
+        final sent = await PrintBluetoothThermal.writeBytes(
+          Uint8List.fromList(data),
+        ).timeout(const Duration(seconds: 12), onTimeout: () => false);
+        if (!sent) throw Exception('Gagal mengirim data ke printer');
+      } finally {
+        // Selalu putuskan koneksi agar tidak menahan sesi BT job berikutnya.
+        try {
+          await PrintBluetoothThermal.disconnect
+              .timeout(const Duration(seconds: 4));
+        } catch (_) {}
+      }
+    });
   }
 
-  Future<void> _sendLan(String addressWithPort, List<int> data) async {
-    final parts = addressWithPort.split(':');
-    final ip = parts[0];
-    final port = parts.length > 1 ? int.tryParse(parts[1]) ?? 9100 : 9100;
+  Future<void> _sendLan(String addressWithPort, List<int> data) {
+    return _withLanLock(addressWithPort, () async {
+      final parts = addressWithPort.split(':');
+      final ip = parts[0];
+      final port = parts.length > 1 ? int.tryParse(parts[1]) ?? 9100 : 9100;
 
-    final socket =
-        await Socket.connect(ip, port, timeout: const Duration(seconds: 5));
-    try {
-      socket.add(data);
-      await socket.flush();
-    } finally {
-      await socket.close();
-    }
+      debugPrint('LAN print → $ip:$port (${data.length} bytes)');
+      Socket? socket;
+      try {
+        socket = await Socket.connect(ip, port,
+            timeout: const Duration(seconds: 5));
+        socket.add(data);
+        await socket.flush().timeout(const Duration(seconds: 8));
+        // Beri jeda agar printer sempat menarik seluruh buffer sebelum ditutup.
+        await Future.delayed(const Duration(milliseconds: 150));
+        debugPrint('LAN print → OK ($ip:$port)');
+      } catch (e) {
+        debugPrint('LAN print → GAGAL ($ip:$port): $e');
+        rethrow;
+      } finally {
+        try {
+          await socket?.close();
+        } catch (_) {}
+        socket?.destroy();
+      }
+    });
   }
 
   // ── Public send methods ────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ import '../models/models.dart';
 import '../repositories/order_repository.dart';
 import '../repositories/product_repository.dart';
 import '../repositories/table_repository.dart';
+import '../services/auth_service.dart';
 import '../services/local_api_server.dart';
 import '../services/printer_service.dart';
 import '../services/receipt_builder.dart';
@@ -24,6 +25,7 @@ class WaiterState {
   final Map<String, int> cart;
   final Map<String, String> cartNotes;
   final Map<String, Product> productCache;
+  final int pax; // jumlah tamu untuk order baru
 
   // Existing order detail
   final Order? currentOrder;
@@ -48,6 +50,7 @@ class WaiterState {
     this.cart = const {},
     this.cartNotes = const {},
     this.productCache = const {},
+    this.pax = 1,
     this.currentOrder,
     this.currentOrderItems = const [],
     this.isLoading = false,
@@ -79,6 +82,7 @@ class WaiterState {
     Map<String, int>? cart,
     Map<String, String>? cartNotes,
     Map<String, Product>? productCache,
+    int? pax,
     Order? currentOrder,
     bool clearCurrentOrder = false,
     List<OrderItem>? currentOrderItems,
@@ -103,6 +107,7 @@ class WaiterState {
       cart: cart ?? this.cart,
       cartNotes: cartNotes ?? this.cartNotes,
       productCache: productCache ?? this.productCache,
+      pax: pax ?? this.pax,
       currentOrder:
           clearCurrentOrder ? null : (currentOrder ?? this.currentOrder),
       currentOrderItems: currentOrderItems ?? this.currentOrderItems,
@@ -121,6 +126,7 @@ class WaiterController extends ChangeNotifier {
   final OrderRepository _orderRepo;
   final ProductRepository _productRepo;
   final TableRepository _tableRepo;
+  final AuthService _authService;
 
   WaiterState _state = const WaiterState();
   WaiterState get state => _state;
@@ -129,9 +135,11 @@ class WaiterController extends ChangeNotifier {
     OrderRepository? orderRepo,
     ProductRepository? productRepo,
     TableRepository? tableRepo,
+    AuthService? authService,
   })  : _orderRepo = orderRepo ?? OrderRepository(),
         _productRepo = productRepo ?? ProductRepository(),
-        _tableRepo = tableRepo ?? TableRepository();
+        _tableRepo = tableRepo ?? TableRepository(),
+        _authService = authService ?? AuthService();
 
   void _setState(WaiterState newState) {
     _state = newState;
@@ -175,6 +183,7 @@ class WaiterController extends ChangeNotifier {
       selectedTable: table,
       viewMode: 'order',
       cart: {},
+      pax: 1, // reset jumlah tamu untuk order baru
       clearCurrentOrder: true,
       currentOrderItems: [],
       isLoading: true,
@@ -238,6 +247,84 @@ class WaiterController extends ChangeNotifier {
     }
   }
 
+  // ── Pindah / Gabung Meja ─────────────────────────────────────────────────
+
+  /// Pindahkan order yang sedang dilihat (mode detail) ke meja kosong lain.
+  Future<bool> moveOrderToTable(String newTableNumber) async {
+    final order = _state.currentOrder;
+    if (order == null) return false;
+    if (_state.isProcessing) return false;
+    _setState(_state.copyWith(isProcessing: true, clearError: true));
+    try {
+      await _orderRepo.moveOrderToTable(
+          orderId: order.id, newTableNumber: newTableNumber);
+      _setState(_state.copyWith(isProcessing: false));
+      await loadTables();
+      await _reopenDetail(newTableNumber);
+      return true;
+    } catch (e) {
+      _setState(_state.copyWith(
+        isProcessing: false,
+        errorMessage:
+            'Gagal pindah meja: ${e.toString().replaceFirst('Exception: ', '')}',
+      ));
+      return false;
+    }
+  }
+
+  /// Daftar order meja lain yang bisa digabung ke order saat ini.
+  Future<List<Order>> getMergeableOrders() {
+    final order = _state.currentOrder;
+    if (order == null) return Future.value([]);
+    return _orderRepo.getMergeableOrders(order.tableNumber);
+  }
+
+  /// Gabungkan order meja lain ke order yang sedang dilihat.
+  Future<bool> mergeTable(String sourceOrderId) async {
+    final order = _state.currentOrder;
+    if (order == null) return false;
+    if (_state.isProcessing) return false;
+    _setState(_state.copyWith(isProcessing: true, clearError: true));
+    try {
+      await _orderRepo.mergeOrders(
+          targetOrderId: order.id, sourceOrderId: sourceOrderId);
+      _setState(_state.copyWith(isProcessing: false));
+      await loadTables(); // meja source kini available
+      await _reopenDetail(order.tableNumber);
+      return true;
+    } catch (e) {
+      _setState(_state.copyWith(
+        isProcessing: false,
+        errorMessage:
+            'Gagal gabung meja: ${e.toString().replaceFirst('Exception: ', '')}',
+      ));
+      return false;
+    }
+  }
+
+  /// Muat ulang tampilan detail untuk [tableNumber] (setelah pindah/gabung).
+  Future<void> _reopenDetail(String tableNumber) async {
+    RestaurantTable? table;
+    for (final t in _state.tables) {
+      if (t.tableNumber == tableNumber) {
+        table = t;
+        break;
+      }
+    }
+    final order = _state.tableOrders[tableNumber];
+    if (table == null || order == null) {
+      _setState(_state.copyWith(viewMode: 'tables', clearCurrentOrder: true));
+      return;
+    }
+    final items = await _orderRepo.getOrderItems(order.id);
+    _setState(_state.copyWith(
+      selectedTable: table,
+      currentOrder: order,
+      currentOrderItems: items,
+      viewMode: 'detail',
+    ));
+  }
+
   // ── Category & Product Filtering ─────────────────────────────────────────
 
   Future<void> selectCategory(Category? cat) async {
@@ -257,6 +344,29 @@ class WaiterController extends ChangeNotifier {
       ));
     } catch (e) {
       _setState(_state.copyWith(errorMessage: 'Gagal memuat produk: $e'));
+    }
+  }
+
+  /// Cari menu di semua kategori. Bila query kosong, kembali ke daftar
+  /// produk kategori yang sedang dipilih.
+  Future<void> searchProducts(String query) async {
+    final q = query.trim();
+    if (q.isEmpty) {
+      await selectCategory(_state.selectedCategory);
+      return;
+    }
+    try {
+      final products = await _productRepo.searchProducts(q);
+      final productCache = Map<String, Product>.from(_state.productCache);
+      for (final p in products) {
+        productCache[p.id] = p;
+      }
+      _setState(_state.copyWith(
+        products: products,
+        productCache: productCache,
+      ));
+    } catch (e) {
+      _setState(_state.copyWith(errorMessage: 'Gagal mencari produk: $e'));
     }
   }
 
@@ -299,7 +409,12 @@ class WaiterController extends ChangeNotifier {
 
   // ── Create Order ─────────────────────────────────────────────────────────
 
-  Future<bool> createOrder({String? customerName, int pax = 1}) async {
+  /// Atur jumlah tamu (pax) untuk order baru (1..99).
+  void setPax(int p) {
+    _setState(_state.copyWith(pax: p.clamp(1, 99)));
+  }
+
+  Future<bool> createOrder({String? customerName, int? pax}) async {
     if (_state.selectedTable == null) {
       _setState(_state.copyWith(errorMessage: 'Pilih meja terlebih dahulu'));
       return false;
@@ -319,11 +434,19 @@ class WaiterController extends ChangeNotifier {
               ))
           .toList();
 
+      // Pemesan = akun yang sedang login di perangkat ini; fallback 'Waiter'.
+      final user = await _authService.currentUserFromSession();
+      final orderedBy = (user?.fullName.isNotEmpty ?? false)
+          ? user!.fullName
+          : (user?.username ?? 'Waiter');
+
       final order = await _orderRepo.createOrder(
         tableNumber: _state.selectedTable!.tableNumber,
         items: items,
         customerName: customerName,
-        pax: pax,
+        pax: pax ?? _state.pax,
+        createdBy: orderedBy,
+        waiterName: orderedBy, // catat pemesan di tiap item
       );
 
       // Broadcast ke waiter stations yang terhubung
@@ -424,6 +547,7 @@ class WaiterController extends ChangeNotifier {
                   price: i.price,
                   total: i.subtotal,
                   notes: i.notes.isNotEmpty ? i.notes : null,
+                  ordererName: i.waiterName,
                 ))
             .toList(),
         subtotal: subtotal,
@@ -436,19 +560,21 @@ class WaiterController extends ChangeNotifier {
         isBill: true,
       );
 
-      const builder = ReceiptBuilder(paperWidth: 32);
-      final bytes = builder.buildReceipt(receiptData);
-
       // Bill → printer kasir; fallback ke printer non-dapur/bar, lalu pertama.
       final cashierPrinters =
-          savedPrinters.where((p) => p.role == PrinterRole.cashier).toList();
+          savedPrinters.where((p) => p.hasRole(PrinterRole.cashier)).toList();
       final printer = cashierPrinters.isNotEmpty
           ? cashierPrinters.first
           : savedPrinters.firstWhere(
               (p) =>
-                  p.role != PrinterRole.kitchen && p.role != PrinterRole.bar,
+                  !p.hasRole(PrinterRole.kitchen) &&
+                  !p.hasRole(PrinterRole.bar),
               orElse: () => savedPrinters.first,
             );
+
+      final builder = ReceiptBuilder(paperWidth: printer.paperCols);
+      final bytes = builder.buildReceipt(receiptData);
+
       if (printer.type == PrinterType.bluetooth) {
         await printerService.sendBluetooth(printer.address, bytes);
       } else {

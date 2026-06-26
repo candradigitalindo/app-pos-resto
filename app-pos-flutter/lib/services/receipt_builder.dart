@@ -10,6 +10,7 @@ class ReceiptItem {
   final double price;
   final double total;
   final String? notes;
+  final String ordererName; // siapa yang memesan item ini (untuk pengelompokan)
 
   const ReceiptItem({
     required this.name,
@@ -17,6 +18,7 @@ class ReceiptItem {
     required this.price,
     required this.total,
     this.notes,
+    this.ordererName = '',
   });
 }
 
@@ -32,7 +34,8 @@ class ReceiptData {
   final String receiptNumber;
   final String tableNumber;
   final String? customerName;
-  final String cashierName;
+  final String cashierName; // kasir yang MEMPROSES pembayaran
+  final String ordererName; // siapa yang MEMESAN (pembuat order)
   final String waiterName;
   final int pax;
   final List<ReceiptItem> items;
@@ -56,6 +59,7 @@ class ReceiptData {
     required this.tableNumber,
     this.customerName,
     this.cashierName = 'Kasir',
+    this.ordererName = '',
     this.waiterName = '',
     this.pax = 1,
     required this.items,
@@ -79,6 +83,8 @@ class ReceiptData {
     required Order order,
     required List<OrderItem> orderItems,
     required List<OrderAdditionalCharge> charges,
+    String cashierName = 'Kasir',
+    String ordererName = '',
     String outletName = 'POS Resto',
     String outletAddress = '',
     String outletPhone = '',
@@ -92,6 +98,10 @@ class ReceiptData {
       receiptNumber: 'TRX-${order.id.substring(0, 8).toUpperCase()}',
       tableNumber: order.tableNumber,
       customerName: order.customerName,
+      cashierName: cashierName,
+      ordererName: ordererName.isNotEmpty
+          ? ordererName
+          : (order.createdBy ?? ''),
       pax: order.pax,
       items: orderItems
           .map((i) => ReceiptItem(
@@ -100,6 +110,7 @@ class ReceiptData {
                 price: i.price,
                 total: i.qty * i.price,
                 notes: i.notes.isNotEmpty ? i.notes : null,
+                ordererName: i.waiterName,
               ))
           .toList(),
       subtotal: subtotal,
@@ -135,6 +146,8 @@ class _Esc {
   static List<int> leftAlign() => [esc, 0x61, 0x00];
   static List<int> fontLarge() => [gs, 0x21, 0x11];
   static List<int> fontNormal() => [gs, 0x21, 0x00];
+  // Ukuran karakter variabel: w/h = pengali 0..7 (0 = 1x). GS ! n.
+  static List<int> size(int w, int h) => [gs, 0x21, ((w & 7) << 4) | (h & 7)];
   static List<int> cutPartial() => [gs, 0x56, 0x41, 0x03];
   static List<int> line(String s) => [...s.codeUnits, 0x0A];
 }
@@ -166,7 +179,152 @@ class ReceiptBuilder {
     return Uint8List.fromList(buf);
   }
 
-  /// Build ESC/POS bytes for a kitchen/bar order ticket.
+  /// Laporan TUTUP KASIR / GANTI SHIFT untuk printer kasir.
+  /// [title] = 'TUTUP KASIR' atau 'GANTI SHIFT'. [report] dari
+  /// CashierRepository.getShiftReport. [countedCash] = kas dihitung fisik
+  /// (untuk hitung selisih); null → tak ditampilkan.
+  Uint8List buildShiftReport({
+    required String title,
+    required String outletName,
+    required CashierShift shift,
+    required Map<String, dynamic> report,
+    List<CashMovement> movements = const [],
+    DateTime? closedAt,
+    String? handoverToName,
+    double? countedCash,
+  }) {
+    final buf = <int>[];
+    buf.addAll(_Esc.init());
+
+    // Header
+    buf.addAll(_Esc.centerAlign());
+    buf.addAll(_Esc.boldOn());
+    buf.addAll(_Esc.size(1, 1));
+    buf.addAll(_Esc.line(outletName));
+    buf.addAll(_Esc.size(0, 0));
+    buf.addAll(_Esc.line(title));
+    buf.addAll(_Esc.boldOff());
+    buf.addAll(_Esc.leftAlign());
+    buf.addAll(_Esc.line(_divider()));
+
+    // Info shift
+    buf.addAll(_Esc.line('Kasir : ${shift.openedBy}'));
+    buf.addAll(_Esc.line('Buka  : ${_formatDateTime(shift.openedAt)}'));
+    buf.addAll(
+        _Esc.line('Tutup : ${_formatDateTime(closedAt ?? DateTime.now())}'));
+    if (handoverToName != null && handoverToName.isNotEmpty) {
+      buf.addAll(_Esc.line('Serah ke: $handoverToName'));
+    }
+    buf.addAll(_Esc.line(_divider()));
+
+    // Penjualan per metode
+    final byMethod = (report['by_method'] as Map?) ?? const {};
+    buf.addAll(_Esc.boldOn());
+    buf.addAll(_Esc.line('PENJUALAN PER METODE'));
+    buf.addAll(_Esc.boldOff());
+    for (final m in const ['cash', 'qris', 'card', 'transfer']) {
+      final v = (byMethod[m] as Map?) ?? const {};
+      final cnt = (v['count'] as num?)?.toInt() ?? 0;
+      final total = (v['total'] as num?)?.toDouble() ?? 0;
+      buf.addAll(_Esc.line(_rightAlign(
+          '${_paymentMethodLabel(m)} ($cnt)', _formatAmount(total))));
+    }
+    buf.addAll(_Esc.line(_divider()));
+
+    // Total penjualan
+    final salesCount = (report['sales_count'] as num?)?.toInt() ?? 0;
+    final salesTotal = (report['sales_total'] as num?)?.toDouble() ?? 0;
+    buf.addAll(_Esc.boldOn());
+    buf.addAll(_Esc.line(_rightAlign('Total Transaksi', '$salesCount')));
+    buf.addAll(
+        _Esc.line(_rightAlign('Total Penjualan', _formatAmount(salesTotal))));
+    buf.addAll(_Esc.boldOff());
+    buf.addAll(_Esc.line(_divider()));
+
+    // Kas laci
+    final openingCash = (report['opening_cash'] as num?)?.toDouble() ?? 0;
+    final cashSales =
+        (((byMethod['cash'] as Map?) ?? const {})['total'] as num?)
+                ?.toDouble() ??
+            0;
+    final cashInTotal = (report['cash_in_total'] as num?)?.toDouble() ?? 0;
+    final cashInCount = (report['cash_in_count'] as num?)?.toInt() ?? 0;
+    final cashOutTotal = (report['cash_out_total'] as num?)?.toDouble() ?? 0;
+    final cashOutCount = (report['cash_out_count'] as num?)?.toInt() ?? 0;
+    final expectedCash = (report['expected_cash'] as num?)?.toDouble() ?? 0;
+    buf.addAll(_Esc.boldOn());
+    buf.addAll(_Esc.line('KAS LACI'));
+    buf.addAll(_Esc.boldOff());
+    buf.addAll(_Esc.line(_rightAlign('Modal Awal', _formatAmount(openingCash))));
+    buf.addAll(
+        _Esc.line(_rightAlign('Penjualan Tunai', _formatAmount(cashSales))));
+
+    // Rincian pemasukan lain (kas masuk per item)
+    final ins = movements.where((m) => m.movementType == 'in').toList();
+    if (ins.isNotEmpty) {
+      buf.addAll(_Esc.boldOn());
+      buf.addAll(_Esc.line('PEMASUKAN LAIN'));
+      buf.addAll(_Esc.boldOff());
+      for (final m in ins) {
+        buf.addAll(_Esc.line(
+            _rightAlign(' ${_movementLabel(m)}', _formatAmount(m.amount))));
+      }
+    }
+    buf.addAll(_Esc.line(
+        _rightAlign('Kas Masuk ($cashInCount)', _formatAmount(cashInTotal))));
+
+    // Rincian pengeluaran lain (kas keluar per item)
+    final outs = movements.where((m) => m.movementType == 'out').toList();
+    if (outs.isNotEmpty) {
+      buf.addAll(_Esc.boldOn());
+      buf.addAll(_Esc.line('PENGELUARAN LAIN'));
+      buf.addAll(_Esc.boldOff());
+      for (final m in outs) {
+        buf.addAll(_Esc.line(_rightAlign(
+            ' ${_movementLabel(m)}', '-${_formatAmount(m.amount)}')));
+      }
+    }
+    buf.addAll(_Esc.line(_rightAlign(
+        'Kas Keluar ($cashOutCount)', '-${_formatAmount(cashOutTotal)}')));
+    buf.addAll(_Esc.line(_divider()));
+    buf.addAll(_Esc.boldOn());
+    buf.addAll(_Esc.size(1, 1));
+    buf.addAll(_Esc.line(_rightAlignW(
+        'KAS SEHARUSNYA', _formatAmount(expectedCash), paperWidth ~/ 2)));
+    buf.addAll(_Esc.size(0, 0));
+    buf.addAll(_Esc.boldOff());
+
+    // Kas dihitung & selisih
+    if (countedCash != null) {
+      buf.addAll(
+          _Esc.line(_rightAlign('Kas Dihitung', _formatAmount(countedCash))));
+      final selisih = countedCash - expectedCash;
+      final label = selisih == 0
+          ? 'Selisih'
+          : (selisih > 0 ? 'Selisih (Lebih)' : 'Selisih (Kurang)');
+      final sign = selisih < 0 ? '-' : '';
+      buf.addAll(_Esc.boldOn());
+      buf.addAll(
+          _Esc.line(_rightAlign(label, '$sign${_formatAmount(selisih)}')));
+      buf.addAll(_Esc.boldOff());
+    }
+    buf.addAll(_Esc.line(_divider()));
+
+    // Footer + tanda tangan
+    buf.addAll(_Esc.centerAlign());
+    buf.addAll(_Esc.line('Dicetak: ${_formatDateTime(DateTime.now())}'));
+    buf.addAll(_Esc.feedLine(2));
+    buf.addAll(_Esc.line('Tanda Tangan Kasir'));
+    buf.addAll(_Esc.feedLine(3));
+    buf.addAll(_Esc.line('(__________________)'));
+    buf.addAll(_Esc.leftAlign());
+    buf.addAll(_Esc.feedLine(2));
+    buf.addAll(_Esc.cutPartial());
+    return Uint8List.fromList(buf);
+  }
+
+  /// Tiket dapur/bar versi BESAR & informatif. Item dicetak font dobel agar
+  /// terbaca dari jarak jauh; dilengkapi nomor meja besar, waktu, dan pemesan.
   Uint8List buildKitchenOrder({
     required String orderId,
     required String tableNumber,
@@ -175,12 +333,89 @@ class ReceiptBuilder {
     required DateTime dateTime,
     String printerLabel = 'DAPUR',
     bool isAdditional = false,
+    String placedBy = '',
+    String? customerName,
+    int pax = 0,
+  }) {
+    final buf = <int>[];
+    final qtyTotal = items.fold<int>(0, (s, i) => s + i.qty);
+    final orderer = placedBy.isNotEmpty
+        ? placedBy
+        : (waiterName.isNotEmpty ? waiterName : '-');
+
+    buf.addAll(_Esc.init());
+
+    // ── Judul: status pesanan (BESAR) — baru / tambahan ──
+    buf.addAll(_Esc.centerAlign());
+    buf.addAll(_Esc.size(1, 1)); // 2x
+    buf.addAll(_Esc.boldOn());
+    buf.addAll(_Esc.line(isAdditional ? 'PESANAN TAMBAHAN' : 'PESANAN BARU'));
+    buf.addAll(_Esc.size(0, 0));
+    buf.addAll(_Esc.boldOff());
+
+    // ── Nomor meja SANGAT besar (info terpenting) ──
+    buf.addAll(_Esc.size(2, 2)); // 3x
+    buf.addAll(_Esc.boldOn());
+    buf.addAll(_Esc.line('MEJA $tableNumber'));
+    buf.addAll(_Esc.boldOff());
+    buf.addAll(_Esc.size(0, 0));
+
+    // ── Info pesanan ──
+    buf.addAll(_Esc.leftAlign());
+    buf.addAll(_Esc.line(_divider()));
+    buf.addAll(_Esc.line('No    : ${orderId.substring(0, 8).toUpperCase()}'));
+    buf.addAll(_Esc.line('Waktu : ${_formatDateTime(dateTime)}'));
+    buf.addAll(_Esc.boldOn());
+    buf.addAll(_Esc.line('Pemesan: $orderer'));
+    buf.addAll(_Esc.boldOff());
+    if (customerName != null && customerName.isNotEmpty) {
+      final paxStr = pax > 0 ? ' ($pax org)' : '';
+      buf.addAll(_Esc.line('Pelanggan: $customerName$paxStr'));
+    }
+    buf.addAll(_Esc.line(_divider()));
+
+    // ── Daftar item (font dobel) ──
+    for (final item in items) {
+      buf.addAll(_Esc.size(1, 1)); // 2x
+      buf.addAll(_Esc.boldOn());
+      buf.addAll(_Esc.line('${item.qty}x ${item.productName}'));
+      buf.addAll(_Esc.boldOff());
+      buf.addAll(_Esc.size(0, 0));
+      if (item.notes.isNotEmpty) {
+        buf.addAll(_Esc.boldOn());
+        buf.addAll(_Esc.line('   >> ${item.notes}'));
+        buf.addAll(_Esc.boldOff());
+      }
+    }
+
+    buf.addAll(_Esc.line(_divider()));
+    buf.addAll(_Esc.line('Total item: $qtyTotal'));
+
+    // ── Label printer/stasiun (kecil, di bawah) ──
+    buf.addAll(_Esc.centerAlign());
+    buf.addAll(_Esc.line('[ $printerLabel ]'));
+    buf.addAll(_Esc.line('--- CUT ---'));
+    buf.addAll(_Esc.feedLine(3));
+    buf.addAll(_Esc.cutPartial());
+    return Uint8List.fromList(buf);
+  }
+
+  /// Tiket CHECKER / ekspeditor: salinan SELURUH pesanan dengan tag tujuan
+  /// (DAPUR/BAR) di tiap item, agar pengecek bisa merakit pesanan lengkap.
+  Uint8List buildCheckerOrder({
+    required String orderId,
+    required String tableNumber,
+    required String waiterName,
+    required List<OrderItem> items,
+    required DateTime dateTime,
+    Map<String, String> categoryNames = const {},
+    bool isAdditional = false,
   }) {
     final buf = <int>[];
     buf.addAll(_Esc.init());
     buf.addAll(_Esc.centerAlign());
     buf.addAll(_Esc.boldOn());
-    buf.addAll(_Esc.line(printerLabel));
+    buf.addAll(_Esc.line('CHECKER'));
     buf.addAll(_Esc.boldOff());
     if (isAdditional) {
       buf.addAll(_Esc.boldOn());
@@ -195,14 +430,19 @@ class ReceiptBuilder {
       buf.addAll(_Esc.line('Waiter: $waiterName'));
     }
     buf.addAll(_Esc.line(_formatDateTime(dateTime)));
+    buf.addAll(_Esc.line('Total item: ${items.length}'));
     buf.addAll(_Esc.line(_divider()));
 
     for (final item in items) {
+      final cat = categoryNames[item.categoryId];
       buf.addAll(_Esc.boldOn());
-      buf.addAll(_Esc.line('${item.qty}x  ${item.productName}'));
+      buf.addAll(_Esc.line('${item.qty}x ${item.productName}'));
       buf.addAll(_Esc.boldOff());
+      if (cat != null && cat.isNotEmpty) {
+        buf.addAll(_Esc.line('    [$cat]'));
+      }
       if (item.notes.isNotEmpty) {
-        buf.addAll(_Esc.line('     - ${item.notes}'));
+        buf.addAll(_Esc.line('    - ${item.notes}'));
       }
     }
 
@@ -230,42 +470,92 @@ class ReceiptBuilder {
     if (data.outletPhone.isNotEmpty) {
       buf.addAll(_Esc.line('Telp: ${data.outletPhone}'));
     }
+    // Judul jenis dokumen
+    buf.addAll(_Esc.feedLine());
+    buf.addAll(_Esc.boldOn());
+    buf.addAll(_Esc.line(data.isBill ? '== TAGIHAN ==' : '== STRUK PEMBAYARAN =='));
     if (data.isBill) {
-      buf.addAll(_Esc.feedLine());
-      buf.addAll(_Esc.boldOn());
-      buf.addAll(_Esc.line('*** BILL ***'));
-      buf.addAll(_Esc.boldOff());
+      buf.addAll(_Esc.line('(Belum Dibayar)'));
     }
+    buf.addAll(_Esc.boldOff());
   }
+
+  /// Baris "Label : value" dengan label rata kolom agar titik dua sejajar.
+  String _kv(String label, String value) => '${label.padRight(9)}: $value';
 
   void _addOrderInfo(List<int> buf, ReceiptData data) {
     buf.addAll(_Esc.leftAlign());
-    buf.addAll(_Esc.line('No: ${data.receiptNumber}'));
-    buf.addAll(_Esc.line('Meja: ${data.tableNumber}     Pax: ${data.pax}'));
-    buf.addAll(_Esc.line('Kasir: ${data.cashierName}'));
+    buf.addAll(_Esc.line(_kv('No', data.receiptNumber)));
+    buf.addAll(_Esc.line(_kv('Waktu', _formatDateTime(data.dateTime))));
+    buf.addAll(_Esc.line(_kv('Meja', '${data.tableNumber}   (Pax ${data.pax})')));
+    // Pemesan di header HANYA bila satu pemesan. Bila >1, ditampilkan
+    // sebagai sub-header per grup di daftar item (lihat _addItems).
+    final distinctOrderers = data.items
+        .map((i) => i.ordererName.trim())
+        .where((s) => s.isNotEmpty)
+        .toSet();
+    if (distinctOrderers.length < 2 && data.ordererName.isNotEmpty) {
+      buf.addAll(_Esc.line(_kv('Pemesan', data.ordererName)));
+    }
+    // Kasir = pemroses pembayaran (hanya struk pembayaran). Untuk bill,
+    // tampilkan juga sebagai petugas yang mencetak.
+    if (data.cashierName.isNotEmpty) {
+      buf.addAll(_Esc.line(_kv(data.isBill ? 'Petugas' : 'Kasir', data.cashierName)));
+    }
     if (data.waiterName.isNotEmpty) {
-      buf.addAll(_Esc.line('Waiter: ${data.waiterName}'));
+      buf.addAll(_Esc.line(_kv('Waiter', data.waiterName)));
     }
     if (data.customerName != null && data.customerName!.isNotEmpty) {
-      buf.addAll(_Esc.line('Customer: ${data.customerName}'));
+      buf.addAll(_Esc.line(_kv('Pelanggan', data.customerName!)));
     }
-    buf.addAll(_Esc.line(_formatDateTime(data.dateTime)));
   }
 
   void _addItems(List<int> buf, List<ReceiptItem> items) {
     buf.addAll(_Esc.leftAlign());
-    for (final item in items) {
-      // Product name + qty
-      final nameLine = '${item.quantity}x ${item.name}';
-      buf.addAll(_Esc.line(nameLine));
-      // Total right-aligned
-      final totalStr = _formatAmount(item.total);
-      buf.addAll(_Esc.line(_rightAlign('', totalStr)));
-      // Notes
+
+    // Kelompokkan item per PEMESAN (menjaga urutan kemunculan).
+    final groups = <String, List<ReceiptItem>>{};
+    for (final it in items) {
+      (groups[it.ordererName] ??= []).add(it);
+    }
+    // Kelompokkan per pemesan HANYA bila ada >1 pemesan berbeda (kalau cuma
+    // satu, baris "Pemesan" di atas sudah cukup — hindari redundan).
+    final namedGroups = groups.keys.where((k) => k.trim().isNotEmpty).length;
+    final showHeaders = namedGroups >= 2;
+
+    void printOne(ReceiptItem item) {
+      final left = '${item.quantity}x ${item.name}';
+      buf.addAll(_Esc.line(_rightAlign(left, _formatAmount(item.total))));
+      if (item.quantity > 1) {
+        buf.addAll(_Esc.line('    @ ${_formatAmount(item.price)}'));
+      }
       if (item.notes != null && item.notes!.isNotEmpty) {
-        buf.addAll(_Esc.line('  ${item.notes}'));
+        buf.addAll(_Esc.line('    - ${item.notes}'));
       }
     }
+
+    if (!showHeaders) {
+      for (final it in items) {
+        printOne(it);
+      }
+      return;
+    }
+
+    var first = true;
+    groups.forEach((orderer, list) {
+      // Pembatas antar grup pemesan (grup pertama sudah punya divider di atas).
+      if (!first) buf.addAll(_Esc.line(_divider()));
+      first = false;
+      // "Pemesan : Nama" (tebal) DI ATAS item-itemnya + garis pembatas.
+      buf.addAll(_Esc.boldOn());
+      buf.addAll(_Esc.line(
+          'Pemesan : ${orderer.trim().isEmpty ? 'Lainnya' : orderer}'));
+      buf.addAll(_Esc.boldOff());
+      buf.addAll(_Esc.line(_divider()));
+      for (final it in list) {
+        printOne(it);
+      }
+    });
   }
 
   void _addTotals(List<int> buf, ReceiptData data) {
@@ -282,25 +572,34 @@ class ReceiptBuilder {
     }
 
     buf.addAll(_Esc.line(_divider()));
+    // TOTAL dicetak font dobel agar menonjol (lebar efektif = setengah kolom).
+    buf.addAll(_Esc.size(1, 1));
     buf.addAll(_Esc.boldOn());
-    buf.addAll(_Esc.line(_rightAlign('TOTAL', _formatAmount(data.total))));
+    buf.addAll(_Esc.line(
+        _rightAlignW('TOTAL', _formatAmount(data.total), paperWidth ~/ 2)));
     buf.addAll(_Esc.boldOff());
+    buf.addAll(_Esc.size(0, 0));
   }
 
   void _addPaymentInfo(List<int> buf, ReceiptData data) {
     buf.addAll(_Esc.leftAlign());
+    buf.addAll(_Esc.feedLine()); // jeda dari blok TOTAL
     final methodLabel = _paymentMethodLabel(data.paymentMethod);
     buf.addAll(
-        _Esc.line(_rightAlign(methodLabel, _formatAmount(data.paidAmount))));
+        _Esc.line(_rightAlign('Bayar ($methodLabel)', _formatAmount(data.paidAmount))));
     if (data.paymentMethod == 'cash') {
       buf.addAll(
-          _Esc.line(_rightAlign('Kembali', _formatAmount(data.changeAmount))));
+          _Esc.line(_rightAlign('Kembalian', _formatAmount(data.changeAmount))));
     }
   }
 
   void _addFooter(List<int> buf, ReceiptData data) {
     buf.addAll(_Esc.centerAlign());
     buf.addAll(_Esc.feedLine());
+    if (data.isBill) {
+      buf.addAll(_Esc.line('Mohon lakukan pembayaran di kasir'));
+      buf.addAll(_Esc.feedLine());
+    }
     buf.addAll(_Esc.boldOn());
     buf.addAll(_Esc.line(data.receiptFooter));
     buf.addAll(_Esc.boldOff());
@@ -314,9 +613,24 @@ class ReceiptBuilder {
 
   String _divider() => '-' * paperWidth;
 
+  /// Label gerakan kas: nama lawan transaksi → catatan → default.
+  /// Dipotong agar muat di samping nominal.
+  String _movementLabel(CashMovement m) {
+    var s = m.counterpartName.trim();
+    if (s.isEmpty) s = m.note.trim();
+    if (s.isEmpty) s = m.movementType == 'in' ? 'Kas masuk' : 'Kas keluar';
+    final max = paperWidth - 13; // sisakan ruang untuk nominal
+    if (max > 1 && s.length > max) s = s.substring(0, max);
+    return s;
+  }
+
   /// Right-align value against label within paperWidth.
-  String _rightAlign(String label, String value) {
-    final space = paperWidth - label.length - value.length;
+  String _rightAlign(String label, String value) =>
+      _rightAlignW(label, value, paperWidth);
+
+  /// Right-align value against label within [cols] kolom.
+  String _rightAlignW(String label, String value, int cols) {
+    final space = cols - label.length - value.length;
     if (space <= 0) return '$label $value';
     return '$label${' ' * space}$value';
   }

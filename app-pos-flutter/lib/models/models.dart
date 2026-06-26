@@ -54,6 +54,7 @@ class Category {
   final String name;
   final String? description;
   final String? printerId;
+  final String printDestination; // 'kitchen' | 'bar' — tujuan cetak tiket
   final int isDeleted;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -63,6 +64,7 @@ class Category {
     required this.name,
     this.description,
     this.printerId,
+    this.printDestination = 'kitchen',
     this.isDeleted = 0,
     required this.createdAt,
     required this.updatedAt,
@@ -73,6 +75,7 @@ class Category {
         'name': name,
         'description': description,
         'printer_id': printerId,
+        'print_destination': printDestination,
         'is_deleted': isDeleted,
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
@@ -83,6 +86,8 @@ class Category {
         name: map['name'] as String,
         description: map['description'] as String?,
         printerId: map['printer_id'] as String?,
+        printDestination:
+            (map['print_destination'] as String?) == 'bar' ? 'bar' : 'kitchen',
         isDeleted: map['is_deleted'] as int,
         createdAt: DateTime.parse(map['created_at'] as String),
         updatedAt: DateTime.parse(map['updated_at'] as String),
@@ -273,6 +278,10 @@ class Order {
   final DateTime? voidedAt;
   final String? voidedBy;
   final String? voidReason;
+  final String? complimentBy;
+  final String? complimentReason;
+  final DateTime? complimentedAt;
+  final String? discountNote;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -294,6 +303,10 @@ class Order {
     this.voidedAt,
     this.voidedBy,
     this.voidReason,
+    this.complimentBy,
+    this.complimentReason,
+    this.complimentedAt,
+    this.discountNote,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -301,6 +314,7 @@ class Order {
   double get remaining => totalAmount - paidAmount;
   bool get isPaid => paymentStatus == 'paid';
   bool get isVoided => voidedAt != null;
+  bool get isComplimented => complimentedAt != null;
 
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -320,6 +334,10 @@ class Order {
         'voided_at': voidedAt?.toIso8601String(),
         'voided_by': voidedBy,
         'void_reason': voidReason,
+        'compliment_by': complimentBy,
+        'compliment_reason': complimentReason,
+        'complimented_at': complimentedAt?.toIso8601String(),
+        'discount_note': discountNote,
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
       };
@@ -344,6 +362,12 @@ class Order {
             : null,
         voidedBy: map['voided_by'] as String?,
         voidReason: map['void_reason'] as String?,
+        complimentBy: map['compliment_by'] as String?,
+        complimentReason: map['compliment_reason'] as String?,
+        complimentedAt: map['complimented_at'] != null
+            ? DateTime.parse(map['complimented_at'] as String)
+            : null,
+        discountNote: map['discount_note'] as String?,
         createdAt: DateTime.parse(map['created_at'] as String),
         updatedAt: DateTime.parse(map['updated_at'] as String),
       );
@@ -355,6 +379,7 @@ class OrderItem {
   final String id;
   final String orderId;
   final String productName;
+  final String? categoryId; // kategori asal item (untuk routing cetak per-printer)
   final int qty;
   final double price;
   final String destination; // kitchen, bar
@@ -370,6 +395,7 @@ class OrderItem {
     required this.id,
     required this.orderId,
     required this.productName,
+    this.categoryId,
     required this.qty,
     required this.price,
     this.destination = 'kitchen',
@@ -388,6 +414,7 @@ class OrderItem {
         'id': id,
         'order_id': orderId,
         'product_name': productName,
+        'category_id': categoryId,
         'qty': qty,
         'price': price,
         'destination': destination,
@@ -404,6 +431,7 @@ class OrderItem {
         id: map['id'] as String,
         orderId: map['order_id'] as String,
         productName: map['product_name'] as String,
+        categoryId: map['category_id'] as String?,
         qty: map['qty'] as int,
         price: (map['price'] as num).toDouble(),
         destination: map['destination'] as String? ?? 'kitchen',

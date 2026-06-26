@@ -4,9 +4,12 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite/sqflite.dart';
 
 import '../database/database.dart';
+import '../repositories/order_repository.dart';
 import '../repositories/sync_queue_repository.dart';
+import '../utils/ulid.dart';
 import 'outlet_service.dart';
 
 /// Mengirim outbox (sync_queue) ke cloud-pos via endpoint BatchSync.
@@ -17,6 +20,7 @@ class CloudSyncService {
   CloudSyncService._();
 
   final _queue = SyncQueueRepository();
+  final _orderRepo = OrderRepository();
   final _outletService = OutletService();
   final _db = AppDatabase.instance;
   final Dio _dio = Dio(BaseOptions(
@@ -25,6 +29,7 @@ class CloudSyncService {
   ));
 
   static const _lastSyncKey = 'cloud_last_pull_at';
+  static const _lastSyncAtKey = 'cloud_last_sync_at';
 
   Timer? _timer;
   bool _syncing = false;
@@ -32,6 +37,27 @@ class CloudSyncService {
   static const _maxBackoffMinutes = 30;
 
   bool get isSyncing => _syncing;
+
+  /// Status ringkas untuk indikator UI kasir.
+  /// [enabled] sync aktif?, [pending] jumlah item outbox belum terkirim,
+  /// [online] siklus terakhir tidak gagal jaringan.
+  Future<({bool enabled, int pending, bool online})> status() async {
+    final outlet = await _outletService.loadOutlet();
+    final stats = await _queue.stats();
+    final pending = (stats['pending'] ?? 0) + (stats['failed'] ?? 0);
+    return (
+      enabled: outlet.syncEnabled,
+      pending: pending,
+      online: _consecutiveFails == 0,
+    );
+  }
+
+  /// Waktu siklus sync terakhir selesai (untuk dipantau di UI). Null bila belum pernah.
+  Future<DateTime?> lastSyncAt() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_lastSyncAtKey);
+    return raw == null ? null : DateTime.tryParse(raw);
+  }
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
@@ -70,12 +96,30 @@ class CloudSyncService {
 
   /// Satu siklus penuh seperti sync_service.go: push → pull → tax.
   Future<void> syncCycle() async {
+    // Auto-discover outlet ID jika belum ada
+    final outlet = await _outletService.loadOutlet();
+    if (outlet.cloudOutletId.isEmpty && outlet.cloudApiKey.isNotEmpty) {
+      await testConnection();
+    }
+
+    // Reset item yang sebelumnya gagal (exhausted retries) agar dicoba ulang.
+    // Item yang gagal karena jaringan harus bisa retry di siklus berikutnya.
+    await _queue.retryFailed();
+
+    // Backfill order aktif yang belum masuk antrian (mis. dibuat sebelum fitur
+    // sync order, atau yang terlewat) agar semua ikut terkirim.
+    await _orderRepo.enqueueUnsyncedActiveOrders();
+
     final pushed = await pushNow();
     // Pull hanya jika push tidak gagal jaringan (hindari spam saat offline)
     if ((pushed['failed'] ?? 0) == 0 || (pushed['sent'] ?? 0) == 0) {
       await pullUpdates();
       await syncTaxFromCloud();
     }
+
+    // Catat waktu siklus selesai agar bisa dipantau di UI
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastSyncAtKey, DateTime.now().toIso8601String());
   }
 
   // ── Push ──────────────────────────────────────────────────────────────────
@@ -180,7 +224,7 @@ class CloudSyncService {
   /// Cloud = sumber kebenaran master data (cloud_wins).
   Future<void> pullUpdates() async {
     final outlet = await _outletService.loadOutlet();
-    if (!_isConfigured(outlet)) return;
+    if (!_isConfigured(outlet) || outlet.cloudOutletId.isEmpty) return;
 
     final prefs = await SharedPreferences.getInstance();
     final since = prefs.getString(_lastSyncKey) ??
@@ -202,9 +246,9 @@ class CloudSyncService {
       final data = resp.data is Map ? resp.data['data'] : null;
       if (data is! Map) return;
 
-      final categories = (data['categories'] as List?) ?? [];
-      final products = (data['products'] as List?) ?? [];
-      final deleted = (data['deleted'] as List?) ?? [];
+      final categories = _asList(data['categories']);
+      final products = _asList(data['products']);
+      final deleted = _asList(data['deleted']);
 
       final db = await _db.database;
       // Kategori dulu (produk punya FK ke kategori)
@@ -224,8 +268,350 @@ class CloudSyncService {
         checkpoint ?? DateTime.now().toUtc().toIso8601String(),
       );
     } on DioException catch (e) {
-      debugPrint('pullUpdates error: ${_errMessage(e)}');
+      final status = e.response?.statusCode;
+      final body = e.response?.data?.toString() ?? '';
+      if (status == 403 && body.contains('does not match')) {
+        // Outlet ID tidak cocok dengan API Key → hapus dan discover ulang
+        final prefs2 = await SharedPreferences.getInstance();
+        await prefs2.remove('outlet_cloud_outlet_id');
+        await testConnection();
+      } else {
+        debugPrint('pullUpdates error: ${_errMessage(e)}');
+      }
     }
+  }
+
+  /// Tarik SEMUA kategori & produk dari cloud (bukan incremental).
+  /// Dipakai saat pertama kali terhubung agar seluruh master data masuk,
+  /// termasuk yang dibuat sebelum jendela `since` pada pullUpdates.
+  /// Mengembalikan jumlah {categories, products} yang diproses.
+  Future<Map<String, int>> fullPullFromCloud() async {
+    final outlet = await _outletService.loadOutlet();
+    if (!_isConfigured(outlet) || outlet.cloudOutletId.isEmpty) {
+      return {'categories': 0, 'products': 0};
+    }
+
+    final baseUrl = _normalizeBaseUrl(outlet.cloudApiUrl);
+    final db = await _db.database;
+    var catCount = 0;
+    var prodCount = 0;
+    final cloudCatIds = <String>{};
+    final cloudProdIds = <String>{};
+    var fetchOk = false;
+
+    try {
+      // 1. Semua kategori (kategori dulu karena produk punya FK)
+      final catResp = await _dio.get(
+        '$baseUrl/api/v1/outlets/${outlet.cloudOutletId}/categories',
+        options: Options(headers: _authHeaders(outlet)),
+      );
+      final cats = catResp.data is Map ? catResp.data['data'] : null;
+      if (cats is List) {
+        for (final c in cats) {
+          if (c is Map) {
+            _collectCloudIds(c, cloudCatIds);
+            await _applyCategory(db, c);
+            catCount++;
+          }
+        }
+      }
+
+      // 2. Semua produk (paginasi)
+      var page = 1;
+      const limit = 200;
+      while (true) {
+        final prodResp = await _dio.get(
+          '$baseUrl/api/v1/outlets/${outlet.cloudOutletId}/products',
+          queryParameters: {'page': page, 'limit': limit},
+          options: Options(headers: _authHeaders(outlet)),
+        );
+        final body = prodResp.data is Map ? prodResp.data : null;
+        final prods = body?['data'];
+        if (prods is! List || prods.isEmpty) break;
+
+        for (final p in prods) {
+          if (p is Map) {
+            _collectCloudIds(p, cloudProdIds);
+            await _applyProduct(db, p);
+            prodCount++;
+          }
+        }
+
+        final total = (body?['total'] as num?)?.toInt() ?? prodCount;
+        if (prodCount >= total || prods.length < limit) break;
+        page++;
+      }
+
+      fetchOk = true;
+
+      // 3. Update checkpoint agar pull incremental berikutnya tidak ambil ulang semua
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _lastSyncKey,
+        DateTime.now().toUtc().toIso8601String(),
+      );
+    } on DioException catch (e) {
+      debugPrint('fullPullFromCloud error: ${_errMessage(e)}');
+    }
+
+    // 4. Replace: soft-delete data lokal yang TIDAK ada di cloud (cloud = sumber kebenaran).
+    // Pengaman:
+    //  - Hanya bila fetch sukses (jangan hapus saat jaringan gagal).
+    //  - Hanya bila cloud benar-benar mengirim data. Bila cloud balas 0 produk &
+    //    0 kategori (kemungkinan salah konfigurasi/outlet kosong), JANGAN wipe
+    //    seluruh menu lokal — lebih aman membiarkan data lokal apa adanya.
+    var delCat = 0;
+    var delProd = 0;
+    if (fetchOk && (catCount > 0 || prodCount > 0)) {
+      delCat = await _softDeleteNotInCloud(db, 'categories', cloudCatIds);
+      delProd = await _softDeleteNotInCloud(db, 'products', cloudProdIds);
+    }
+
+    debugPrint('fullPullFromCloud: $catCount kategori, $prodCount produk '
+        '(hapus lokal: $delCat kategori, $delProd produk)');
+    return {
+      'categories': catCount,
+      'products': prodCount,
+      'deleted_categories': delCat,
+      'deleted_products': delProd,
+    };
+  }
+
+  /// Kumpulkan id & local_id dari payload cloud ke dalam set.
+  void _collectCloudIds(Map item, Set<String> out) {
+    for (final key in ['id', 'local_id', 'cloud_id']) {
+      final v = item[key];
+      if (v is String && v.isNotEmpty) out.add(v);
+    }
+  }
+
+  // ── Restore (setelah reset DB / fresh install) ───────────────────────────────
+
+  /// Tarik kembali data operasional yang masih "hidup" dari cloud:
+  /// shift terbuka, order belum dibayar, dan pergerakan kas. Dipakai saat
+  /// database lokal baru direset agar kasir bisa melanjutkan operasional.
+  ///
+  /// Endpoint: GET /api/v1/outlets/{outletId}/restore
+  /// Respons (data): { open_shifts:[], unpaid_orders:[], cash_movements:[], summary:{} }
+  Future<Map<String, dynamic>> restoreFromCloud() async {
+    final outlet = await _outletService.loadOutlet();
+    if (!_isConfigured(outlet) || outlet.cloudOutletId.isEmpty) {
+      return {'shifts': 0, 'orders': 0, 'movements': 0, 'unconfigured': true};
+    }
+
+    final baseUrl = _normalizeBaseUrl(outlet.cloudApiUrl);
+    final url = '$baseUrl/api/v1/outlets/${outlet.cloudOutletId}/restore';
+
+    try {
+      final resp = await _dio.get(
+        url,
+        options: Options(headers: _authHeaders(outlet)),
+      );
+      final root = resp.data is Map ? resp.data as Map : const {};
+      final data = (root['data'] is Map ? root['data'] : root) as Map;
+
+      final db = await _db.database;
+      var shifts = 0, orders = 0, movements = 0;
+
+      await db.transaction((txn) async {
+        // 1. Shift terbuka
+        for (final s in _asList(data['open_shifts'])) {
+          if (s is Map) {
+            await _restoreShift(txn, s);
+            shifts++;
+          }
+        }
+        // 2. Order belum dibayar (+ item)
+        for (final o in _asList(data['unpaid_orders'])) {
+          if (o is Map) {
+            await _restoreUnpaidOrder(txn, o);
+            orders++;
+          }
+        }
+        // 3. Pergerakan kas
+        for (final m in _asList(data['cash_movements'])) {
+          if (m is Map) {
+            await _restoreCashMovement(txn, m);
+            movements++;
+          }
+        }
+      });
+
+      debugPrint('restoreFromCloud: $shifts shift, $orders order, '
+          '$movements kas');
+      return {'shifts': shifts, 'orders': orders, 'movements': movements};
+    } on DioException catch (e) {
+      debugPrint('restoreFromCloud error: ${_errMessage(e)}');
+      return {
+        'shifts': 0,
+        'orders': 0,
+        'movements': 0,
+        'error': _errMessage(e),
+      };
+    }
+  }
+
+  Future<void> _restoreShift(dynamic txn, Map s) async {
+    final id = _pick(s, ['id', 'local_id']);
+    if (id.isEmpty) return;
+    final now = DateTime.now().toIso8601String();
+    await txn.insert(
+      'cashier_shifts',
+      {
+        'id': id,
+        'opened_by': _pick(s, ['opened_by', 'opened_by_name'], 'Kasir'),
+        'opened_at': _pick(s, ['opened_at'], now),
+        'opening_cash': _numOf(s, ['opening_cash']),
+        'status': 'open',
+        'created_at': now,
+        'updated_at': now,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> _restoreUnpaidOrder(dynamic txn, Map o) async {
+    final id = _pick(o, ['id', 'local_id']);
+    if (id.isEmpty) return;
+    final items = _asList(o['items']);
+    final pay = o['payment_info'] is Map ? o['payment_info'] as Map : const {};
+    final now = DateTime.now().toIso8601String();
+
+    await txn.insert(
+      'orders',
+      {
+        'id': id,
+        'table_number': _pick(o, ['table_number'], '-'),
+        'customer_name': _pickOrNull(o, ['customer_name']),
+        'pax': _intOf(o, ['pax'], 1).clamp(1, 99999),
+        'basket_size': items.length,
+        'total_amount': _numOf(o, ['total_amount']),
+        'paid_amount': _numOf(pay, ['paid_amount']),
+        'order_status':
+            _oneOf(_pick(o, ['order_status', 'status']), const ['cooking', 'ready', 'served'], 'cooking'),
+        'payment_status': _oneOf(_pick(pay, ['payment_status']),
+            const ['unpaid', 'partial', 'paid'], 'unpaid'),
+        'created_at': _pick(o, ['created_at'], now),
+        'updated_at': now,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+
+    await txn.delete('order_items', where: 'order_id = ?', whereArgs: [id]);
+    for (final it in items) {
+      if (it is! Map) continue;
+      await txn.insert('order_items', {
+        'id': Ulid.generate(),
+        'order_id': id,
+        'product_name': _pick(it, ['product_name', 'name'], '-'),
+        'qty': _intOf(it, ['qty', 'quantity'], 1).clamp(1, 99999),
+        'price': _numOf(it, ['price']),
+        'destination':
+            _oneOf(_pick(it, ['destination']), const ['kitchen', 'bar'], 'kitchen'),
+        'item_status': _oneOf(_pick(it, ['status', 'item_status']),
+            const ['pending', 'cooking', 'ready', 'served'], 'pending'),
+        'notes': _pick(it, ['notes']),
+        'created_at': now,
+        'updated_at': now,
+      });
+    }
+  }
+
+  Future<void> _restoreCashMovement(dynamic txn, Map m) async {
+    final id = _pick(m, ['id', 'local_id']);
+    if (id.isEmpty) return;
+    final now = DateTime.now().toIso8601String();
+    await txn.insert(
+      'cashier_cash_movements',
+      {
+        'id': id,
+        'shift_id': _pick(m, ['shift_id']),
+        'movement_type':
+            _oneOf(_pick(m, ['movement_type', 'type']), const ['in', 'out'], 'in'),
+        'amount': _numOf(m, ['amount']),
+        'counterpart_name':
+            _pick(m, ['counterpart_name', 'name'], '-'),
+        'note': _pick(m, ['note']),
+        'created_at': _pick(m, ['created_at'], now),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  // Helper parsing toleran (cloud bisa pakai beberapa nama field).
+  String _pick(Map m, List<String> keys, [String fallback = '']) {
+    for (final k in keys) {
+      final v = m[k];
+      if (v != null && v.toString().isNotEmpty) return v.toString();
+    }
+    return fallback;
+  }
+
+  String? _pickOrNull(Map m, List<String> keys) {
+    final v = _pick(m, keys);
+    return v.isEmpty ? null : v;
+  }
+
+  double _numOf(Map m, List<String> keys) {
+    for (final k in keys) {
+      final v = m[k];
+      if (v is num) return v.toDouble();
+      if (v is String) {
+        final p = double.tryParse(v);
+        if (p != null) return p;
+      }
+    }
+    return 0;
+  }
+
+  int _intOf(Map m, List<String> keys, int fallback) {
+    for (final k in keys) {
+      final v = m[k];
+      if (v is num) return v.toInt();
+      if (v is String) {
+        final p = int.tryParse(v);
+        if (p != null) return p;
+      }
+    }
+    return fallback;
+  }
+
+  String _oneOf(String value, List<String> allowed, String fallback) =>
+      allowed.contains(value) ? value : fallback;
+
+  /// Ambil List dengan aman. Bila cloud mengirim JSON-string (mis. "[...]"),
+  /// coba decode; selain itu kembalikan list kosong.
+  List _asList(dynamic v) {
+    if (v is List) return v;
+    if (v is String && v.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(v);
+        if (decoded is List) return decoded;
+      } catch (_) {}
+    }
+    return const [];
+  }
+
+  /// Soft-delete baris aktif di [table] yang id-nya tidak ada di [cloudIds].
+  /// Mengembalikan jumlah baris yang dihapus.
+  Future<int> _softDeleteNotInCloud(
+      dynamic db, String table, Set<String> cloudIds) async {
+    final rows = await db.query(table,
+        columns: ['id'], where: 'is_deleted = 0');
+    final now = DateTime.now().toIso8601String();
+    var deleted = 0;
+    for (final r in rows) {
+      final id = r['id'] as String?;
+      if (id == null || cloudIds.contains(id)) continue;
+      await db.update(
+        table,
+        {'is_deleted': 1, 'updated_at': now},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      deleted++;
+    }
+    return deleted;
   }
 
   Future<void> _applyCategory(dynamic db, Map cat) async {
@@ -233,6 +619,10 @@ class CloudSyncService {
     final name = cat['name'] as String?;
     if (id == null || name == null) return;
     final now = DateTime.now().toIso8601String();
+    // Buang kategori lokal dengan nama sama tapi id beda (mis. data seed) agar
+    // tidak melanggar UNIQUE(name). FK products.category_id ON DELETE SET NULL.
+    await db.delete('categories',
+        where: 'name = ? AND id != ?', whereArgs: [name, id]);
     await db.rawInsert(
       '''
       INSERT INTO categories (id, name, is_deleted, created_at, updated_at)
@@ -263,6 +653,10 @@ class CloudSyncService {
           columns: ['id'], where: 'id = ?', whereArgs: [categoryId], limit: 1);
       if (existing.isEmpty) {
         if (categoryName != null && categoryName.isNotEmpty) {
+          // Buang kategori bernama sama dengan id beda agar tidak melanggar UNIQUE(name)
+          await db.delete('categories',
+              where: 'name = ? AND id != ?',
+              whereArgs: [categoryName, categoryId]);
           await db.rawInsert(
             '''
             INSERT INTO categories (id, name, is_deleted, created_at, updated_at)
@@ -275,6 +669,13 @@ class CloudSyncService {
           categoryId = null; // tidak ada nama → simpan tanpa kategori
         }
       }
+    }
+
+    // Kosongkan code milik produk lain (id beda) yang bentrok agar tidak
+    // melanggar UNIQUE(code) saat insert produk dari cloud.
+    if (code != null && code.isNotEmpty) {
+      await db.update('products', {'code': null},
+          where: 'code = ? AND id != ?', whereArgs: [code, id]);
     }
 
     Future<void> upsert(String? catId) => db.rawInsert(
@@ -315,7 +716,7 @@ class CloudSyncService {
   /// lokal (additional_charges). Mirror syncTaxFromCloud di app-pos Go.
   Future<void> syncTaxFromCloud() async {
     final outlet = await _outletService.loadOutlet();
-    if (!_isConfigured(outlet)) return;
+    if (!_isConfigured(outlet) || outlet.cloudOutletId.isEmpty) return;
 
     final baseUrl = _normalizeBaseUrl(outlet.cloudApiUrl);
     final url = '$baseUrl/api/v1/outlets/${outlet.cloudOutletId}/info';
@@ -368,7 +769,91 @@ class CloudSyncService {
         });
       }
     } on DioException catch (e) {
-      debugPrint('syncTaxFromCloud error: ${_errMessage(e)}');
+      final status = e.response?.statusCode;
+      final body = e.response?.data?.toString() ?? '';
+      if (status == 403 && body.contains('does not match')) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('outlet_cloud_outlet_id');
+        await testConnection();
+      } else {
+        debugPrint('syncTaxFromCloud error: ${_errMessage(e)}');
+      }
+    }
+  }
+
+  // ── Test Connection ──────────────────────────────────────────────────────────
+
+  /// Ping cloud dan auto-discover outlet info menggunakan API Key.
+  /// Menyimpan outlet ID secara otomatis jika berhasil.
+  Future<Map<String, dynamic>> testConnection() async {
+    final outlet = await _outletService.loadOutlet();
+    if (outlet.cloudApiKey.isEmpty) {
+      return {'success': false, 'error': 'API Key belum diisi'};
+    }
+
+    final baseUrl = _normalizeBaseUrl(outlet.cloudApiUrl);
+
+    try {
+      // Ping dulu untuk cek konektivitas
+      await _dio.get(
+        '$baseUrl/api/v1/ping',
+        options: Options(
+          sendTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 10),
+        ),
+      );
+    } on DioException catch (e) {
+      return {'success': false, 'error': 'Server tidak terjangkau: ${_errMessage(e)}'};
+    }
+
+    try {
+      // Auto-discover outlet via API Key
+      final resp = await _dio.get(
+        '$baseUrl/api/v1/outlet/me',
+        options: Options(headers: {'Authorization': 'Bearer ${outlet.cloudApiKey}'}),
+      );
+
+      final respData = resp.data is Map ? resp.data : null;
+      final data = respData?['data'];
+
+      if (data is Map && (data['id'] ?? '').toString().isNotEmpty) {
+        final outletId = data['id'].toString();
+        final outletName = data['name']?.toString() ?? '';
+        final outletCode = data['code']?.toString() ?? '';
+        final outletAddress = data['address']?.toString() ?? '';
+
+        // Simpan outlet ID ke shared preferences
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('outlet_cloud_outlet_id', outletId);
+
+        // Isi profil outlet dari cloud (nama/kode/alamat) — cloud = sumber kebenaran
+        await _outletService.saveOutlet(outlet.copyWith(
+          name: outletName.isNotEmpty ? outletName : outlet.name,
+          code: outletCode.isNotEmpty ? outletCode : outlet.code,
+          address: outletAddress.isNotEmpty ? outletAddress : outlet.address,
+        ));
+
+        // Tarik semua master data (produk & kategori) dari cloud
+        final pulled = await fullPullFromCloud();
+
+        return {
+          'success': true,
+          'outlet_id': outletId,
+          'outlet_name': outletName,
+          'outlet_code': outletCode,
+          'outlet_address': outletAddress,
+          'categories': pulled['categories'] ?? 0,
+          'products': pulled['products'] ?? 0,
+        };
+      }
+
+      return {'success': false, 'error': 'API Key tidak valid atau outlet tidak ditemukan'};
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      if (status == 401 || status == 403) {
+        return {'success': false, 'error': 'API Key tidak valid'};
+      }
+      return {'success': false, 'error': _errMessage(e)};
     }
   }
 

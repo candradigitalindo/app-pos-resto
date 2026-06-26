@@ -26,9 +26,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     });
 
     try {
-      // For PIN-only login, use 'admin' as default username
-      // In production, this would be PIN-based auth
-      await ref.read(authProvider.notifier).login('admin', _pinCode);
+      // Login berbasis PIN: masuk sebagai user yang PIN-nya cocok.
+      await ref.read(authProvider.notifier).loginByPin(_pinCode);
     } catch (e) {
       if (mounted) {
         setState(() {

@@ -75,6 +75,18 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  /// Login hanya dengan PIN — masuk sebagai user yang PIN-nya cocok.
+  Future<void> loginByPin(String pin) async {
+    state = state.copyWith(isLoading: true);
+    try {
+      final user = await _authService.loginByPin(pin);
+      state = AuthState(user: user, isLoading: false, isChecked: true);
+    } catch (e) {
+      state = state.copyWith(isLoading: false);
+      rethrow;
+    }
+  }
+
   Future<void> logout() async {
     await _authService.logout();
     state = const AuthState(isChecked: true);

@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../controllers/cashier_controller.dart';
 import '../../models/models.dart';
+import '../../services/cloud_sync_service.dart';
 import '../../utils/currency.dart';
+import '../../widgets/menu_avatar.dart';
 
 class CashierScreen extends StatefulWidget {
   final String? initialTableNumber;
@@ -17,6 +21,13 @@ class _CashierScreenState extends State<CashierScreen> {
   late final CashierController _controller;
   late final TextEditingController _openShiftCtrl;
 
+  // Status sinkronisasi (indikator offline / menunggu sync) di header.
+  // ValueNotifier agar update 8-detik HANYA me-rebuild pil, bukan seluruh layar
+  // (penting untuk tablet spek rendah).
+  final ValueNotifier<({bool enabled, int pending, bool online})?> _sync =
+      ValueNotifier(null);
+  Timer? _syncTimer;
+
   @override
   void initState() {
     super.initState();
@@ -28,6 +39,14 @@ class _CashierScreenState extends State<CashierScreen> {
         _controller.initTable(widget.initialTableNumber!);
       }
     });
+    _refreshSync();
+    _syncTimer = Timer.periodic(
+        const Duration(seconds: 8), (_) => _refreshSync());
+  }
+
+  Future<void> _refreshSync() async {
+    final s = await CloudSyncService.instance.status();
+    if (mounted) _sync.value = s; // hanya pil yang rebuild (ValueListenableBuilder)
   }
 
   @override
@@ -38,6 +57,8 @@ class _CashierScreenState extends State<CashierScreen> {
 
   @override
   void dispose() {
+    _syncTimer?.cancel();
+    _sync.dispose();
     _openShiftCtrl.dispose();
     _controller.dispose();
     super.dispose();
@@ -71,6 +92,15 @@ class _CashierScreenState extends State<CashierScreen> {
     }
   }
 
+  void _showSplitBillDialog() {
+    if (_controller.state.currentOrder == null) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _SplitBillDialog(controller: _controller),
+    );
+  }
+
   void _showPaymentDialog() {
     final order = _controller.state.currentOrder;
     if (order == null) return;
@@ -96,6 +126,761 @@ class _CashierScreenState extends State<CashierScreen> {
           },
         ),
       ),
+    );
+  }
+
+  /// Pilih transaksi (sudah dibayar) untuk di-void.
+  void _showVoidTransactionPicker() {
+    showDialog(
+      context: context,
+      builder: (ctx) => _VoidTransactionPicker(
+        getPaidOrders: _controller.getRecentPaidOrders,
+        onPick: (order) {
+          Navigator.pop(ctx);
+          _showVoidPaidDialog(order);
+        },
+      ),
+    );
+  }
+
+  /// Pilih transaksi lunas untuk cetak ulang struknya.
+  void _showReprintPicker() {
+    showDialog(
+      context: context,
+      builder: (ctx) => _VoidTransactionPicker(
+        getPaidOrders: _controller.getRecentPaidOrders,
+        title: 'Cetak Ulang Struk',
+        icon: Icons.print_outlined,
+        actionLabel: 'CETAK',
+        onPick: (order) async {
+          Navigator.pop(ctx);
+          await _controller.reprintReceiptFor(order);
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Struk Meja ${order.tableNumber} dicetak ulang'),
+              backgroundColor: const Color(0xFF0F766E),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// Dialog PIN + alasan untuk void transaksi lunas terpilih.
+  void _showVoidPaidDialog(Order order) {
+    final pinCtrl = TextEditingController();
+    final reasonCtrl = TextEditingController();
+    var pinError = false;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) {
+          return AlertDialog(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Text('Void Transaksi'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF2F2),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFFECACA)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Meja ${order.tableNumber} (LUNAS)',
+                          style: const TextStyle(
+                              fontSize: 13, color: Color(0xFF991B1B))),
+                      Text(CurrencyHelper.format(order.totalAmount),
+                          style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF991B1B))),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: pinCtrl,
+                  autofocus: true,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  maxLength: 4,
+                  decoration: InputDecoration(
+                    labelText: 'PIN Manager',
+                    hintText: 'Masukkan PIN 4 digit',
+                    counterText: '',
+                    border: const OutlineInputBorder(),
+                    errorText: pinError ? 'PIN salah' : null,
+                  ),
+                  onChanged: (_) {
+                    if (pinError) setS(() => pinError = false);
+                  },
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: reasonCtrl,
+                  textInputAction: TextInputAction.done,
+                  decoration: const InputDecoration(
+                    labelText: 'Alasan (opsional)',
+                    hintText: 'Contoh: salah tagih, refund pelanggan',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Batal'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () async {
+                  final pin = pinCtrl.text.trim();
+                  if (pin.length != 4) {
+                    setS(() => pinError = true);
+                    return;
+                  }
+                  final result = await _controller.voidPaidOrder(
+                    orderId: order.id,
+                    pin: pin,
+                    reason: reasonCtrl.text.trim(),
+                  );
+                  if (result == 'invalid_pin') {
+                    setS(() => pinError = true);
+                    return;
+                  }
+                  if (!ctx.mounted) return;
+                  Navigator.pop(ctx);
+                  if (!mounted) return;
+                  if (result == 'ok') {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                            'Transaksi Meja ${order.tableNumber} di-void'),
+                        backgroundColor: const Color(0xFFEF4444),
+                      ),
+                    );
+                  }
+                },
+                child: const Text('Void Transaksi'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Dialog kompliment: catat siapa yang memberi & alasan, lalu gratiskan order.
+  void _showComplimentDialog() {
+    final order = _controller.state.currentOrder;
+    if (order == null) return;
+    final items = _controller.state.orderItems;
+    final byCtrl = TextEditingController();
+    final reasonCtrl = TextEditingController();
+    var byError = false;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) {
+          return _actionDialogShell(
+            ctx: ctx,
+            accent: const Color(0xFFD97706),
+            accentBg: const Color(0xFFFEF3C7),
+            icon: Icons.card_giftcard,
+            title: 'Kompliment',
+            subtitle: 'Gratiskan seluruh tagihan order ini',
+            children: [
+              _orderSummaryCard(
+                order: order,
+                items: items,
+                accent: const Color(0xFFD97706),
+                accentBg: const Color(0xFFFFFBEB),
+                accentBorder: const Color(0xFFFDE68A),
+              ),
+              const SizedBox(height: 16),
+              // Banner total → gratis
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFFBEB),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFFDE68A)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Total dibayar',
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF92400E))),
+                    Row(
+                      children: [
+                        Text(CurrencyHelper.format(order.totalAmount),
+                            style: const TextStyle(
+                                fontSize: 14,
+                                color: Color(0xFF92400E),
+                                decoration: TextDecoration.lineThrough)),
+                        const SizedBox(width: 10),
+                        const Text('GRATIS',
+                            style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w900,
+                                color: Color(0xFFD97706))),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              TextField(
+                controller: byCtrl,
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                decoration: InputDecoration(
+                  labelText: 'Diberikan oleh *',
+                  hintText: 'Nama manager / pemberi kompliment',
+                  prefixIcon: const Icon(Icons.badge_outlined, size: 20),
+                  border: const OutlineInputBorder(),
+                  errorText: byError ? 'Wajib diisi' : null,
+                ),
+                onChanged: (_) {
+                  if (byError) setS(() => byError = false);
+                },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: reasonCtrl,
+                textInputAction: TextInputAction.done,
+                minLines: 1,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Alasan (opsional)',
+                  hintText: 'Contoh: tamu VIP, kompensasi keluhan',
+                  prefixIcon: Icon(Icons.notes_outlined, size: 20),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+            primaryLabel: 'Gratiskan',
+            primaryIcon: Icons.card_giftcard,
+            onPrimary: () async {
+              final by = byCtrl.text.trim();
+              if (by.isEmpty) {
+                setS(() => byError = true);
+                return;
+              }
+              final ok = await _controller.complimentCurrentOrder(
+                complimentBy: by,
+                reason: reasonCtrl.text.trim(),
+              );
+              if (!ctx.mounted) return;
+              Navigator.pop(ctx);
+              if (!mounted) return;
+              if (ok) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                        'Meja ${order.tableNumber} digratiskan (kompliment oleh $by)'),
+                    backgroundColor: const Color(0xFFD97706),
+                  ),
+                );
+              }
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  /// Kerangka dialog aksi yang lebih besar & konsisten (header berwarna,
+  /// konten scrollable, tombol aksi lebar di bawah).
+  Widget _actionDialogShell({
+    required BuildContext ctx,
+    required Color accent,
+    required Color accentBg,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required List<Widget> children,
+    required String primaryLabel,
+    required IconData primaryIcon,
+    required Future<void> Function() onPrimary,
+  }) {
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 520,
+          maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 18, 16, 18),
+              decoration: BoxDecoration(
+                color: accentBg,
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(icon, color: accent, size: 24),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title,
+                            style: TextStyle(
+                                fontSize: 19,
+                                fontWeight: FontWeight.bold,
+                                color: accent)),
+                        const SizedBox(height: 2),
+                        Text(subtitle,
+                            style: TextStyle(
+                                fontSize: 13,
+                                color: accent.withValues(alpha: 0.75))),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: Icon(Icons.close, color: accent.withValues(alpha: 0.7)),
+                  ),
+                ],
+              ),
+            ),
+            // Body
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: children,
+                ),
+              ),
+            ),
+            // Actions
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 50,
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF64748B),
+                          side: const BorderSide(color: Color(0xFFCBD5E1)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                        ),
+                        child: const Text('Batal',
+                            style: TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: SizedBox(
+                      height: 50,
+                      child: FilledButton.icon(
+                        onPressed: onPrimary,
+                        icon: Icon(primaryIcon, size: 20),
+                        label: Text(primaryLabel,
+                            style: const TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.bold)),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: accent,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Kartu ringkasan order: meja, jumlah item, daftar item ringkas, subtotal.
+  Widget _orderSummaryCard({
+    required Order order,
+    required List<OrderItem> items,
+    required Color accent,
+    required Color accentBg,
+    required Color accentBorder,
+  }) {
+    final subtotal = items.fold<double>(0, (s, i) => s + i.subtotal);
+    final itemCount = items.fold<int>(0, (s, i) => s + i.qty);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: accentBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: accentBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text('Meja ${order.tableNumber}',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold)),
+              ),
+              const SizedBox(width: 10),
+              Text('$itemCount item',
+                  style: const TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFF64748B),
+                      fontWeight: FontWeight.w500)),
+              if (order.customerName != null &&
+                  order.customerName!.isNotEmpty) ...[
+                const Text(' • ',
+                    style: TextStyle(color: Color(0xFFCBD5E1))),
+                Flexible(
+                  child: Text(order.customerName!,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 13, color: Color(0xFF64748B))),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 10),
+          // Daftar item ringkas (maks 4 baris, sisanya "+n lainnya")
+          ...items.take(4).map((it) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: [
+                    Text('${it.qty}×',
+                        style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF475569))),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(it.productName,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 13, color: Color(0xFF475569))),
+                    ),
+                    Text(CurrencyHelper.format(it.subtotal),
+                        style: const TextStyle(
+                            fontSize: 13, color: Color(0xFF475569))),
+                  ],
+                ),
+              )),
+          if (items.length > 4)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text('+${items.length - 4} item lainnya',
+                  style: const TextStyle(
+                      fontSize: 12,
+                      fontStyle: FontStyle.italic,
+                      color: Color(0xFF94A3B8))),
+            ),
+          const Divider(height: 18),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Subtotal',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF475569))),
+              Text(CurrencyHelper.format(subtotal),
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Dialog diskon: pilih persen/rupiah, isi nilai, lihat pratinjau total baru.
+  void _showDiscountDialog() {
+    final order = _controller.state.currentOrder;
+    if (order == null) return;
+    final items = _controller.state.orderItems;
+    final valueCtrl = TextEditingController();
+    final noteCtrl = TextEditingController();
+    var isPercent = true;
+    String? errorText;
+
+    // Subtotal item (sebelum charge) untuk menghitung pratinjau diskon.
+    final subtotal = items.fold<double>(0, (s, i) => s + i.subtotal);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) {
+          final raw = valueCtrl.text.replaceAll(RegExp(r'[^\d]'), '');
+          final v = double.tryParse(raw) ?? 0;
+          double discount = isPercent ? subtotal * v / 100 : v;
+          discount = discount.roundToDouble();
+          if (discount > subtotal) discount = subtotal;
+          final newTotal = (subtotal - discount).clamp(0, subtotal).toDouble();
+
+          void applyPercent(int p) {
+            setS(() {
+              isPercent = true;
+              errorText = null;
+              valueCtrl.text = '$p';
+            });
+          }
+
+          return _actionDialogShell(
+            ctx: ctx,
+            accent: const Color(0xFF2563EB),
+            accentBg: const Color(0xFFDBEAFE),
+            icon: Icons.local_offer_outlined,
+            title: 'Diskon',
+            subtitle: 'Potong harga sebelum pembayaran',
+            children: [
+              _orderSummaryCard(
+                order: order,
+                items: items,
+                accent: const Color(0xFF2563EB),
+                accentBg: const Color(0xFFEFF6FF),
+                accentBorder: const Color(0xFFBFDBFE),
+              ),
+              const SizedBox(height: 16),
+              // Toggle tipe
+              Row(
+                children: [
+                  Expanded(
+                    child: _discountTypeChip('Persen (%)', isPercent, () {
+                      setS(() {
+                        isPercent = true;
+                        errorText = null;
+                        valueCtrl.clear();
+                      });
+                    }),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _discountTypeChip('Rupiah (Rp)', !isPercent, () {
+                      setS(() {
+                        isPercent = false;
+                        errorText = null;
+                        valueCtrl.clear();
+                      });
+                    }),
+                  ),
+                ],
+              ),
+              // Preset cepat (hanya untuk persen)
+              if (isPercent) ...[
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [5, 10, 15, 20, 25, 50]
+                      .map((p) => _presetChip('$p%', () => applyPercent(p)))
+                      .toList(),
+                ),
+              ],
+              const SizedBox(height: 14),
+              TextField(
+                controller: valueCtrl,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                inputFormatters: isPercent ? null : [_RupiahInputFormatter()],
+                style: const TextStyle(
+                    fontSize: 18, fontWeight: FontWeight.bold),
+                decoration: InputDecoration(
+                  labelText: isPercent ? 'Persentase' : 'Nominal',
+                  prefixText: isPercent ? null : 'Rp ',
+                  suffixText: isPercent ? '%' : null,
+                  hintText: isPercent ? 'mis. 10' : '0',
+                  border: const OutlineInputBorder(),
+                  errorText: errorText,
+                ),
+                onChanged: (_) => setS(() => errorText = null),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: noteCtrl,
+                textCapitalization: TextCapitalization.words,
+                textInputAction: TextInputAction.done,
+                decoration: const InputDecoration(
+                  labelText: 'Catatan diskon (opsional)',
+                  hintText: 'Contoh: member, promo, karyawan',
+                  prefixIcon: Icon(Icons.label_outline, size: 20),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Pratinjau
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Column(
+                  children: [
+                    _discountPreviewRow(
+                        'Subtotal', CurrencyHelper.format(subtotal)),
+                    const SizedBox(height: 6),
+                    _discountPreviewRow(
+                      isPercent && v > 0 ? 'Diskon (${v.toStringAsFixed(0)}%)' : 'Diskon',
+                      '- ${CurrencyHelper.format(discount)}',
+                      color: const Color(0xFFEF4444),
+                    ),
+                    const Divider(height: 18),
+                    _discountPreviewRow(
+                      'Total Baru',
+                      CurrencyHelper.format(newTotal),
+                      bold: true,
+                      color: const Color(0xFF059669),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            primaryLabel: 'Terapkan',
+            primaryIcon: Icons.check,
+            onPrimary: () async {
+              if (v <= 0) {
+                setS(() => errorText = 'Nilai diskon harus lebih dari 0');
+                return;
+              }
+              if (isPercent && v > 100) {
+                setS(() => errorText = 'Persentase tidak boleh > 100');
+                return;
+              }
+              final ok = await _controller.applyDiscountToCurrentOrder(
+                chargeType: isPercent ? 'percentage' : 'fixed',
+                value: v,
+                note: noteCtrl.text.trim(),
+              );
+              if (!ctx.mounted) return;
+              if (ok) {
+                Navigator.pop(ctx);
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                        'Diskon ${CurrencyHelper.format(discount)} diterapkan'),
+                    backgroundColor: const Color(0xFF2563EB),
+                  ),
+                );
+              } else {
+                setS(() => errorText = _controller.state.errorMessage ??
+                    'Gagal menerapkan diskon');
+              }
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _presetChip(String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+        decoration: BoxDecoration(
+          color: const Color(0xFFEFF6FF),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFBFDBFE)),
+        ),
+        child: Text(label,
+            style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF2563EB))),
+      ),
+    );
+  }
+
+  Widget _discountTypeChip(String label, bool selected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF2563EB) : const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(label,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: selected ? Colors.white : const Color(0xFF64748B),
+            )),
+      ),
+    );
+  }
+
+  Widget _discountPreviewRow(String label, String value,
+      {bool bold = false, Color? color}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label,
+            style: TextStyle(
+                fontSize: 13,
+                color: const Color(0xFF64748B),
+                fontWeight: bold ? FontWeight.bold : FontWeight.normal)),
+        Text(value,
+            style: TextStyle(
+                fontSize: bold ? 16 : 13,
+                fontWeight: bold ? FontWeight.bold : FontWeight.w500,
+                color: color ?? const Color(0xFF1E293B))),
+      ],
     );
   }
 
@@ -580,26 +1365,83 @@ class _CashierScreenState extends State<CashierScreen> {
     required String label,
     required VoidCallback onTap,
     Color? iconColor,
-    double hPad = 20,
+    double hPad = 12,
   }) {
     return InkWell(
       onTap: onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 60, minWidth: 72),
+        child: Container(
+          padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 8),
+          alignment: Alignment.center,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: iconColor ?? Colors.white, size: 24),
+              const SizedBox(height: 4),
+              Text(label,
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  style: TextStyle(
+                    color: iconColor ?? Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  )),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Pil status sinkronisasi di header: Offline / menunggu antre / online.
+  /// Dibungkus ValueListenableBuilder → update tiap 8 detik hanya merebuild pil.
+  Widget _syncPill() {
+    return ValueListenableBuilder(
+      valueListenable: _sync,
+      builder: (_, s, __) => _syncPillContent(s),
+    );
+  }
+
+  Widget _syncPillContent(({bool enabled, int pending, bool online})? s) {
+    if (s == null || !s.enabled) return const SizedBox.shrink();
+
+    final Color bg;
+    final IconData icon;
+    final String label;
+    if (!s.online) {
+      bg = const Color(0xFFF59E0B); // amber — offline
+      icon = Icons.cloud_off;
+      label = s.pending > 0 ? 'Offline · ${s.pending}' : 'Offline';
+    } else if (s.pending > 0) {
+      bg = const Color(0xFF3B82F6); // biru — antre kirim
+      icon = Icons.sync;
+      label = '${s.pending} antre';
+    } else {
+      bg = const Color(0xFF10B981); // hijau — tersinkron
+      icon = Icons.cloud_done;
+      label = 'Sinkron';
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
       child: Container(
-        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 4),
-        alignment: Alignment.center,
-        child: Column(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: bg.withValues(alpha: 0.9), width: 1.5),
+        ),
+        child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: iconColor ?? Colors.white, size: 20),
-            const SizedBox(height: 3),
+            Icon(icon, color: Colors.white, size: 15),
+            const SizedBox(width: 5),
             Text(label,
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                style: TextStyle(
-                  color: iconColor ?? Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                )),
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700)),
           ],
         ),
       ),
@@ -617,6 +1459,15 @@ class _CashierScreenState extends State<CashierScreen> {
       context: context,
       builder: (ctx) => _MovementsHistoryDialog(
         getMovements: _controller.getShiftMovements,
+      ),
+    );
+  }
+
+  void _showVoidHistory() {
+    showDialog(
+      context: context,
+      builder: (ctx) => _VoidHistoryDialog(
+        getVoidedOrders: _controller.getVoidedOrders,
       ),
     );
   }
@@ -690,19 +1541,20 @@ class _CashierScreenState extends State<CashierScreen> {
               builder: (context, constraints) {
                 final isPhone = constraints.maxWidth < 600;
                 if (isPhone) return _buildPhoneLayout(state);
+                // Panel pesanan menyesuaikan lebar layar (proporsional, dibatasi).
+                final cartWidth =
+                    (constraints.maxWidth * 0.30).clamp(300.0, 440.0);
                 return Row(
                   children: [
                     Expanded(
                       child: Column(
                         children: [
                           _buildCategoryTabs(state),
-                          Expanded(
-                              child:
-                                  _buildProductGrid(state, crossAxisCount: 4)),
+                          Expanded(child: _buildProductGrid(state)),
                         ],
                       ),
                     ),
-                    _buildCartPanel(state),
+                    _buildCartPanel(state, width: cartWidth),
                   ],
                 );
               },
@@ -717,7 +1569,7 @@ class _CashierScreenState extends State<CashierScreen> {
     return Column(
       children: [
         _buildCategoryTabs(state),
-        Expanded(child: _buildProductGrid(state, crossAxisCount: 2)),
+        Expanded(child: _buildProductGrid(state)),
         _buildPhoneCartBar(state),
       ],
     );
@@ -1000,30 +1852,30 @@ class _CashierScreenState extends State<CashierScreen> {
       child: SafeArea(
         bottom: false,
         child: SizedBox(
-          height: 64,
+          height: 76,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
                 Material(
                   color: Colors.white.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(12),
                   child: InkWell(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(12),
                     onTap: () => Navigator.pop(context),
                     child: Container(
-                      width: 40,
-                      height: 40,
+                      width: 60,
+                      height: 60,
                       alignment: Alignment.center,
                       child: const Icon(Icons.arrow_back,
-                          color: Colors.white, size: 22),
+                          color: Colors.white, size: 24),
                     ),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Container(
-                  width: 44,
-                  height: 44,
+                  width: 60,
+                  height: 60,
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(12),
@@ -1032,70 +1884,69 @@ class _CashierScreenState extends State<CashierScreen> {
                       color: Colors.white, size: 24),
                 ),
                 const SizedBox(width: 12),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('Kasir',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          )),
-                      Text('Proses Pembayaran',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFFA7F3D0),
-                          )),
-                    ],
+
+                // ── Indikator status sinkronisasi (offline / menunggu) ──
+                _syncPill(),
+
+                // ── Grup tombol — mulai dari kiri, scroll bila layar sempit ──
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _headerGroup([
+                          _headerBtn(
+                            icon: Icons.table_restaurant_outlined,
+                            label: state.currentOrder != null
+                                ? 'Meja ${state.currentOrder!.tableNumber}'
+                                : state.selectedTable != null
+                                    ? 'Meja ${state.selectedTable!.tableNumber}'
+                                    : 'Pilih Meja',
+                            onTap: _showTableSelector,
+                            hPad: 14,
+                          ),
+                        ]),
+                        const SizedBox(width: 10),
+                        _headerGroup([
+                          _headerBtn(
+                              icon: Icons.swap_horiz,
+                              label: 'Ganti Shift',
+                              onTap: _showSwapShiftDialog,
+                              hPad: 14),
+                        ]),
+                        const SizedBox(width: 10),
+                        _headerGroup([
+                          _headerBtn(
+                              icon: Icons.account_balance_wallet_outlined,
+                              label: 'Kas',
+                              onTap: () => _showCashMovementDialog('in')),
+                          _groupDivider(),
+                          _headerBtn(
+                              icon: Icons.history,
+                              label: 'Riwayat',
+                              onTap: _showMovementsHistory),
+                          _groupDivider(),
+                          _headerBtn(
+                              icon: Icons.remove_shopping_cart_outlined,
+                              label: 'Void',
+                              onTap: _showVoidTransactionPicker,
+                              iconColor: const Color(0xFFEF4444)),
+                          _groupDivider(),
+                          _headerBtn(
+                              icon: Icons.history_toggle_off,
+                              label: 'Histori Void',
+                              onTap: _showVoidHistory,
+                              iconColor: const Color(0xFFEF4444)),
+                          _groupDivider(),
+                          _headerBtn(
+                              icon: Icons.print_outlined,
+                              label: 'Cetak Ulang',
+                              onTap: _showReprintPicker),
+                        ]),
+                      ],
+                    ),
                   ),
                 ),
-                // Table selector
-                _headerGroup([
-                  _headerBtn(
-                    icon: Icons.table_restaurant_outlined,
-                    label: state.currentOrder != null
-                        ? 'Meja ${state.currentOrder!.tableNumber}'
-                        : state.selectedTable != null
-                            ? 'Meja ${state.selectedTable!.tableNumber}'
-                            : 'Pilih Meja',
-                    onTap: _showTableSelector,
-                    hPad: 20,
-                  ),
-                ]),
-                const SizedBox(width: 10),
-
-                // ── Grup Shift ──
-                _headerGroup([
-                  _headerBtn(
-                      icon: Icons.swap_horiz,
-                      label: 'Ganti Shift',
-                      onTap: _showSwapShiftDialog,
-                      hPad: 22),
-                  _groupDivider(),
-                  _headerBtn(
-                      icon: Icons.logout,
-                      label: 'Tutup Kasir',
-                      onTap: _showCloseShiftDialog,
-                      iconColor: const Color(0xFFFBBF24),
-                      hPad: 22),
-                ]),
-
-                const SizedBox(width: 10),
-
-                // ── Grup Kas ──
-                _headerGroup([
-                  _headerBtn(
-                      icon: Icons.account_balance_wallet_outlined,
-                      label: 'Kas',
-                      onTap: () => _showCashMovementDialog('in')),
-                  _groupDivider(),
-                  _headerBtn(
-                      icon: Icons.history,
-                      label: 'Riwayat',
-                      onTap: _showMovementsHistory),
-                ]),
 
                 const SizedBox(width: 10),
 
@@ -1107,11 +1958,45 @@ class _CashierScreenState extends State<CashierScreen> {
                     borderRadius: BorderRadius.circular(12),
                     onTap: () => _controller.loadData(),
                     child: Container(
-                      width: 44,
-                      height: 44,
+                      width: 60,
+                      height: 60,
                       alignment: Alignment.center,
                       child: const Icon(Icons.refresh,
-                          color: Color(0xFF059669), size: 22),
+                          color: Color(0xFF059669), size: 26),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(width: 10),
+
+                // ── Tutup Kasir (paling ujung, merah) ──
+                Material(
+                  color: const Color(0xFFEF4444),
+                  borderRadius: BorderRadius.circular(12),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: _showCloseShiftDialog,
+                    child: ConstrainedBox(
+                      constraints:
+                          const BoxConstraints(minHeight: 60, minWidth: 84),
+                      child: const Padding(
+                        padding:
+                            EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.logout, color: Colors.white, size: 24),
+                            SizedBox(height: 4),
+                            Text('Tutup Kasir',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                )),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -1143,31 +2028,46 @@ class _CashierScreenState extends State<CashierScreen> {
     );
   }
 
-  Widget _buildProductGrid(CashierState state, {int crossAxisCount = 4}) {
-    return GridView.builder(
-      padding: const EdgeInsets.all(16),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxisCount,
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 12,
-        childAspectRatio: crossAxisCount == 2 ? 1.8 : 2.2,
-      ),
-      itemCount: state.products.length,
-      itemBuilder: (context, index) {
-        final product = state.products[index];
-        final inCart = state.cart[product.id] ?? 0;
-        return _ProductTile(
-          product: product,
-          inCart: inCart,
-          onTap: () => _controller.addToCart(product),
+  Widget _buildProductGrid(CashierState state) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        final w = c.maxWidth;
+        // Kartu lebih besar di layar lebar, lebih ringkas di layar kecil.
+        final maxExtent = w >= 1100
+            ? 200.0
+            : w >= 850
+                ? 185.0
+                : w >= 600
+                    ? 170.0
+                    : 150.0;
+        final pad = w >= 850 ? 18.0 : 12.0;
+        final gap = w >= 850 ? 14.0 : 10.0;
+        return GridView.builder(
+          padding: EdgeInsets.all(pad),
+          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: maxExtent,
+            mainAxisSpacing: gap,
+            crossAxisSpacing: gap,
+            childAspectRatio: 0.85,
+          ),
+          itemCount: state.products.length,
+          itemBuilder: (context, index) {
+            final product = state.products[index];
+            final inCart = state.cart[product.id] ?? 0;
+            return _ProductTile(
+              product: product,
+              inCart: inCart,
+              onTap: () => _controller.addToCart(product),
+            );
+          },
         );
       },
     );
   }
 
-  Widget _buildCartPanel(CashierState state) {
+  Widget _buildCartPanel(CashierState state, {double width = 320}) {
     return Container(
-      width: 320,
+      width: width,
       decoration: BoxDecoration(
         color: Colors.white,
         border: const Border(left: BorderSide(color: Color(0xFFE2E8F0))),
@@ -1222,6 +2122,9 @@ class _CashierScreenState extends State<CashierScreen> {
             ),
           ),
 
+          // Jumlah tamu (pax)
+          _buildPaxRow(state),
+
           // Cart items
           Expanded(
             child: _buildCartItems(state),
@@ -1230,6 +2133,63 @@ class _CashierScreenState extends State<CashierScreen> {
           // Bottom: total & actions
           _buildCartBottom(state),
         ],
+      ),
+    );
+  }
+
+  /// Baris jumlah tamu (pax). Editable saat membuat order baru; saat order
+  /// sudah ada, tampilkan pax order tersebut (read-only).
+  Widget _buildPaxRow(CashierState state) {
+    final hasOrder = state.currentOrder != null;
+    final value = hasOrder ? state.currentOrder!.pax : state.pax;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.people_outline, size: 18, color: Color(0xFF64748B)),
+          const SizedBox(width: 8),
+          const Text('Jumlah Tamu',
+              style: TextStyle(fontSize: 13, color: Color(0xFF475569))),
+          const Spacer(),
+          if (hasOrder)
+            Text('$value pax',
+                style: const TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.bold))
+          else
+            Row(
+              children: [
+                _paxBtn(Icons.remove,
+                    () => _controller.setPax(state.pax - 1)),
+                Container(
+                  width: 40,
+                  alignment: Alignment.center,
+                  child: Text('$value',
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+                _paxBtn(Icons.add, () => _controller.setPax(state.pax + 1)),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _paxBtn(IconData icon, VoidCallback onTap) {
+    return Material(
+      color: const Color(0xFFF1F5F9),
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: SizedBox(
+          width: 32,
+          height: 32,
+          child: Icon(icon, size: 18, color: const Color(0xFF059669)),
+        ),
       ),
     );
   }
@@ -1258,6 +2218,9 @@ class _CashierScreenState extends State<CashierScreen> {
 
   Widget _buildCartBottom(CashierState state) {
     final displayTotal = state.currentOrder?.totalAmount ?? state.cartTotal;
+    // Rincian charge hanya untuk order aktif (charge tersimpan di DB).
+    final hasOrder = state.currentOrder != null;
+    final charges = hasOrder ? state.orderCharges : const <OrderAdditionalCharge>[];
 
     return Container(
       decoration: const BoxDecoration(
@@ -1268,6 +2231,24 @@ class _CashierScreenState extends State<CashierScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Rincian Subtotal + charge/diskon/pajak (bila ada)
+            if (hasOrder && charges.isNotEmpty) ...[
+              _billRow('Subtotal', state.orderSubtotal),
+              const SizedBox(height: 4),
+              ...charges.map((c) {
+                final isDiscount = c.appliedAmount < 0;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: _billRow(
+                    c.name,
+                    c.appliedAmount,
+                    signed: true,
+                    color: isDiscount ? const Color(0xFFEF4444) : null,
+                  ),
+                );
+              }),
+              const Divider(height: 14, color: Color(0xFFE2E8F0)),
+            ],
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -1300,13 +2281,18 @@ class _CashierScreenState extends State<CashierScreen> {
                 isLoading: state.isProcessing,
                 onTap: _showPaymentDialog,
               ),
-            ] else if (state.currentOrder != null && !state.currentOrder!.isPaid)
+              const SizedBox(height: 8),
+              _buildSecondaryActions(state.isProcessing),
+            ] else if (state.currentOrder != null &&
+                !state.currentOrder!.isPaid) ...[
               _buildActionButton(
                 label: 'BAYAR',
                 isLoading: state.isProcessing,
                 onTap: _showPaymentDialog,
-              )
-            else if (state.currentOrder == null && state.cart.isNotEmpty)
+              ),
+              const SizedBox(height: 8),
+              _buildSecondaryActions(state.isProcessing),
+            ] else if (state.currentOrder == null && state.cart.isNotEmpty)
               _buildActionButton(
                 label: 'BUAT ORDER',
                 isLoading: state.isProcessing,
@@ -1315,6 +2301,29 @@ class _CashierScreenState extends State<CashierScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  /// Baris rincian tagihan (Subtotal / Diskon / Pajak). [signed] menampilkan
+  /// tanda +/- sesuai nilai; nilai negatif (diskon) otomatis ditandai minus.
+  Widget _billRow(String label, double amount,
+      {bool signed = false, Color? color}) {
+    final prefix = signed && amount < 0 ? '- ' : (signed && amount > 0 ? '+ ' : '');
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Flexible(
+          child: Text(label,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13, color: Color(0xFF64748B))),
+        ),
+        const SizedBox(width: 8),
+        Text('$prefix${CurrencyHelper.format(amount.abs())}',
+            style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: color ?? const Color(0xFF475569))),
+      ],
     );
   }
 
@@ -1364,6 +2373,242 @@ class _CashierScreenState extends State<CashierScreen> {
                       )),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Aksi sekunder pada order aktif: Diskon (biru) + Kompliment (amber).
+  Widget _buildSecondaryActions(bool isLoading) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _secondaryButton(
+                icon: Icons.local_offer_outlined,
+                label: 'Diskon',
+                color: const Color(0xFF2563EB),
+                borderColor: const Color(0xFF93C5FD),
+                onTap: isLoading ? null : _showDiscountDialog,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _secondaryButton(
+                icon: Icons.card_giftcard,
+                label: 'Kompliment',
+                color: const Color(0xFFD97706),
+                borderColor: const Color(0xFFFBBF24),
+                onTap: isLoading ? null : _showComplimentDialog,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: _secondaryButton(
+                icon: Icons.call_split,
+                label: 'Split Bill',
+                color: const Color(0xFF2563EB),
+                borderColor: const Color(0xFF93C5FD),
+                onTap: isLoading ? null : _showSplitBillDialog,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _secondaryButton(
+                icon: Icons.payments_outlined,
+                label: 'Gabung Bayar',
+                color: const Color(0xFF7C3AED),
+                borderColor: const Color(0xFFC4B5FD),
+                onTap: isLoading ? null : _showMixedPaymentDialog,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: _secondaryButton(
+                icon: Icons.swap_horiz,
+                label: 'Pindah Meja',
+                color: const Color(0xFF0891B2),
+                borderColor: const Color(0xFF67E8F9),
+                onTap: isLoading ? null : _showMovePicker,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _secondaryButton(
+                icon: Icons.merge_type,
+                label: 'Gabung Meja',
+                color: const Color(0xFF0891B2),
+                borderColor: const Color(0xFF67E8F9),
+                onTap: isLoading ? null : _showMergePicker,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: _secondaryButton(
+            icon: Icons.receipt_long_outlined,
+            label: 'Cetak Tagihan',
+            color: const Color(0xFF0F766E),
+            borderColor: const Color(0xFF5EEAD4),
+            onTap: isLoading ? null : _printBill,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Pindah Meja ───────────────────────────────────────────────────────────
+  void _showMovePicker() {
+    final order = _controller.state.currentOrder;
+    if (order == null) return;
+    final available = _controller.state.tables
+        .where((t) => t.status == 'available')
+        .toList();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Pindah dari Meja ${order.tableNumber} ke:',
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              if (available.isEmpty)
+                const Text('Tidak ada meja kosong',
+                    style: TextStyle(color: Color(0xFF94A3B8)))
+              else
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: available
+                      .map((t) => Material(
+                            color: const Color(0xFFF1F5F9),
+                            borderRadius: BorderRadius.circular(12),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () async {
+                                Navigator.pop(ctx);
+                                final ok = await _controller
+                                    .moveOrderToTable(t.tableNumber);
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(ok
+                                        ? 'Pindah ke Meja ${t.tableNumber}'
+                                        : _controller.state.errorMessage ??
+                                            'Gagal pindah'),
+                                    backgroundColor: ok
+                                        ? const Color(0xFF0891B2)
+                                        : Colors.red,
+                                  ),
+                                );
+                              },
+                              child: Container(
+                                width: 72,
+                                height: 56,
+                                alignment: Alignment.center,
+                                child: Text(t.tableNumber,
+                                    style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold)),
+                              ),
+                            ),
+                          ))
+                      .toList(),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Gabung Meja ───────────────────────────────────────────────────────────
+  void _showMergePicker() {
+    final order = _controller.state.currentOrder;
+    if (order == null) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => _MergePicker(
+        getOrders: _controller.getMergeableOrders,
+        targetTable: order.tableNumber,
+        onPick: (src) async {
+          Navigator.pop(ctx);
+          final ok = await _controller.mergeTable(src.id);
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(ok
+                  ? 'Meja ${src.tableNumber} digabung ke ${order.tableNumber}'
+                  : _controller.state.errorMessage ?? 'Gagal gabung'),
+              backgroundColor: ok ? const Color(0xFF0891B2) : Colors.red,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ── Gabung Pembayaran (campur metode) ─────────────────────────────────────
+  void _showMixedPaymentDialog() {
+    if (_controller.state.currentOrder == null) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _MixedPaymentDialog(controller: _controller),
+    );
+  }
+
+  Future<void> _printBill() async {
+    final ok = await _controller.printCurrentBill();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ok ? 'Tagihan dicetak' : 'Tidak ada order aktif'),
+        backgroundColor: ok ? const Color(0xFF0F766E) : Colors.grey,
+      ),
+    );
+  }
+
+  Widget _secondaryButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required Color borderColor,
+    required VoidCallback? onTap,
+  }) {
+    return SizedBox(
+      height: 44,
+      child: OutlinedButton.icon(
+        onPressed: onTap,
+        icon: Icon(icon, size: 18),
+        label: Text(label, overflow: TextOverflow.ellipsis),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: color,
+          side: BorderSide(color: borderColor),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          textStyle:
+              const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
         ),
       ),
     );
@@ -1426,11 +2671,41 @@ class _ProductTile extends StatelessWidget {
             ),
           ),
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(10),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: MenuAvatar.fill(name: product.name),
+                      ),
+                      if (inCart > 0)
+                        Positioned(
+                          top: 6,
+                          right: 6,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF059669),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              '$inCart',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
                 Text(
                   product.name,
                   style: const TextStyle(
@@ -1438,36 +2713,14 @@ class _ProductTile extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 4),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      CurrencyHelper.format(product.price),
-                      style: const TextStyle(
-                        color: Color(0xFF059669),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                      ),
-                    ),
-                    if (inCart > 0)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF059669),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '$inCart',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                  ],
+                const SizedBox(height: 2),
+                Text(
+                  CurrencyHelper.format(product.price),
+                  style: const TextStyle(
+                    color: Color(0xFF059669),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
                 ),
               ],
             ),
@@ -1621,6 +2874,681 @@ class _CartItemTile extends StatelessWidget {
 }
 
 // ── Movements History Dialog ──────────────────────────────────────────────────
+
+class _VoidTransactionPicker extends StatefulWidget {
+  final Future<List<Order>> Function() getPaidOrders;
+  final void Function(Order) onPick;
+  final String title;
+  final IconData icon;
+  final String actionLabel;
+  const _VoidTransactionPicker({
+    required this.getPaidOrders,
+    required this.onPick,
+    this.title = 'Void Transaksi',
+    this.icon = Icons.remove_shopping_cart_outlined,
+    this.actionLabel = 'VOID',
+  });
+
+  @override
+  State<_VoidTransactionPicker> createState() => _VoidTransactionPickerState();
+}
+
+class _VoidTransactionPickerState extends State<_VoidTransactionPicker> {
+  final _searchCtrl = TextEditingController();
+  List<Order>? _orders;
+  String _query = '';
+  bool _todayOnly = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOrders();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadOrders() async {
+    final o = await widget.getPaidOrders();
+    if (mounted) setState(() => _orders = o);
+  }
+
+  String _fmtTime(DateTime t) {
+    final l = t.toLocal();
+    final now = DateTime.now();
+    String two(int n) => n.toString().padLeft(2, '0');
+    final hm = '${two(l.hour)}:${two(l.minute)}';
+    if (l.year == now.year && l.month == now.month && l.day == now.day) {
+      return 'Hari ini $hm';
+    }
+    return '${two(l.day)}/${two(l.month)} $hm';
+  }
+
+  bool _isToday(DateTime t) {
+    final l = t.toLocal();
+    final now = DateTime.now();
+    return l.year == now.year && l.month == now.month && l.day == now.day;
+  }
+
+  List<Order>? _filtered() {
+    final all = _orders;
+    if (all == null) return null;
+    final q = _query.trim().toLowerCase();
+    final qDigits = q.replaceAll(RegExp(r'[^0-9]'), '');
+    return all.where((o) {
+      if (_todayOnly && !_isToday(o.updatedAt)) return false;
+      if (q.isEmpty) return true;
+      final byTable = o.tableNumber.toLowerCase().contains(q);
+      final byAmount = qDigits.isNotEmpty &&
+          o.totalAmount.toStringAsFixed(0).contains(qDigits);
+      return byTable || byAmount;
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final all = _orders;
+    final filtered = _filtered();
+    final total =
+        filtered?.fold(0.0, (s, o) => s + o.totalAmount) ?? 0;
+
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 40),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.8,
+          maxWidth: 540,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 12, 8),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(7),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEE2E2),
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: Icon(widget.icon,
+                        color: const Color(0xFFEF4444), size: 18),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(widget.title,
+                            style: const TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.bold)),
+                        if (filtered != null)
+                          Text(
+                            '${filtered.length} transaksi • ${CurrencyHelper.format(total)}',
+                            style: const TextStyle(
+                                fontSize: 12, color: Color(0xFF94A3B8)),
+                          ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _orders == null
+                        ? null
+                        : () {
+                            setState(() => _orders = null);
+                            _loadOrders();
+                          },
+                    icon: const Icon(Icons.refresh, color: Color(0xFF94A3B8)),
+                    tooltip: 'Muat ulang',
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
+                  ),
+                ],
+              ),
+            ),
+            // Search
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: TextField(
+                controller: _searchCtrl,
+                onChanged: (v) => setState(() => _query = v),
+                decoration: InputDecoration(
+                  hintText: 'Cari meja atau nominal...',
+                  prefixIcon: const Icon(Icons.search, size: 18),
+                  suffixIcon: _query.isEmpty
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.close, size: 18),
+                          onPressed: () {
+                            _searchCtrl.clear();
+                            setState(() => _query = '');
+                          },
+                        ),
+                  isDense: true,
+                  filled: true,
+                  fillColor: const Color(0xFFF2F2F7),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+            // Filter chips
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Row(
+                children: [
+                  _filterChip('Semua', !_todayOnly,
+                      () => setState(() => _todayOnly = false)),
+                  const SizedBox(width: 8),
+                  _filterChip('Hari Ini', _todayOnly,
+                      () => setState(() => _todayOnly = true)),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // List
+            if (filtered == null)
+              const Expanded(
+                child: Center(
+                  child: CircularProgressIndicator(color: Color(0xFF059669)),
+                ),
+              )
+            else if (filtered.isEmpty)
+              Expanded(
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.search_off,
+                          size: 44, color: Color(0xFFCBD5E1)),
+                      const SizedBox(height: 8),
+                      Text(
+                        (all?.isEmpty ?? true)
+                            ? 'Belum ada transaksi lunas'
+                            : 'Tidak ada hasil',
+                        style: const TextStyle(color: Color(0xFF94A3B8)),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Flexible(
+                child: ListView.separated(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: filtered.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (_, i) => _txCard(filtered[i]),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _filterChip(String label, bool selected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF059669) : const Color(0xFFF2F2F7),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: selected ? Colors.white : const Color(0xFF64748B),
+            )),
+      ),
+    );
+  }
+
+  Widget _txCard(Order o) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => widget.onPick(o),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFD1FAE5),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Center(
+                  child: Text(
+                    o.tableNumber,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                        color: Color(0xFF059669)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Meja ${o.tableNumber}',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 14)),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${o.basketSize} item • ${_fmtTime(o.updatedAt)}',
+                      style: const TextStyle(
+                          fontSize: 12, color: Color(0xFF94A3B8)),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(CurrencyHelper.format(o.totalAmount),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w800, fontSize: 14)),
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEE2E2),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(widget.actionLabel,
+                        style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFFEF4444))),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VoidHistoryDialog extends StatefulWidget {
+  final Future<List<Order>> Function() getVoidedOrders;
+  const _VoidHistoryDialog({required this.getVoidedOrders});
+
+  @override
+  State<_VoidHistoryDialog> createState() => _VoidHistoryDialogState();
+}
+
+class _VoidHistoryDialogState extends State<_VoidHistoryDialog> {
+  final _searchCtrl = TextEditingController();
+  List<Order>? _orders;
+  String _query = '';
+  bool _todayOnly = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final o = await widget.getVoidedOrders();
+    if (mounted) setState(() => _orders = o);
+  }
+
+  String _fmtTime(DateTime? t) {
+    if (t == null) return '-';
+    final l = t.toLocal();
+    final now = DateTime.now();
+    String two(int n) => n.toString().padLeft(2, '0');
+    final hm = '${two(l.hour)}:${two(l.minute)}';
+    if (l.year == now.year && l.month == now.month && l.day == now.day) {
+      return 'Hari ini $hm';
+    }
+    return '${two(l.day)}/${two(l.month)} $hm';
+  }
+
+  bool _isToday(DateTime? t) {
+    if (t == null) return false;
+    final l = t.toLocal();
+    final now = DateTime.now();
+    return l.year == now.year && l.month == now.month && l.day == now.day;
+  }
+
+  List<Order>? _filtered() {
+    final all = _orders;
+    if (all == null) return null;
+    final q = _query.trim().toLowerCase();
+    final qDigits = q.replaceAll(RegExp(r'[^0-9]'), '');
+    return all.where((o) {
+      if (_todayOnly && !_isToday(o.voidedAt)) return false;
+      if (q.isEmpty) return true;
+      final byTable = o.tableNumber.toLowerCase().contains(q);
+      final byBy = (o.voidedBy ?? '').toLowerCase().contains(q);
+      final byReason = (o.voidReason ?? '').toLowerCase().contains(q);
+      final byAmount = qDigits.isNotEmpty &&
+          o.totalAmount.toStringAsFixed(0).contains(qDigits);
+      return byTable || byBy || byReason || byAmount;
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final all = _orders;
+    final filtered = _filtered();
+    final total = filtered?.fold(0.0, (s, o) => s + o.totalAmount) ?? 0;
+
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 40),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.8,
+          maxWidth: 540,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 12, 8),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(7),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEE2E2),
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: const Icon(Icons.history_toggle_off,
+                        color: Color(0xFFEF4444), size: 18),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Histori Void',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.bold)),
+                        if (filtered != null)
+                          Text(
+                            '${filtered.length} order • ${CurrencyHelper.format(total)}',
+                            style: const TextStyle(
+                                fontSize: 12, color: Color(0xFF94A3B8)),
+                          ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _orders == null
+                        ? null
+                        : () {
+                            setState(() => _orders = null);
+                            _load();
+                          },
+                    icon: const Icon(Icons.refresh, color: Color(0xFF94A3B8)),
+                    tooltip: 'Muat ulang',
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
+                  ),
+                ],
+              ),
+            ),
+            // Search
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: TextField(
+                controller: _searchCtrl,
+                onChanged: (v) => setState(() => _query = v),
+                decoration: InputDecoration(
+                  hintText: 'Cari meja, kasir, alasan, nominal...',
+                  prefixIcon: const Icon(Icons.search, size: 18),
+                  suffixIcon: _query.isEmpty
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.close, size: 18),
+                          onPressed: () {
+                            _searchCtrl.clear();
+                            setState(() => _query = '');
+                          },
+                        ),
+                  isDense: true,
+                  filled: true,
+                  fillColor: const Color(0xFFF2F2F7),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+            // Filter chips
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Row(
+                children: [
+                  _filterChip('Semua', !_todayOnly,
+                      () => setState(() => _todayOnly = false)),
+                  const SizedBox(width: 8),
+                  _filterChip('Hari Ini', _todayOnly,
+                      () => setState(() => _todayOnly = true)),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // List
+            if (filtered == null)
+              const Expanded(
+                child: Center(
+                  child: CircularProgressIndicator(color: Color(0xFF059669)),
+                ),
+              )
+            else if (filtered.isEmpty)
+              Expanded(
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.search_off,
+                          size: 44, color: Color(0xFFCBD5E1)),
+                      const SizedBox(height: 8),
+                      Text(
+                        (all?.isEmpty ?? true)
+                            ? 'Belum ada order yang di-void'
+                            : 'Tidak ada hasil',
+                        style: const TextStyle(color: Color(0xFF94A3B8)),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Flexible(
+                child: ListView.separated(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: filtered.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (_, i) => _voidCard(filtered[i]),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _filterChip(String label, bool selected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF059669) : const Color(0xFFF2F2F7),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: selected ? Colors.white : const Color(0xFF64748B),
+            )),
+      ),
+    );
+  }
+
+  Widget _voidCard(Order o) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFECACA)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEE2E2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Center(
+              child: Text(
+                o.tableNumber,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                    color: Color(0xFFEF4444)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text('Meja ${o.tableNumber}',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 14)),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEE2E2),
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: const Text('VOID',
+                          style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFFEF4444))),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    const Icon(Icons.schedule,
+                        size: 12, color: Color(0xFF94A3B8)),
+                    const SizedBox(width: 3),
+                    Text(_fmtTime(o.voidedAt),
+                        style: const TextStyle(
+                            fontSize: 12, color: Color(0xFF94A3B8))),
+                    const SizedBox(width: 10),
+                    const Icon(Icons.person_outline,
+                        size: 12, color: Color(0xFF94A3B8)),
+                    const SizedBox(width: 3),
+                    Flexible(
+                      child: Text(o.voidedBy ?? '-',
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 12, color: Color(0xFF94A3B8))),
+                    ),
+                  ],
+                ),
+                if ((o.voidReason ?? '').isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.notes,
+                              size: 12, color: Color(0xFF94A3B8)),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              o.voidReason!,
+                              style: const TextStyle(
+                                  fontSize: 12, color: Color(0xFF64748B)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            CurrencyHelper.format(o.totalAmount),
+            style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 14,
+                color: Color(0xFFEF4444),
+                decoration: TextDecoration.lineThrough),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _MovementsHistoryDialog extends StatefulWidget {
   final Future<List<CashMovement>> Function() getMovements;
@@ -3330,6 +5258,622 @@ class _RupiahInputFormatter extends TextInputFormatter {
     return TextEditingValue(
       text: formatted,
       selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+}
+
+// ── Split Bill (pilih item per orang) ─────────────────────────────────────────
+class _SplitBillDialog extends StatefulWidget {
+  final CashierController controller;
+  const _SplitBillDialog({required this.controller});
+
+  @override
+  State<_SplitBillDialog> createState() => _SplitBillDialogState();
+}
+
+class _SplitBillDialogState extends State<_SplitBillDialog> {
+  final _paid = <String>{}; // item yang sudah dibayar di sesi split ini
+  final _checked = <String>{}; // pilihan bagian saat ini
+  String _method = 'cash';
+  int _payer = 1;
+
+  CashierController get _c => widget.controller;
+
+  List<OrderItem> get _items => _c.state.orderItems;
+  List<OrderItem> get _unpaid =>
+      _items.where((i) => !_paid.contains(i.id)).toList();
+
+  Future<void> _payPart() async {
+    if (_checked.isEmpty) return;
+    // Bagian terakhir bila semua sisa item tercentang.
+    final isFinal = _unpaid.every((i) => _checked.contains(i.id));
+    final res = await _c.paySplitByItems(
+      itemIds: _checked.toList(),
+      method: _method,
+      isFinal: isFinal,
+    );
+    if (res == null) {
+      if (mounted && _c.state.errorMessage != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_c.state.errorMessage!), backgroundColor: Colors.red),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    if (res['payment_status'] == 'paid') {
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Split bill selesai — semua bagian lunas'),
+            backgroundColor: Color(0xFF059669)),
+      );
+      return;
+    }
+    setState(() {
+      _paid.addAll(_checked);
+      _checked.clear();
+      _payer++;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final share = _c.splitShareFor(_checked.toList());
+    final order = _c.state.currentOrder;
+    final remaining = order?.remaining ?? 0;
+    final allSelected =
+        _unpaid.isNotEmpty && _unpaid.every((i) => _checked.contains(i.id));
+
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 36),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 520,
+          maxHeight: MediaQuery.of(context).size.height * 0.85,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
+              decoration: const BoxDecoration(
+                color: Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.call_split, color: Color(0xFF2563EB)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Split Bill',
+                            style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF2563EB))),
+                        Text('Bagian ke-$_payer • sisa tagihan ${CurrencyHelper.format(remaining)}',
+                            style: const TextStyle(
+                                fontSize: 12, color: Color(0xFF60A5FA))),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, color: Color(0xFF60A5FA)),
+                  ),
+                ],
+              ),
+            ),
+            // Items
+            Flexible(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(8, 4, 8, 8),
+                    child: Text('Centang item untuk pembayar bagian ini:',
+                        style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                  ),
+                  ..._items.map((it) {
+                    final paid = _paid.contains(it.id);
+                    final checked = _checked.contains(it.id);
+                    return Opacity(
+                      opacity: paid ? 0.45 : 1,
+                      child: CheckboxListTile(
+                        value: paid ? true : checked,
+                        onChanged: paid
+                            ? null
+                            : (v) => setState(() {
+                                  if (v == true) {
+                                    _checked.add(it.id);
+                                  } else {
+                                    _checked.remove(it.id);
+                                  }
+                                }),
+                        activeColor: const Color(0xFF2563EB),
+                        controlAffinity: ListTileControlAffinity.leading,
+                        dense: true,
+                        title: Text('${it.qty}x ${it.productName}',
+                            style: TextStyle(
+                              fontSize: 14,
+                              decoration:
+                                  paid ? TextDecoration.lineThrough : null,
+                            )),
+                        secondary: Text(
+                          paid ? 'LUNAS' : CurrencyHelper.format(it.subtotal),
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: paid
+                                ? const Color(0xFF059669)
+                                : const Color(0xFF1E293B),
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // Method + amount + pay
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      _mChip('cash', 'Tunai', Icons.money),
+                      _mChip('card', 'Kartu', Icons.credit_card),
+                      _mChip('qris', 'QRIS', Icons.qr_code),
+                      _mChip('transfer', 'Transfer', Icons.account_balance),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(allSelected ? 'Bayar sisa (bagian akhir)' : 'Bagian ini',
+                          style: const TextStyle(
+                              fontSize: 14, color: Color(0xFF475569))),
+                      Text(
+                        CurrencyHelper.format(allSelected ? remaining : share),
+                        style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF2563EB)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 48,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFF2563EB)),
+                      onPressed: (_checked.isEmpty || _c.state.isProcessing)
+                          ? null
+                          : _payPart,
+                      icon: _c.state.isProcessing
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.payments_outlined),
+                      label: const Text('Bayar Bagian Ini',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _mChip(String value, String label, IconData icon) {
+    final selected = _method == value;
+    return GestureDetector(
+      onTap: () => setState(() => _method = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF2563EB) : const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon,
+                size: 16,
+                color: selected ? Colors.white : const Color(0xFF64748B)),
+            const SizedBox(width: 6),
+            Text(label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? Colors.white : const Color(0xFF64748B),
+                )),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Gabung Meja: pilih order meja lain ────────────────────────────────────────
+class _MergePicker extends StatefulWidget {
+  final Future<List<Order>> Function() getOrders;
+  final String targetTable;
+  final void Function(Order) onPick;
+  const _MergePicker(
+      {required this.getOrders, required this.targetTable, required this.onPick});
+
+  @override
+  State<_MergePicker> createState() => _MergePickerState();
+}
+
+class _MergePickerState extends State<_MergePicker> {
+  List<Order>? _orders;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.getOrders().then((o) {
+      if (mounted) setState(() => _orders = o);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final orders = _orders;
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+            maxWidth: 480, maxHeight: MediaQuery.of(context).size.height * 0.7),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 12, 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.merge_type, color: Color(0xFF0891B2)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text('Gabung ke Meja ${widget.targetTable}',
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold)),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            if (orders == null)
+              const Padding(
+                padding: EdgeInsets.all(40),
+                child: CircularProgressIndicator(color: Color(0xFF0891B2)),
+              )
+            else if (orders.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(40),
+                child: Text('Tidak ada meja lain dengan pesanan aktif',
+                    style: TextStyle(color: Color(0xFF94A3B8))),
+              )
+            else
+              Flexible(
+                child: ListView.separated(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: orders.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (_, i) {
+                    final o = orders[i];
+                    return Material(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () => widget.onPick(o),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            border:
+                                Border.all(color: const Color(0xFFE2E8F0)),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 46,
+                                height: 46,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFCFFAFE),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                alignment: Alignment.center,
+                                child: Text(o.tableNumber,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 15,
+                                        color: Color(0xFF0891B2))),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('Meja ${o.tableNumber}',
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 14)),
+                                    Text('${o.basketSize} item',
+                                        style: const TextStyle(
+                                            fontSize: 12,
+                                            color: Color(0xFF94A3B8))),
+                                  ],
+                                ),
+                              ),
+                              Text(CurrencyHelper.format(o.totalAmount),
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 14)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Gabung Pembayaran: bayar campur metode (cash + qris dll) ──────────────────
+class _MixedPaymentDialog extends StatefulWidget {
+  final CashierController controller;
+  const _MixedPaymentDialog({required this.controller});
+
+  @override
+  State<_MixedPaymentDialog> createState() => _MixedPaymentDialogState();
+}
+
+class _MixedPaymentDialogState extends State<_MixedPaymentDialog> {
+  final _amountCtrl = TextEditingController();
+  String _method = 'cash';
+  final _lines = <({String method, double amount})>[];
+
+  CashierController get _c => widget.controller;
+  double get _remaining => _c.state.currentOrder?.remaining ?? 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _amountCtrl.text = _remaining.toStringAsFixed(0);
+  }
+
+  @override
+  void dispose() {
+    _amountCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _addPayment() async {
+    final raw = _amountCtrl.text.replaceAll(RegExp(r'[^\d]'), '');
+    var amount = double.tryParse(raw) ?? 0;
+    if (amount <= 0) return;
+    if (amount > _remaining) amount = _remaining;
+    final method = _method;
+    final res = await _c.payPartial(amount: amount, method: method);
+    if (res == null) {
+      if (mounted && _c.state.errorMessage != null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(_c.state.errorMessage!),
+            backgroundColor: Colors.red));
+      }
+      return;
+    }
+    if (!mounted) return;
+    if (res['payment_status'] == 'paid') {
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Pembayaran gabungan selesai — lunas'),
+          backgroundColor: Color(0xFF7C3AED)));
+      return;
+    }
+    setState(() {
+      _lines.add((method: method, amount: amount));
+      _amountCtrl.text = _remaining.toStringAsFixed(0);
+    });
+  }
+
+  String _methodLabel(String m) => const {
+        'cash': 'Tunai',
+        'card': 'Kartu',
+        'qris': 'QRIS',
+        'transfer': 'Transfer',
+      }[m] ?? m;
+
+  @override
+  Widget build(BuildContext context) {
+    final order = _c.state.currentOrder;
+    final total = order?.totalAmount ?? 0;
+    final paid = total - _remaining;
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.payments_outlined, color: Color(0xFF7C3AED)),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text('Gabung Pembayaran',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  children: [
+                    _row('Total', total, bold: true),
+                    const SizedBox(height: 4),
+                    _row('Terbayar', paid, color: const Color(0xFF059669)),
+                    const Divider(height: 16),
+                    _row('Sisa', _remaining,
+                        bold: true, color: const Color(0xFFEF4444)),
+                  ],
+                ),
+              ),
+              if (_lines.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                ..._lines.map((l) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('• ${_methodLabel(l.method)}',
+                              style: const TextStyle(fontSize: 13)),
+                          Text(CurrencyHelper.format(l.amount),
+                              style: const TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    )),
+              ],
+              const SizedBox(height: 14),
+              const Text('Metode',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: [
+                  _mChip('cash', 'Tunai', Icons.money),
+                  _mChip('card', 'Kartu', Icons.credit_card),
+                  _mChip('qris', 'QRIS', Icons.qr_code),
+                  _mChip('transfer', 'Transfer', Icons.account_balance),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _amountCtrl,
+                keyboardType: TextInputType.number,
+                inputFormatters: [_RupiahInputFormatter()],
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                decoration: const InputDecoration(
+                  labelText: 'Jumlah bayar (metode ini)',
+                  prefixText: 'Rp ',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                height: 50,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF7C3AED)),
+                  onPressed: _c.state.isProcessing ? null : _addPayment,
+                  icon: _c.state.isProcessing
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.add),
+                  label: Text(
+                      _remaining > 0 ? 'Tambah Pembayaran' : 'Lunas',
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _row(String label, double v, {bool bold = false, Color? color}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label,
+            style: TextStyle(
+                fontSize: 13,
+                color: const Color(0xFF475569),
+                fontWeight: bold ? FontWeight.bold : FontWeight.normal)),
+        Text(CurrencyHelper.format(v),
+            style: TextStyle(
+                fontSize: bold ? 16 : 13,
+                fontWeight: bold ? FontWeight.bold : FontWeight.w500,
+                color: color ?? const Color(0xFF1E293B))),
+      ],
+    );
+  }
+
+  Widget _mChip(String value, String label, IconData icon) {
+    final selected = _method == value;
+    return GestureDetector(
+      onTap: () => setState(() => _method = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF7C3AED) : const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon,
+                size: 16,
+                color: selected ? Colors.white : const Color(0xFF64748B)),
+            const SizedBox(width: 6),
+            Text(label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? Colors.white : const Color(0xFF64748B),
+                )),
+          ],
+        ),
+      ),
     );
   }
 }

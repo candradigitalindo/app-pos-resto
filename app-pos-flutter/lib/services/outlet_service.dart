@@ -1,7 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 class OutletService {
-  static const String defaultCloudApiUrl = 'https://api-pos.nbp.co.id';
+  static const String defaultCloudApiUrl = 'https://pos.nbp.co.id';
 
   static const _keyName = 'outlet_name';
   static const _keyCode = 'outlet_code';
@@ -21,6 +21,11 @@ class OutletService {
 
   Future<OutletInfo> loadOutlet() async {
     final prefs = await _prefs;
+    var cloudApiUrl = prefs.getString(_keyCloudApiUrl) ?? defaultCloudApiUrl;
+    if (cloudApiUrl == 'https://api-pos.nbp.co.id') {
+      cloudApiUrl = defaultCloudApiUrl;
+      await prefs.setString(_keyCloudApiUrl, cloudApiUrl);
+    }
     return OutletInfo(
       name: prefs.getString(_keyName) ?? '',
       code: prefs.getString(_keyCode) ?? '',
@@ -29,7 +34,7 @@ class OutletService {
       socialMedia: prefs.getString(_keySocial) ?? '',
       receiptFooter: prefs.getString(_keyReceiptFooter) ?? '',
       targetSpendPerPax: prefs.getInt(_keyTargetSpend) ?? 0,
-      cloudApiUrl: prefs.getString(_keyCloudApiUrl) ?? defaultCloudApiUrl,
+      cloudApiUrl: cloudApiUrl,
       cloudApiKey: prefs.getString(_keyCloudApiKey) ?? '',
       cloudOutletId: prefs.getString(_keyCloudOutletId) ?? '',
       syncEnabled: prefs.getBool(_keySyncEnabled) ?? false,
@@ -71,6 +76,19 @@ class OutletService {
   Future<void> saveRetentionDays(int days) async {
     final prefs = await _prefs;
     await prefs.setInt(_keyRetentionDays, days);
+  }
+
+  static const _keyVoidPin = 'manager_void_pin';
+
+  /// PIN manager untuk otorisasi void order. Default '1234'.
+  Future<String> getVoidPin() async {
+    final prefs = await _prefs;
+    return prefs.getString(_keyVoidPin) ?? '1234';
+  }
+
+  Future<void> saveVoidPin(String pin) async {
+    final prefs = await _prefs;
+    await prefs.setString(_keyVoidPin, pin);
   }
 }
 

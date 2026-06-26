@@ -14,6 +14,7 @@ class ProductRepository {
         'id': c.id,
         'name': c.name,
         'description': c.description ?? '',
+        'print_destination': c.printDestination,
         'version': 1,
       };
 
@@ -44,6 +45,7 @@ class ProductRepository {
     required String name,
     String? description,
     String? printerId,
+    String printDestination = 'kitchen',
   }) async {
     final now = DateTime.now();
     final category = Category(
@@ -51,6 +53,7 @@ class ProductRepository {
       name: name,
       description: description,
       printerId: printerId,
+      printDestination: printDestination,
       createdAt: now,
       updatedAt: now,
     );
@@ -254,9 +257,10 @@ class ProductRepository {
     final existing = await getProducts();
     if (existing.isNotEmpty) return;
 
-    // Create categories
+    // Create categories — minuman default ke bar agar routing langsung benar
     final makanan = await createCategory(name: 'Makanan');
-    final minuman = await createCategory(name: 'Minuman');
+    final minuman =
+        await createCategory(name: 'Minuman', printDestination: 'bar');
     final snack = await createCategory(name: 'Snack');
 
     // Create products

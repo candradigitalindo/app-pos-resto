@@ -44,37 +44,28 @@ class PrintQueueService {
 
   // ── Enqueue ─────────────────────────────────────────────────────────────────
 
-  /// Buat job cetak untuk SEMUA printer dengan [role] (kitchen/bar).
-  /// Mengembalikan jumlah job yang dibuat (0 = tidak ada printer untuk role itu).
-  Future<int> enqueueForRole({
-    required String role,
+  /// Buat satu job cetak untuk [printer] tertentu. Dipakai routing per-printer
+  /// (printer memilih kategori menu yang dicetaknya).
+  Future<void> enqueueForPrinter(
+    PrinterDevice printer, {
     required List<int> bytes,
     String label = '',
   }) async {
-    final printers = await _printer.getPrintersByRole(role);
-    if (printers.isEmpty) return 0;
-
     final db = await _db.database;
     final now = DateTime.now().toIso8601String();
-    final batch = db.batch();
-    for (final p in printers) {
-      batch.insert('kitchen_print_jobs', {
-        'id': Ulid.generate(),
-        'printer_address': p.address,
-        'printer_type': p.type.name,
-        'role': role,
-        'payload': Uint8List.fromList(bytes),
-        'label': label,
-        'status': 'pending',
-        'retry_count': 0,
-        'created_at': now,
-        'updated_at': now,
-      });
-    }
-    await batch.commit(noResult: true);
-
+    await db.insert('kitchen_print_jobs', {
+      'id': Ulid.generate(),
+      'printer_address': printer.address,
+      'printer_type': printer.type.name,
+      'role': printer.rolesLabel,
+      'payload': Uint8List.fromList(bytes),
+      'label': label,
+      'status': 'pending',
+      'retry_count': 0,
+      'created_at': now,
+      'updated_at': now,
+    });
     unawaited(_drain()); // segera proses
-    return printers.length;
   }
 
   // ── Worker ──────────────────────────────────────────────────────────────────

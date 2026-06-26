@@ -4,13 +4,24 @@ import 'package:path/path.dart';
 class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
   static Database? _database;
+  static Future<Database>? _opening;
 
   AppDatabase._();
 
-  Future<Database> get database async {
-    if (_database != null) return _database!;
-    _database = await _initDb();
-    return _database!;
+  /// Mengembalikan koneksi DB tunggal. Memakai cache Future agar `_initDb`
+  /// (yang menjalankan migrasi) tidak pernah dijalankan ganda walau beberapa
+  /// pemanggil meminta `database` bersamaan saat startup.
+  Future<Database> get database {
+    final db = _database;
+    if (db != null) return Future.value(db);
+    return _opening ??= _initDb().then((opened) {
+      _database = opened;
+      _opening = null;
+      return opened;
+    }, onError: (Object e) {
+      _opening = null; // izinkan percobaan ulang bila gagal buka
+      throw e;
+    });
   }
 
   Future<Database> _initDb() async {
@@ -19,7 +30,7 @@ class AppDatabase {
 
     return openDatabase(
       path,
-      version: 2,
+      version: 6,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -32,6 +43,28 @@ class AppDatabase {
       await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_kpj_status ON kitchen_print_jobs(status, created_at)',
       );
+    }
+    if (oldVersion < 3) {
+      // Catat siapa yang memberi kompliment & alasannya
+      await db.execute('ALTER TABLE orders ADD COLUMN compliment_by TEXT');
+      await db.execute('ALTER TABLE orders ADD COLUMN compliment_reason TEXT');
+      await db.execute('ALTER TABLE orders ADD COLUMN complimented_at DATETIME');
+    }
+    if (oldVersion < 4) {
+      // Catatan/label diskon bill (mis. "member"), dikirim ke cloud
+      await db.execute('ALTER TABLE orders ADD COLUMN discount_note TEXT');
+    }
+    if (oldVersion < 5) {
+      // Tujuan cetak per kategori (kitchen/bar) — penanda routing langsung,
+      // menggantikan rantai categories.printer_id → printers (yang tak terisi).
+      await db.execute(
+        "ALTER TABLE categories ADD COLUMN print_destination TEXT NOT NULL DEFAULT 'kitchen'",
+      );
+    }
+    if (oldVersion < 6) {
+      // Kategori asal item — dipakai routing cetak per-printer (printer memilih
+      // kategori mana yang dicetaknya).
+      await db.execute('ALTER TABLE order_items ADD COLUMN category_id TEXT');
     }
   }
 
@@ -135,6 +168,7 @@ class AppDatabase {
         name TEXT NOT NULL UNIQUE,
         description TEXT,
         printer_id TEXT,
+        print_destination TEXT NOT NULL DEFAULT 'kitchen' CHECK (print_destination IN ('kitchen', 'bar')),
         is_deleted INTEGER NOT NULL DEFAULT 0,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -210,6 +244,10 @@ class AppDatabase {
         voided_at DATETIME,
         voided_by TEXT,
         void_reason TEXT,
+        compliment_by TEXT,
+        compliment_reason TEXT,
+        complimented_at DATETIME,
+        discount_note TEXT,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
@@ -230,6 +268,7 @@ class AppDatabase {
         id TEXT PRIMARY KEY CHECK (length(id) = 26),
         order_id TEXT NOT NULL,
         product_name TEXT NOT NULL,
+        category_id TEXT,
         qty INTEGER NOT NULL CHECK (qty > 0),
         price REAL NOT NULL CHECK (price >= 0),
         destination TEXT NOT NULL CHECK (destination IN ('kitchen', 'bar')),

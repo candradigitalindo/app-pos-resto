@@ -26,7 +26,12 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
+        // versionCode otomatis dari waktu build (detik epoch dikurangi offset
+        // 2023-11-14). Selalu naik tiap build → update menimpa di tablet selalu
+        // dikenali sebagai versi baru, tanpa perlu edit pubspec.
+        // Tetap jauh di bawah batas Android (2.100.000.000), aman s/d ~th 2089.
+        // Split-per-abi menambah offset ABI (×1000) di atas nilai ini.
+        versionCode = ((System.currentTimeMillis() / 1000) - 1_700_000_000L).toInt()
         versionName = flutter.versionName
     }
 

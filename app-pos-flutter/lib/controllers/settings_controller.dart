@@ -220,23 +220,42 @@ class SettingsController extends ChangeNotifier {
     }
   }
 
-  Future<void> resetDatabase() async {
+  Future<bool> resetDatabase() async {
     _setState(_state.copyWith(isSaving: true, clearError: true));
     try {
       final db = await _db.database;
-      await db.execute('DELETE FROM order_items');
-      await db.execute('DELETE FROM orders');
-      await db.execute('DELETE FROM payments');
-      await db.execute('DELETE FROM transactions');
+      await db.transaction((txn) async {
+        // Biaya tambahan per order (tidak punya cascade) — hapus eksplisit
+        await txn.delete('order_additional_charges');
+        // Order → cascade ke order_items & payments
+        await txn.delete('orders');
+        // Transaksi → cascade ke transaction_items
+        await txn.delete('transactions');
+        // Antrian sync agar data yang dihapus tidak terkirim ke cloud
+        await txn.delete('sync_queue');
+        // Antrian & job cetak
+        await txn.delete('print_queue');
+        await txn.delete('kitchen_print_jobs');
+        // Shift kasir & pergerakan kas
+        await txn.delete('cashier_cash_movements');
+        await txn.delete('cashier_shifts');
+        // Bebaskan semua meja yang masih terisi
+        await txn.update('tables', {
+          'status': 'available',
+          'updated_at': DateTime.now().toIso8601String(),
+        });
+      });
       _setState(_state.copyWith(
         isSaving: false,
         successMessage: 'Database berhasil direset',
       ));
+      return true;
     } catch (e) {
       _setState(_state.copyWith(
         isSaving: false,
         errorMessage: 'Gagal reset database: $e',
       ));
+      return false;
     }
   }
 

@@ -18,10 +18,11 @@ class SyncQueueRepository {
     required Map<String, dynamic> payload,
   }) async {
     final db = await _db.database;
-    // Hindari duplikat pending utk entity+operation yang sama: replace payload.
+    // Hapus pending & failed lama untuk entity yang sama sebelum insert baru.
+    // Ini memungkinkan re-enqueue setelah retry exhausted (status='failed').
     await db.delete(
       'sync_queue',
-      where: "entity_type = ? AND entity_id = ? AND status = 'pending'",
+      where: "entity_type = ? AND entity_id = ? AND status IN ('pending', 'failed')",
       whereArgs: [entityType, entityId],
     );
     await db.insert('sync_queue', {

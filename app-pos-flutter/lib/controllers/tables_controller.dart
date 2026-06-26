@@ -119,6 +119,36 @@ class TablesController extends ChangeNotifier {
     }
   }
 
+  Future<void> editTable({
+    required String tableId,
+    required String tableNumber,
+    int? capacity,
+  }) async {
+    _setState(_state.copyWith(isProcessing: true, clearError: true));
+    try {
+      // Cegah nomor meja bentrok dengan meja lain.
+      final dup = _state.tables.any(
+          (t) => t.id != tableId && t.tableNumber == tableNumber.trim());
+      if (dup) throw Exception('Nomor meja sudah dipakai');
+      await _tableRepo.updateTable(
+        tableId: tableId,
+        tableNumber: tableNumber.trim(),
+        capacity: capacity,
+      );
+      _setState(_state.copyWith(
+        isProcessing: false,
+        successMessage: 'Meja diperbarui',
+      ));
+      await loadTables();
+    } catch (e) {
+      _setState(_state.copyWith(
+        isProcessing: false,
+        errorMessage:
+            'Gagal mengubah meja: ${e.toString().replaceFirst('Exception: ', '')}',
+      ));
+    }
+  }
+
   Future<void> updateTableStatus(String tableNumber, String status) async {
     try {
       await _tableRepo.updateTableStatus(tableNumber, status);

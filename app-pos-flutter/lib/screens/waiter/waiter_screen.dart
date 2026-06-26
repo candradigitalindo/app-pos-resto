@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../controllers/waiter_controller.dart';
 import '../../models/models.dart';
 import '../../utils/currency.dart';
+import '../../widgets/menu_avatar.dart';
 
 class WaiterScreen extends StatefulWidget {
   const WaiterScreen({super.key});
@@ -15,6 +16,7 @@ class _WaiterScreenState extends State<WaiterScreen> {
   late final WaiterController _controller;
   String _searchQuery = '';
   String _filterStatus = 'all';
+  final _menuSearchCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -32,6 +34,7 @@ class _WaiterScreenState extends State<WaiterScreen> {
 
   @override
   void dispose() {
+    _menuSearchCtrl.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -39,6 +42,11 @@ class _WaiterScreenState extends State<WaiterScreen> {
   void _onStateChanged() {
     if (!mounted) return;
     final state = _controller.state;
+
+    // Reset kolom cari menu saat tidak lagi di tampilan order
+    if (state.viewMode != 'order' && _menuSearchCtrl.text.isNotEmpty) {
+      _menuSearchCtrl.clear();
+    }
 
     final errorMsg = state.errorMessage;
     final successMsg = state.successMessage;
@@ -121,6 +129,13 @@ class _WaiterScreenState extends State<WaiterScreen> {
     } else {
       _controller.viewOrderDetail(table);
     }
+  }
+
+  void _selectCategory(Category? cat) {
+    if (_menuSearchCtrl.text.isNotEmpty) {
+      _menuSearchCtrl.clear();
+    }
+    _controller.selectCategory(cat);
   }
 
   @override
@@ -453,6 +468,44 @@ class _WaiterScreenState extends State<WaiterScreen> {
     return Column(
       children: [
         Container(
+          color: Colors.white,
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+          child: SizedBox(
+            height: 40,
+            child: TextField(
+              controller: _menuSearchCtrl,
+              onChanged: (v) => _controller.searchProducts(v),
+              style: const TextStyle(fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'Cari menu...',
+                hintStyle:
+                    const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+                prefixIcon: const Icon(Icons.search,
+                    color: Color(0xFF94A3B8), size: 18),
+                suffixIcon: _menuSearchCtrl.text.isEmpty
+                    ? null
+                    : IconButton(
+                        icon: const Icon(Icons.close,
+                            color: Color(0xFF94A3B8), size: 18),
+                        onPressed: () {
+                          _menuSearchCtrl.clear();
+                          _controller.searchProducts('');
+                          setState(() {});
+                        },
+                      ),
+                filled: true,
+                fillColor: const Color(0xFFF2F2F7),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
+        ),
+        Container(
           height: 46,
           color: Colors.white,
           child: ListView(
@@ -460,11 +513,11 @@ class _WaiterScreenState extends State<WaiterScreen> {
             padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
             children: [
               _catChip('Semua', state.selectedCategory == null,
-                  () => _controller.selectCategory(null)),
+                  () => _selectCategory(null)),
               ...state.categories.map((cat) => _catChip(
                     cat.name,
                     state.selectedCategory?.id == cat.id,
-                    () => _controller.selectCategory(cat),
+                    () => _selectCategory(cat),
                   )),
             ],
           ),
@@ -476,11 +529,12 @@ class _WaiterScreenState extends State<WaiterScreen> {
                       style: TextStyle(color: Colors.grey[400], fontSize: 16)))
               : GridView.builder(
                   padding: const EdgeInsets.all(14),
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: crossAxisCount,
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10,
-                    childAspectRatio: crossAxisCount == 2 ? 1.8 : 2.0,
+                  gridDelegate:
+                      const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 150,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    childAspectRatio: 0.85,
                   ),
                   itemCount: state.products.length,
                   itemBuilder: (context, index) {
@@ -540,7 +594,9 @@ class _WaiterScreenState extends State<WaiterScreen> {
                 ),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
+            _waiterPaxStepper(state),
+            const SizedBox(width: 10),
             SizedBox(
               height: 44,
               child: FilledButton(
@@ -575,6 +631,38 @@ class _WaiterScreenState extends State<WaiterScreen> {
       RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
       (m) => '${m[1]}.',
     )}';
+  }
+
+  /// Stepper jumlah tamu (pax) untuk order baru — kompak.
+  Widget _waiterPaxStepper(WaiterState state) {
+    Widget btn(IconData icon, VoidCallback onTap) => Material(
+          color: const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(8),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: onTap,
+            child: SizedBox(
+              width: 30,
+              height: 30,
+              child: Icon(icon, size: 16, color: const Color(0xFF059669)),
+            ),
+          ),
+        );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.people_outline, size: 16, color: Color(0xFF64748B)),
+        const SizedBox(width: 4),
+        btn(Icons.remove, () => _controller.setPax(state.pax - 1)),
+        Container(
+          width: 28,
+          alignment: Alignment.center,
+          child: Text('${state.pax}',
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+        ),
+        btn(Icons.add, () => _controller.setPax(state.pax + 1)),
+      ],
+    );
   }
 
   void _showWaiterCartSheet(WaiterState initialState) {
@@ -689,7 +777,21 @@ class _WaiterScreenState extends State<WaiterScreen> {
                               ],
                             ),
                             const SizedBox(height: 12),
-                            if (state.cart.isNotEmpty)
+                            if (state.cart.isNotEmpty) ...[
+                              Row(
+                                children: [
+                                  const Icon(Icons.people_outline,
+                                      size: 18, color: Color(0xFF64748B)),
+                                  const SizedBox(width: 8),
+                                  const Text('Jumlah Tamu',
+                                      style: TextStyle(
+                                          fontSize: 14,
+                                          color: Color(0xFF475569))),
+                                  const Spacer(),
+                                  _waiterPaxStepper(state),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
                               SizedBox(
                                 width: double.infinity,
                                 height: 50,
@@ -721,6 +823,7 @@ class _WaiterScreenState extends State<WaiterScreen> {
                                           )),
                                 ),
                               ),
+                            ],
                           ],
                         ),
                       ),
@@ -997,7 +1100,162 @@ class _WaiterScreenState extends State<WaiterScreen> {
               ),
             ],
           ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _actionBtn(
+                  label: 'Pindah Meja',
+                  icon: Icons.swap_horiz,
+                  isOutlined: true,
+                  onTap: () => _showMovePicker(state),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _actionBtn(
+                  label: 'Gabung Meja',
+                  icon: Icons.merge_type,
+                  isOutlined: true,
+                  onTap: () => _showMergePicker(state),
+                ),
+              ),
+            ],
+          ),
         ],
+      ),
+    );
+  }
+
+  // ── Pindah / Gabung Meja ───────────────────────────────────────────────────
+
+  Future<void> _showMovePicker(WaiterState state) async {
+    final order = state.currentOrder;
+    if (order == null) return;
+    // Meja kosong sebagai tujuan pindah.
+    final targets = state.tables
+        .where((t) =>
+            t.status == 'available' && t.tableNumber != order.tableNumber)
+        .toList();
+    if (!mounted) return;
+    if (targets.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tidak ada meja kosong')),
+      );
+      return;
+    }
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 20, 20, 8),
+              child: Text('Pindah ke Meja',
+                  style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF0F172A))),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: targets
+                    .map((t) => ListTile(
+                          leading: const Icon(Icons.table_restaurant_outlined,
+                              color: Color(0xFF059669)),
+                          title: Text('Meja ${t.tableNumber}'),
+                          onTap: () => Navigator.pop(ctx, t.tableNumber),
+                        ))
+                    .toList(),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final ok = await _controller.moveOrderToTable(picked);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ok
+            ? 'Pesanan dipindah ke Meja $picked'
+            : state.errorMessage ?? 'Gagal pindah meja'),
+      ),
+    );
+  }
+
+  Future<void> _showMergePicker(WaiterState state) async {
+    final order = state.currentOrder;
+    if (order == null) return;
+    final mergeable = await _controller.getMergeableOrders();
+    if (!mounted) return;
+    if (mergeable.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tidak ada meja lain untuk digabung')),
+      );
+      return;
+    }
+    final picked = await showModalBottomSheet<Order>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
+              child: Text('Gabung ke Meja ${order.tableNumber}',
+                  style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF0F172A))),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text('Pilih meja yang item-nya akan dipindah ke sini',
+                  style: TextStyle(fontSize: 12, color: Color(0xFF8E8E93))),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: mergeable
+                    .map((o) => ListTile(
+                          leading: const Icon(Icons.merge_type,
+                              color: Color(0xFF059669)),
+                          title: Text('Meja ${o.tableNumber}'),
+                          subtitle: Text(
+                              '${o.basketSize} item · ${CurrencyHelper.format(o.totalAmount)}'),
+                          onTap: () => Navigator.pop(ctx, o),
+                        ))
+                    .toList(),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final ok = await _controller.mergeTable(picked.id);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ok
+            ? 'Meja ${picked.tableNumber} digabung ke Meja ${order.tableNumber}'
+            : state.errorMessage ?? 'Gagal gabung meja'),
       ),
     );
   }
@@ -1542,41 +1800,50 @@ class _WaiterProductTile extends StatelessWidget {
           ),
           padding: const EdgeInsets.all(10),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Avatar besar mengisi bagian atas kartu
+              Expanded(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: MenuAvatar.fill(name: product.name),
+                    ),
+                    if (inCart > 0)
+                      Positioned(
+                        top: 6,
+                        right: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF059669),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text('$inCart',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              )),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
               Text(product.name,
                   style: const TextStyle(
-                      fontWeight: FontWeight.w600, fontSize: 12),
+                      fontWeight: FontWeight.w600, fontSize: 13),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis),
-              const SizedBox(height: 4),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(CurrencyHelper.format(product.price),
-                      style: const TextStyle(
-                        color: Color(0xFF059669),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 11,
-                      )),
-                  if (inCart > 0)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF059669),
-                        borderRadius: BorderRadius.circular(7),
-                      ),
-                      child: Text('$inCart',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          )),
-                    ),
-                ],
-              ),
+              const SizedBox(height: 2),
+              Text(CurrencyHelper.format(product.price),
+                  style: const TextStyle(
+                    color: Color(0xFF059669),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  )),
             ],
           ),
         ),

@@ -6,12 +6,12 @@ import '../services/print_queue_service.dart';
 import '../services/printer_service.dart';
 import '../services/receipt_builder.dart';
 import '../utils/ulid.dart';
-import '../utils/currency.dart';
 import 'sync_queue_repository.dart';
 
 class OrderRepository {
   final AppDatabase _db = AppDatabase.instance;
   final SyncQueueRepository _sync = SyncQueueRepository();
+  final PrinterService _printer = PrinterService();
 
   // ==================== CREATE ORDER ====================
 
@@ -41,6 +41,7 @@ class OrderRepository {
         id: Ulid.generate(),
         orderId: orderId,
         productName: product.name,
+        categoryId: product.categoryId,
         qty: input.qty,
         price: product.price,
         destination: await _determineDestination(product),
@@ -91,6 +92,9 @@ class OrderRepository {
     // Apply auto charges
     await _applyAutoCharges(orderId);
 
+    // Sync order (belum bayar) ke cloud
+    await _enqueueOrder(orderId, 'create');
+
     // Enqueue tiket dapur/bar (durable + retry). Tidak memblokir return.
     await enqueueKitchenPrints(
       order: order,
@@ -108,6 +112,79 @@ class OrderRepository {
     final results = await _db.query('orders', where: 'id = ?', whereArgs: [id]);
     if (results.isEmpty) return null;
     return Order.fromMap(results.first);
+  }
+
+  /// Daftar order yang sudah di-void (untuk Histori Void), terbaru dulu.
+  Future<List<Order>> getVoidedOrders({int limit = 100}) async {
+    final results = await _db.query(
+      'orders',
+      where: 'voided_at IS NOT NULL',
+      orderBy: 'voided_at DESC',
+      limit: limit,
+    );
+    return results.map((m) => Order.fromMap(m)).toList();
+  }
+
+  /// Transaksi yang sudah dibayar & belum di-void (untuk dipilih saat void).
+  Future<List<Order>> getRecentPaidOrders({int limit = 50}) async {
+    final results = await _db.query(
+      'orders',
+      where: "payment_status = 'paid' AND voided_at IS NULL",
+      orderBy: 'updated_at DESC',
+      limit: limit,
+    );
+    return results.map((m) => Order.fromMap(m)).toList();
+  }
+
+  /// Void (batalkan) transaksi yang SUDAH dibayar. Menandai order void,
+  /// membatalkan transaksi terkait, dan mengembalikan pembayaran (paid_amount=0,
+  /// status unpaid) agar tidak terhitung di pendapatan.
+  Future<void> voidPaidOrder({
+    required String orderId,
+    required String voidedBy,
+    required String reason,
+  }) async {
+    final order = await getOrderById(orderId);
+    if (order == null) throw Exception('Order tidak ditemukan');
+    if (order.isVoided) throw Exception('Order sudah di-void');
+    if (!order.isPaid) {
+      throw Exception('Hanya transaksi yang sudah dibayar yang bisa di-void');
+    }
+
+    final db = await _db.database;
+    final now = DateTime.now();
+    await db.transaction((txn) async {
+      // Tandai order void + kembalikan pembayaran
+      await txn.update(
+        'orders',
+        {
+          'voided_at': now.toIso8601String(),
+          'voided_by': voidedBy,
+          'void_reason': reason,
+          'paid_amount': 0,
+          'payment_status': 'unpaid',
+          'updated_at': now.toIso8601String(),
+        },
+        where: 'id = ?',
+        whereArgs: [orderId],
+      );
+      // Batalkan transaksi terkait
+      await txn.update(
+        'transactions',
+        {
+          'status': 'cancelled',
+          'cancelled_at': now.toIso8601String(),
+          'cancelled_by': voidedBy,
+          'cancel_reason': reason,
+          'updated_at': now.toIso8601String(),
+        },
+        where: "order_id = ? AND status != 'cancelled'",
+        whereArgs: [orderId],
+      );
+    });
+
+    // Sync status order (kini void) ke cloud
+    await _enqueueOrder(orderId, 'upsert');
   }
 
   Future<Order?> getOrderByTable(String tableNumber) async {
@@ -157,6 +234,7 @@ class OrderRepository {
         id: Ulid.generate(),
         orderId: orderId,
         productName: product.name,
+        categoryId: product.categoryId,
         qty: input.qty,
         price: product.price,
         destination: await _determineDestination(product),
@@ -178,6 +256,9 @@ class OrderRepository {
 
     await _recalculateOrderTotal(orderId);
 
+    // Sync perubahan order (item tambahan) ke cloud
+    await _enqueueOrder(orderId, 'upsert');
+
     // Enqueue tiket tambahan ke dapur/bar
     await enqueueKitchenPrints(
       order: order,
@@ -185,6 +266,115 @@ class OrderRepository {
       isAdditional: true,
       waiterName: waiterName,
     );
+  }
+
+  /// Backfill: masukkan semua order aktif (belum bayar, belum void) yang belum
+  /// pernah ada di sync_queue. Berguna untuk order yang dibuat sebelum fitur
+  /// sync order aktif (atau yang terlewat). Idempoten — order yang sudah punya
+  /// entry sync (pending/success/failed) tidak ditambahkan lagi.
+  Future<int> enqueueUnsyncedActiveOrders() async {
+    final db = await _db.database;
+    // Hanya skip order yang sudah punya entry pending/success.
+    // Order dengan entry 'failed' ikut di-backfill agar dicoba ulang
+    // (entry failed lama dihapus saat enqueue() dipanggil).
+    final rows = await db.rawQuery('''
+      SELECT id FROM orders
+      WHERE payment_status != 'paid' AND voided_at IS NULL
+        AND id NOT IN (
+          SELECT entity_id FROM sync_queue
+          WHERE entity_type = 'order' AND status IN ('pending', 'success')
+        )
+    ''');
+    for (final r in rows) {
+      await _enqueueOrder(r['id'] as String, 'upsert');
+    }
+    return rows.length;
+  }
+
+  /// Label "Pemesan" sama persis dengan struk (lihat _orderersLabel di
+  /// CashierController): gabungan nama pemesan unik dari item (dipisah koma),
+  /// fallback ke pembuat order bila item tak ber-nama.
+  String _orderersLabel(List<OrderItem> items, Order order) {
+    final names = <String>{};
+    for (final it in items) {
+      final n = it.waiterName.trim();
+      if (n.isNotEmpty) names.add(n);
+    }
+    if (names.isEmpty) return order.createdBy ?? '';
+    return names.join(', ');
+  }
+
+  /// Masukkan order (termasuk yang belum dibayar) ke antrian sync cloud.
+  /// Meniru enqueueOrderSync di app-pos: kirim status & item terkini setiap
+  /// kali order berubah (create / tambah item / dll).
+  Future<void> _enqueueOrder(String orderId, String operation) async {
+    try {
+      final order = await getOrderById(orderId);
+      if (order == null) return;
+      final items = await getOrderItems(orderId);
+      final charges = await getOrderCharges(orderId);
+
+      // Diskon bill = total charge diskon manual (name 'Diskon', applied negatif).
+      // Kompliment TIDAK dihitung sebagai diskon — dikirim via is_complimentary.
+      final billDiscount = charges
+          .where((c) => c.isManual && c.name == 'Diskon' && c.appliedAmount < 0)
+          .fold<double>(0, (s, c) => s + c.appliedAmount.abs());
+
+      // Kompliment seluruh order → setiap item ditandai gratis (cloud menghitung
+      // nilai kompliment dari subtotal item ber-is_complimentary).
+      final isCompliment = order.complimentedAt != null;
+
+      final payload = {
+        'local_id': order.id,
+        'table_number': order.tableNumber,
+        'customer_name': order.customerName ?? '',
+        'created_by': order.createdBy ?? '', // pembuat order (1 orang)
+        'orderer_name': _orderersLabel(items, order), // label pemesan = struk
+        'pax': order.pax,
+        'total_amount': order.totalAmount,
+        'status': order.orderStatus,
+        'items': items
+            .map((it) => {
+                  'product_name': it.productName,
+                  'qty': it.qty,
+                  'price': it.price,
+                  'subtotal': it.subtotal,
+                  'destination': it.destination,
+                  'status': it.itemStatus,
+                  'waiter_name': it.waiterName, // pemesan item ini
+                  if (isCompliment) 'is_complimentary': true,
+                })
+            .toList(),
+        'payment_info': {
+          'paid_amount': order.paidAmount,
+          'payment_status': order.paymentStatus,
+          if (billDiscount > 0) 'discount': billDiscount,
+          if (billDiscount > 0 &&
+              order.discountNote != null &&
+              order.discountNote!.isNotEmpty)
+            'discount_note': order.discountNote,
+          if (order.voidedAt != null)
+            'voided_at': order.voidedAt!.toIso8601String(),
+          if (order.complimentedAt != null) ...{
+            'complimented_at': order.complimentedAt!.toIso8601String(),
+            'compliment_by': order.complimentBy ?? '',
+            'compliment_reason': order.complimentReason ?? '',
+          },
+        },
+        'version': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        'created_at': order.createdAt.toIso8601String(),
+        'updated_at': order.updatedAt.toIso8601String(),
+      };
+
+      await _sync.enqueue(
+        entityType: 'order',
+        entityId: order.id,
+        operation: operation,
+        payload: payload,
+      );
+    } catch (e) {
+      debugPrint('enqueueOrder error: $e');
+    }
   }
 
   // ==================== UPDATE ITEM STATUS ====================
@@ -297,6 +487,19 @@ class OrderRepository {
     final orderItems = await getOrderItems(orderId);
 
     await db.transaction((txn) async {
+      // KLAIM ATOMIK: tandai lunas hanya bila belum lunas. Transaksi SQLite
+      // ter-serialize, jadi pembayaran bersamaan kedua akan dapat 0 baris →
+      // batalkan agar tidak dobel catat (anti race saat transaksi padat).
+      final claimed = await txn.rawUpdate(
+        "UPDATE orders SET payment_status='paid', paid_amount=?, "
+        "order_status='served', updated_at=? "
+        "WHERE id=? AND payment_status != 'paid'",
+        [totalPaid, now.toIso8601String(), orderId],
+      );
+      if (claimed == 0) {
+        throw Exception('Tagihan sudah lunas');
+      }
+
       // Insert payment
       await txn.insert('payments', payment.toMap());
 
@@ -316,19 +519,6 @@ class OrderRepository {
           ).toMap(),
         );
       }
-
-      // Update order
-      await txn.update(
-        'orders',
-        {
-          'payment_status': 'paid',
-          'paid_amount': totalPaid,
-          'order_status': 'served',
-          'updated_at': now.toIso8601String(),
-        },
-        where: 'id = ?',
-        whereArgs: [orderId],
-      );
 
       // Update all items to served
       await txn.update(
@@ -361,6 +551,9 @@ class OrderRepository {
       cashierId: createdBy ?? '',
     );
 
+    // Sync status order terbaru (kini 'paid') ke cloud
+    await _enqueueOrder(orderId, 'upsert');
+
     return {
       'order_id': orderId,
       'total_amount': order.totalAmount,
@@ -384,9 +577,29 @@ class OrderRepository {
     required double paidAmount,
     required double changeAmount,
     required String cashierId,
+    List<Map<String, dynamic>>? payments,
   }) async {
     try {
       final charges = await getOrderCharges(order.id);
+
+      // Rincian metode pembayaran (gabung bayar / split bill multi-metode).
+      // Selalu kirim payments[] agar bentuk payload konsisten di cloud.
+      final payList = (payments == null || payments.isEmpty)
+          ? [
+              {
+                'payment_method': paymentMethod,
+                'amount': paidAmount,
+                'payment_note': null,
+              }
+            ]
+          : payments;
+      final distinctMethods =
+          payList.map((p) => p['payment_method']).toSet();
+      final effectiveMethod =
+          distinctMethods.length > 1 ? 'mixed' : paymentMethod;
+      final cashAmount = payList
+          .where((p) => p['payment_method'] == 'cash')
+          .fold<double>(0, (s, p) => s + (p['amount'] as num).toDouble());
 
       final subtotal = items.fold(0.0, (sum, i) => sum + i.subtotal);
       double taxTotal = 0; // charge persentase (pajak/PB1)
@@ -419,17 +632,20 @@ class OrderRepository {
                   })
               .toList(),
           'total_amount': order.totalAmount, // grand total
-          'payment_method': paymentMethod,
-          'cash_amount': paymentMethod == 'cash' ? paidAmount : 0,
+          'payment_method': effectiveMethod, // 'mixed' bila >1 metode
+          'cash_amount': cashAmount, // total tunai (gabung bayar)
           'change_amount': changeAmount,
-          'cashier_name': '',
+          'payments': payList, // rincian tiap metode + nominal
+          'cashier_name': cashierId, // kasir pemroses bayar
           'created_by': cashierId,
+          'orderer_name': _orderersLabel(items, order), // label pemesan = struk
           'items': items
               .map((i) => {
                     'product_name': i.productName,
                     'quantity': i.qty,
                     'price': i.price,
                     'subtotal': i.subtotal,
+                    'waiter_name': i.waiterName, // pemesan item ini
                   })
               .toList(),
           'created_at': transaction.createdAt.toIso8601String(),
@@ -454,29 +670,44 @@ class OrderRepository {
     if (order == null) throw Exception('Order tidak ditemukan');
     if (order.isPaid) throw Exception('Tagihan sudah lunas');
 
-    final remaining = order.remaining;
-    if (amount > remaining) amount = remaining;
-
-    final payment = Payment(
-      id: Ulid.generate(),
-      orderId: orderId,
-      amount: amount,
-      paymentMethod: paymentMethod,
-      paymentNote: note,
-      createdBy: createdBy ?? '',
-      createdAt: now,
-    );
-
-    final newPaidAmount = order.paidAmount + amount;
-    final newPaymentStatus =
-        newPaidAmount >= order.totalAmount ? 'paid' : 'partial';
-
     // Items diambil sebelum txn untuk payload sync (jika lunas)
     final splitItems = await getOrderItems(orderId);
     Transaction? completedTx;
+    late double effAmount; // jumlah yang benar-benar tercatat (clamp ke sisa)
+    late double newPaidAmount;
+    late String newPaymentStatus;
 
     await db.transaction((txn) async {
-      await txn.insert('payments', payment.toMap());
+      // Baca ulang saldo terkini DI DALAM txn (anti lost-update saat 2 bayar
+      // parsial bersamaan). SQLite men-serialize transaksi.
+      final rows = await txn.query(
+        'orders',
+        columns: ['paid_amount', 'payment_status', 'total_amount'],
+        where: 'id = ?',
+        whereArgs: [orderId],
+        limit: 1,
+      );
+      if (rows.isEmpty) throw Exception('Order tidak ditemukan');
+      if (rows.first['payment_status'] == 'paid') {
+        throw Exception('Tagihan sudah lunas');
+      }
+      final curPaid = (rows.first['paid_amount'] as num).toDouble();
+      final total = (rows.first['total_amount'] as num).toDouble();
+      final sisa = total - curPaid;
+      effAmount = amount > sisa ? sisa : amount;
+      if (effAmount < 0) effAmount = 0;
+      newPaidAmount = curPaid + effAmount;
+      newPaymentStatus = newPaidAmount >= total ? 'paid' : 'partial';
+
+      await txn.insert('payments', {
+        'id': Ulid.generate(),
+        'order_id': orderId,
+        'amount': effAmount,
+        'payment_method': paymentMethod,
+        'payment_note': note,
+        'created_by': createdBy ?? '',
+        'created_at': now.toIso8601String(),
+      });
 
       await txn.update(
         'orders',
@@ -536,6 +767,22 @@ class OrderRepository {
 
     // Outbox: kirim transaksi ke cloud saat order lunas via split bill
     if (completedTx != null) {
+      // Kumpulkan semua pembayaran parsial (gabung bayar: mis. QRIS + Cash)
+      final payRows = await db.query(
+        'payments',
+        where: 'order_id = ?',
+        whereArgs: [orderId],
+        orderBy: 'created_at ASC',
+      );
+      final paymentsList = payRows
+          .map((r) => {
+                'payment_method': r['payment_method'],
+                'amount': (r['amount'] as num).toDouble(),
+                'payment_note': r['payment_note'],
+                'created_at': r['created_at'],
+              })
+          .toList();
+
       await _enqueueTransaction(
         transaction: completedTx!,
         order: order,
@@ -544,12 +791,16 @@ class OrderRepository {
         paidAmount: order.totalAmount,
         changeAmount: 0,
         cashierId: createdBy ?? '',
+        payments: paymentsList,
       );
     }
 
+    // Sync status order terbaru ke cloud
+    await _enqueueOrder(orderId, 'upsert');
+
     return {
       'order_id': orderId,
-      'amount_paid': amount,
+      'amount_paid': effAmount,
       'remaining': order.totalAmount - newPaidAmount,
       'payment_status': newPaymentStatus,
     };
@@ -561,6 +812,7 @@ class OrderRepository {
     required String orderId,
     required String chargeType,
     required double value,
+    String note = '',
   }) async {
     if (chargeType != 'percentage' && chargeType != 'fixed') {
       throw Exception('charge_type harus percentage atau fixed');
@@ -573,74 +825,61 @@ class OrderRepository {
     final order = await getOrderById(orderId);
     if (order == null) throw Exception('Order tidak ditemukan');
     if (order.isPaid) throw Exception('Order sudah dibayar');
+    if (order.paidAmount > 0) {
+      throw Exception('Diskon tidak bisa setelah ada pembayaran');
+    }
 
     final items = await getOrderItems(orderId);
     final subtotal = items.fold(0.0, (sum, item) => sum + item.subtotal);
+    if (subtotal <= 0) throw Exception('Total order sudah nol');
 
-    double appliedAmount;
-    if (chargeType == 'percentage') {
-      appliedAmount = -(subtotal * value / 100);
-    } else {
-      appliedAmount = -value;
-    }
+    // Selaras app-pos: buang diskon/kompliment manual lama agar tidak menumpuk.
+    await _db.delete(
+      'order_additional_charges',
+      where: "order_id = ? AND charge_id IS NULL AND name IN ('Diskon', 'Kompliment')",
+      whereArgs: [orderId],
+    );
+
+    // Diskon dihitung dari subtotal (sebelum pajak/service), dibulatkan & dibatasi.
+    double discountAbs =
+        chargeType == 'percentage' ? subtotal * value / 100 : value;
+    discountAbs = discountAbs.roundToDouble();
+    if (discountAbs <= 0) throw Exception('Nilai diskon tidak valid');
+    if (discountAbs > subtotal) discountAbs = subtotal;
 
     final now = DateTime.now();
     await _db.insert('order_additional_charges', {
       'order_id': orderId,
       'charge_id': null, // Manual discount
-      'name':
-          'Diskon ${chargeType == 'percentage' ? '$value%' : CurrencyHelper.format(value)}',
+      'name': 'Diskon',
       'charge_type': chargeType,
       'value': value,
-      'applied_amount': appliedAmount,
+      'applied_amount': -discountAbs,
       'created_at': now.toIso8601String(),
       'updated_at': now.toIso8601String(),
     });
 
+    // Simpan catatan diskon (mis. "member") untuk dikirim ke cloud.
+    await _db.update(
+      'orders',
+      {'discount_note': note.isEmpty ? null : note},
+      where: 'id = ?',
+      whereArgs: [orderId],
+    );
+
     await _recalculateOrderTotal(orderId);
-  }
 
-  // ==================== VOID ORDER ====================
-
-  Future<void> voidOrder({
-    required String orderId,
-    required String voidedBy,
-    required String reason,
-  }) async {
-    final now = DateTime.now();
-    final order = await getOrderById(orderId);
-    if (order == null) throw Exception('Order tidak ditemukan');
-    if (order.isPaid) throw Exception('Order sudah dibayar');
-    if (order.isVoided) throw Exception('Order sudah di-void');
-
-    final db = await _db.database;
-    await db.transaction((txn) async {
-      await txn.update(
-        'orders',
-        {
-          'voided_at': now.toIso8601String(),
-          'voided_by': voidedBy,
-          'void_reason': reason,
-          'updated_at': now.toIso8601String(),
-        },
-        where: 'id = ?',
-        whereArgs: [orderId],
-      );
-
-      // Free table
-      await txn.update(
-        'tables',
-        {'status': 'available', 'updated_at': now.toIso8601String()},
-        where: 'table_number = ?',
-        whereArgs: [order.tableNumber],
-      );
-    });
+    // Sync order (total kini sudah didiskon) ke cloud — selaras app-pos
+    // yang memanggil enqueueOrderSync setelah diskon diterapkan.
+    await _enqueueOrder(orderId, 'upsert');
   }
 
   // ==================== COMPLIMENT ORDER ====================
 
   Future<void> complimentOrder({
     required String orderId,
+    required String complimentBy,
+    String reason = '',
     String? createdBy,
   }) async {
     final db = await _db.database;
@@ -648,6 +887,15 @@ class OrderRepository {
 
     final order = await getOrderById(orderId);
     if (order == null) throw Exception('Order tidak ditemukan');
+    if (order.isPaid) throw Exception('Order sudah dibayar');
+    if (order.isVoided) throw Exception('Order sudah di-void');
+    if (order.paidAmount > 0) {
+      throw Exception('Kompliment tidak bisa setelah ada pembayaran');
+    }
+
+    // Subtotal dari item (sebelum charge). Kompliment = gratiskan seluruh subtotal.
+    final items = await getOrderItems(orderId);
+    final subtotal = items.fold(0.0, (sum, i) => sum + i.subtotal);
 
     final transaction = Transaction(
       id: Ulid.generate(),
@@ -664,6 +912,24 @@ class OrderRepository {
     await db.transaction((txn) async {
       await txn.insert('transactions', transaction.toMap());
 
+      // Selaras app-pos: catat kompliment sebagai charge negatif sebesar subtotal
+      // (hapus semua charge lain dulu — pajak/service ikut digratiskan) agar
+      // breakdown uang konsisten: subtotal + (-subtotal) = 0.
+      await txn.delete('order_additional_charges',
+          where: 'order_id = ?', whereArgs: [orderId]);
+      if (subtotal > 0) {
+        await txn.insert('order_additional_charges', {
+          'order_id': orderId,
+          'charge_id': null,
+          'name': 'Kompliment',
+          'charge_type': 'fixed',
+          'value': subtotal,
+          'applied_amount': -subtotal,
+          'created_at': now.toIso8601String(),
+          'updated_at': now.toIso8601String(),
+        });
+      }
+
       await txn.update(
         'orders',
         {
@@ -671,6 +937,9 @@ class OrderRepository {
           'paid_amount': 0,
           'payment_status': 'paid',
           'order_status': 'served',
+          'compliment_by': complimentBy,
+          'compliment_reason': reason.isEmpty ? null : reason,
+          'complimented_at': now.toIso8601String(),
           'updated_at': now.toIso8601String(),
         },
         where: 'id = ?',
@@ -685,17 +954,20 @@ class OrderRepository {
       );
     });
 
-    // Outbox: kirim transaksi compliment (total 0) ke cloud
-    final complimentItems = await getOrderItems(orderId);
+    // Outbox: kirim transaksi compliment (total 0) ke cloud. _enqueueTransaction
+    // membaca ulang charges (termasuk Kompliment negatif) sehingga breakdown benar.
     await _enqueueTransaction(
       transaction: transaction,
       order: order,
-      items: complimentItems,
+      items: items,
       paymentMethod: 'compliment',
       paidAmount: 0,
       changeAmount: 0,
       cashierId: createdBy ?? '',
     );
+
+    // Sync status order (compliment, total 0) ke cloud
+    await _enqueueOrder(orderId, 'upsert');
   }
 
   // ==================== MOVE TABLE ====================
@@ -738,6 +1010,81 @@ class OrderRepository {
         whereArgs: [newTableNumber],
       );
     });
+
+    // Sync order (nomor meja baru) ke cloud
+    await _enqueueOrder(orderId, 'upsert');
+  }
+
+  /// Gabung order [sourceOrderId] ke [targetOrderId]: pindahkan semua item ke
+  /// target, tutup order source (kosong), bebaskan meja source, lalu hitung
+  /// ulang pajak/total target atas subtotal gabungan.
+  Future<void> mergeOrders({
+    required String targetOrderId,
+    required String sourceOrderId,
+  }) async {
+    if (targetOrderId == sourceOrderId) {
+      throw Exception('Tidak bisa gabung ke meja yang sama');
+    }
+    final target = await getOrderById(targetOrderId);
+    final source = await getOrderById(sourceOrderId);
+    if (target == null || source == null) {
+      throw Exception('Order tidak ditemukan');
+    }
+    if (target.isPaid || source.isPaid) {
+      throw Exception('Order sudah dibayar, tak bisa digabung');
+    }
+    if (target.isVoided || source.isVoided) {
+      throw Exception('Order sudah dibatalkan');
+    }
+
+    final db = await _db.database;
+    final now = DateTime.now().toIso8601String();
+    await db.transaction((txn) async {
+      // Pindahkan item source -> target
+      await txn.update('order_items', {'order_id': targetOrderId, 'updated_at': now},
+          where: 'order_id = ?', whereArgs: [sourceOrderId]);
+      // Tutup order source: kosong, ditandai gabungan (keluar dari daftar aktif).
+      await txn.update(
+        'orders',
+        {
+          'total_amount': 0,
+          'paid_amount': 0,
+          'basket_size': 0,
+          'is_merged': 1,
+          'merged_from': targetOrderId,
+          'payment_status': 'paid',
+          'order_status': 'served',
+          'updated_at': now,
+        },
+        where: 'id = ?',
+        whereArgs: [sourceOrderId],
+      );
+      // Bebaskan meja source
+      await txn.update('tables', {'status': 'available', 'updated_at': now},
+          where: 'table_number = ?', whereArgs: [source.tableNumber]);
+      // Hapus charge lama (target & source) — pajak dihitung ulang.
+      await txn.delete('order_additional_charges',
+          where: 'order_id IN (?, ?)',
+          whereArgs: [targetOrderId, sourceOrderId]);
+    });
+
+    // Terapkan ulang pajak/biaya otomatis pada subtotal gabungan + recalc total.
+    await _applyAutoCharges(targetOrderId);
+    await _enqueueOrder(targetOrderId, 'upsert');
+    await _enqueueOrder(sourceOrderId, 'upsert');
+  }
+
+  /// Order aktif (belum bayar, belum void, bukan hasil-gabung) di meja LAIN —
+  /// untuk dipilih saat menggabung meja.
+  Future<List<Order>> getMergeableOrders(String excludeTableNumber) async {
+    final results = await _db.query(
+      'orders',
+      where:
+          "payment_status != 'paid' AND voided_at IS NULL AND is_merged = 0 AND table_number != ?",
+      whereArgs: [excludeTableNumber],
+      orderBy: 'CAST(table_number AS INTEGER) ASC, table_number ASC',
+    );
+    return results.map((m) => Order.fromMap(m)).toList();
   }
 
   // ==================== ACTIVE ORDERS WITH ITEMS (optimized) ====================
@@ -894,9 +1241,9 @@ class OrderRepository {
     return OrderItem.fromMap(results.first);
   }
 
-  /// Kelompokkan item per destination (kitchen/bar), bangun tiket ESC/POS,
-  /// lalu masukkan ke antrian cetak. Dipanggil dari SEMUA jalur pembuatan order
-  /// (kasir, waiter, station API) sehingga dapur/bar tidak pernah ter-skip.
+  /// Routing cetak per-printer: tiap printer mencetak item dari KATEGORI yang
+  /// dipilihnya (di Pengaturan Printer). Printer ber-role checker mendapat
+  /// salinan SELURUH pesanan. Dipanggil dari semua jalur pembuatan order.
   Future<void> enqueueKitchenPrints({
     required Order order,
     required List<OrderItem> items,
@@ -904,32 +1251,105 @@ class OrderRepository {
     String waiterName = '',
   }) async {
     try {
-      final byDest = <String, List<OrderItem>>{};
-      for (final it in items) {
-        (byDest[it.destination] ??= []).add(it);
+      if (items.isEmpty) return;
+      final printers = await _printer.getSavedPrinters();
+      if (printers.isEmpty) {
+        debugPrint('enqueueKitchenPrints: tidak ada printer tersimpan.');
+        return;
       }
 
-      const builder = ReceiptBuilder(paperWidth: 32);
-      for (final entry in byDest.entries) {
-        final role = entry.key; // 'kitchen' | 'bar'
-        if (role != PrinterRole.kitchen && role != PrinterRole.bar) continue;
-        final label = role == PrinterRole.bar ? 'BAR' : 'DAPUR';
+      final now = DateTime.now();
+      var routedStation = false; // ada printer kategori yang kebagian item?
 
+      // Pemesan: nama waiter bila ada, jika tidak kasir pembuat order.
+      final placedBy = waiterName.isNotEmpty
+          ? waiterName
+          : ((order.createdBy?.isNotEmpty ?? false) ? order.createdBy! : 'Kasir');
+
+      // Peta id→nama kategori untuk tag di tiket checker (dimuat sekali).
+      final hasChecker = printers.any((p) => p.hasRole(PrinterRole.checker));
+      final categoryNames = <String, String>{};
+      if (hasChecker) {
+        final cats = await _db.query('categories', columns: ['id', 'name']);
+        for (final c in cats) {
+          categoryNames[c['id'] as String] = c['name'] as String? ?? '';
+        }
+      }
+
+      for (final p in printers) {
+        final builder = ReceiptBuilder(paperWidth: p.paperCols);
+        if (p.hasRole(PrinterRole.checker)) {
+          // Checker: salinan seluruh pesanan (semua item).
+          final bytes = builder.buildCheckerOrder(
+            orderId: order.id,
+            tableNumber: order.tableNumber,
+            waiterName: waiterName,
+            items: items,
+            dateTime: now,
+            categoryNames: categoryNames,
+            isAdditional: isAdditional,
+          );
+          await PrintQueueService.instance.enqueueForPrinter(
+            p,
+            bytes: bytes,
+            label: 'Meja ${order.tableNumber} (CHECKER)',
+          );
+          continue;
+        }
+
+        // Printer stasiun: hanya item dari kategori yang dipilihnya.
+        final mine =
+            items.where((it) => p.printsCategory(it.categoryId)).toList();
+        if (mine.isEmpty) continue;
         final bytes = builder.buildKitchenOrder(
           orderId: order.id,
           tableNumber: order.tableNumber,
           waiterName: waiterName,
-          items: entry.value,
-          dateTime: DateTime.now(),
-          printerLabel: label,
+          items: mine,
+          dateTime: now,
+          printerLabel: p.name.toUpperCase(),
           isAdditional: isAdditional,
+          placedBy: placedBy,
+          customerName: order.customerName,
+          pax: order.pax,
         );
-
-        await PrintQueueService.instance.enqueueForRole(
-          role: role,
+        await PrintQueueService.instance.enqueueForPrinter(
+          p,
           bytes: bytes,
-          label: 'Meja ${order.tableNumber} ($label)',
+          label: 'Meja ${order.tableNumber} (${p.name})',
         );
+        routedStation = true;
+      }
+
+      // Fallback: tak ada printer kategori yang cocok (kategori belum di-assign).
+      // Cetak semua item ke printer non-checker pertama agar tiket tak hilang.
+      if (!routedStation) {
+        final fb = printers.firstWhere(
+          (p) => !p.hasRole(PrinterRole.checker),
+          orElse: () => printers.first,
+        );
+        if (!fb.hasRole(PrinterRole.checker)) {
+          final builder = ReceiptBuilder(paperWidth: fb.paperCols);
+          final bytes = builder.buildKitchenOrder(
+            orderId: order.id,
+            tableNumber: order.tableNumber,
+            waiterName: waiterName,
+            items: items,
+            dateTime: now,
+            printerLabel: fb.name.toUpperCase(),
+            isAdditional: isAdditional,
+            placedBy: placedBy,
+            customerName: order.customerName,
+            pax: order.pax,
+          );
+          await PrintQueueService.instance.enqueueForPrinter(
+            fb,
+            bytes: bytes,
+            label: 'Meja ${order.tableNumber}',
+          );
+          debugPrint(
+              'enqueueKitchenPrints: belum ada kategori yang di-assign — semua item dikirim ke "${fb.name}". Atur kategori printer di Pengaturan untuk routing tepat.');
+        }
       }
     } catch (e) {
       // Order sudah tersimpan; kegagalan enqueue tidak boleh membatalkan order.
@@ -937,19 +1357,19 @@ class OrderRepository {
     }
   }
 
+  /// Tentukan tujuan cetak item ('kitchen' | 'bar') dari tujuan cetak kategori.
+  /// Penanda tunggal: categories.print_destination (default 'kitchen').
   Future<String> _determineDestination(Product product) async {
     if (product.categoryId == null) return 'kitchen';
     final cats = await _db.query('categories',
-        where: 'id = ?', whereArgs: [product.categoryId]);
+        columns: ['print_destination'],
+        where: 'id = ?',
+        whereArgs: [product.categoryId],
+        limit: 1);
     if (cats.isEmpty) return 'kitchen';
-    final printerId = cats.first['printer_id'];
-    if (printerId == null) return 'kitchen';
-    final printers = await _db.query('printers',
-        where: 'id = ?', whereArgs: [printerId]);
-    if (printers.isEmpty) return 'kitchen';
-    final type = printers.first['printer_type'] as String? ?? 'kitchen';
-    // only 'kitchen' and 'bar' are valid display destinations
-    return (type == 'bar') ? 'bar' : 'kitchen';
+    return (cats.first['print_destination'] as String?) == 'bar'
+        ? 'bar'
+        : 'kitchen';
   }
 
   Future<void> _applyAutoCharges(String orderId) async {

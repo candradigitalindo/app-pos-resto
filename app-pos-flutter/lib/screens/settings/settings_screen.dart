@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app.dart';
@@ -7,6 +9,7 @@ import '../../repositories/order_repository.dart';
 import '../../services/cloud_sync_service.dart';
 import '../../services/device_role_service.dart';
 import 'print_queue_screen.dart';
+import 'user_management_screen.dart';
 import 'printer_settings_screen.dart';
 import 'sync_status_screen.dart';
 
@@ -38,6 +41,9 @@ class _SettingsScreenState extends State<SettingsScreen>
   final _outletIdCtrl = TextEditingController();
   bool _syncEnabled = false;
   int _syncInterval = 5;
+  bool _testingConnection = false;
+  DateTime? _lastSyncAt;
+  Timer? _lastSyncRefresh;
 
   // Additional charges
   List<AdditionalCharge> _charges = [];
@@ -59,10 +65,31 @@ class _SettingsScreenState extends State<SettingsScreen>
     _controller.addListener(_onStateChanged);
     _controller.loadSettings().then((_) => _populate());
     _loadCharges();
+    _refreshLastSync();
+    // Refresh waktu sync terakhir tiap 20 detik agar perubahan dari sync
+    // background ikut terlihat tanpa keluar dari layar.
+    _lastSyncRefresh =
+        Timer.periodic(const Duration(seconds: 20), (_) => _refreshLastSync());
+  }
+
+  Future<void> _refreshLastSync() async {
+    final t = await CloudSyncService.instance.lastSyncAt();
+    if (!mounted) return;
+    setState(() => _lastSyncAt = t);
+  }
+
+  String _formatLastSync(DateTime? t) {
+    if (t == null) return 'belum pernah';
+    final d = DateTime.now().difference(t);
+    if (d.inSeconds < 60) return 'baru saja';
+    if (d.inMinutes < 60) return '${d.inMinutes} menit lalu';
+    if (d.inHours < 24) return '${d.inHours} jam lalu';
+    return '${d.inDays} hari lalu';
   }
 
   @override
   void dispose() {
+    _lastSyncRefresh?.cancel();
     _tabController.dispose();
     _controller.removeListener(_onStateChanged);
     _controller.dispose();
@@ -279,18 +306,100 @@ class _SettingsScreenState extends State<SettingsScreen>
   // ── Tab: Cloud ────────────────────────────────────────────────────────────
 
   Widget _tabCloud() {
+    final apiKey = _apiKeyCtrl.text.trim();
+    final isConfigured = apiKey.isNotEmpty;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
         children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: isConfigured
+                  ? const Color(0xFFD1FAE5)
+                  : const Color(0xFFFEF3C7),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: isConfigured
+                    ? const Color(0xFF059669)
+                    : const Color(0xFFF59E0B),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  isConfigured
+                      ? Icons.cloud_done_outlined
+                      : Icons.cloud_off_outlined,
+                  color: isConfigured
+                      ? const Color(0xFF059669)
+                      : const Color(0xFFF59E0B),
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isConfigured
+                            ? 'Cloud terkonfigurasi'
+                            : 'Cloud belum dikonfigurasi — isi API Key',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: isConfigured
+                              ? const Color(0xFF065F46)
+                              : const Color(0xFF92400E),
+                        ),
+                      ),
+                      if (isConfigured) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          'Sync terakhir: ${_formatLastSync(_lastSyncAt)}',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF047857),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
           _card([
-            _field(_apiUrlCtrl, 'URL Server Cloud', Icons.cloud_outlined),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Row(
+                children: [
+                  const Icon(Icons.cloud_outlined,
+                      color: Color(0xFF94A3B8), size: 20),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('URL Server Cloud',
+                            style: TextStyle(
+                                fontSize: 12, color: Color(0xFF94A3B8))),
+                        const SizedBox(height: 2),
+                        Text(
+                          _apiUrlCtrl.text.isEmpty ? '-' : _apiUrlCtrl.text,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
             _div(),
-            _field(_apiKeyCtrl, 'API Key', Icons.vpn_key_outlined,
-                obscure: true),
-            _div(),
-            _field(_outletIdCtrl, 'Outlet ID (dari cloud)',
-                Icons.store_outlined),
+            _field(_apiKeyCtrl, 'API Key', Icons.vpn_key_outlined),
             _div(),
             _switchRow(
               'Aktifkan Sync',
@@ -314,35 +423,10 @@ class _SettingsScreenState extends State<SettingsScreen>
             ),
           ]),
           const SizedBox(height: 16),
-          _saveBtn('Simpan Cloud', _controller.state.isSaving, () {
-            _controller.saveCloud(
-              cloudApiUrl: _apiUrlCtrl.text.trim(),
-              cloudApiKey: _apiKeyCtrl.text.trim(),
-              cloudOutletId: _outletIdCtrl.text.trim(),
-              syncEnabled: _syncEnabled,
-              syncInterval: _syncInterval,
-            );
-          }),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              icon: const Icon(Icons.cloud_upload_outlined),
-              label: const Text('Sync Sekarang'),
-              onPressed: () async {
-                final messenger = ScaffoldMessenger.of(context);
-                messenger.showSnackBar(
-                  const SnackBar(content: Text('Mengirim data ke cloud...')),
-                );
-                final r = await CloudSyncService.instance.pushNow();
-                if (!mounted) return;
-                final msg = (r['unconfigured'] ?? 0) == 1
-                    ? 'Cloud belum dikonfigurasi (URL/API Key/Outlet ID)'
-                    : 'Terkirim: ${r['success']} sukses, ${r['failed']} gagal '
-                        '(dari ${r['sent']} item)';
-                messenger.showSnackBar(SnackBar(content: Text(msg)));
-              },
-            ),
+          _saveBtn(
+            _testingConnection ? 'Menyimpan & menyambungkan...' : 'Simpan & Sambungkan',
+            _controller.state.isSaving || _testingConnection,
+            _saveAndConnect,
           ),
           const SizedBox(height: 10),
           SizedBox(
@@ -359,6 +443,46 @@ class _SettingsScreenState extends State<SettingsScreen>
         ],
       ),
     );
+  }
+
+  Future<void> _saveAndConnect() async {
+    // Simpan dulu
+    await _controller.saveCloud(
+      cloudApiUrl: _apiUrlCtrl.text.trim(),
+      cloudApiKey: _apiKeyCtrl.text.trim(),
+      cloudOutletId: _outletIdCtrl.text.trim(),
+      syncEnabled: _syncEnabled,
+      syncInterval: _syncInterval,
+    );
+    if (!mounted) return;
+
+    // Cek koneksi & auto-discover outlet
+    setState(() => _testingConnection = true);
+    final result = await CloudSyncService.instance.testConnection();
+    if (!mounted) return;
+    setState(() => _testingConnection = false);
+
+    final ok = result['success'] == true;
+    if (ok) {
+      _outletIdCtrl.text = result['outlet_id'] as String;
+      // Muat ulang profil outlet (nama/kode/alamat dari cloud) ke field tab Outlet
+      await _controller.loadSettings();
+      if (!mounted) return;
+      _populate();
+      await _refreshLastSync();
+      if (!mounted) return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok
+          ? 'Terhubung! ${result['outlet_name']} — '
+              '${result['products']} produk, ${result['categories']} kategori '
+              'dari cloud (hapus lokal: ${result['deleted_products'] ?? 0} produk, '
+              '${result['deleted_categories'] ?? 0} kategori)'
+          : 'Tersimpan, tapi koneksi gagal: ${result['error']}'),
+      backgroundColor: ok ? const Color(0xFF059669) : Colors.red,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    ));
   }
 
   // ── Tab: Data ─────────────────────────────────────────────────────────────
@@ -393,9 +517,16 @@ class _SettingsScreenState extends State<SettingsScreen>
             ),
             _div(),
             _settingRow(
+              Icons.cloud_download_outlined,
+              'Pulihkan dari Cloud',
+              'Tarik shift terbuka & order belum dibayar dari cloud',
+              onTap: _restoreFromCloud,
+            ),
+            _div(),
+            _settingRow(
               Icons.delete_forever_outlined,
               'Reset Database',
-              'Hapus semua data transaksi permanen',
+              'Hapus semua data transaksi di perangkat ini (cloud tetap)',
               iconColor: Colors.red,
               textColor: Colors.red,
               onTap: _showResetDialog,
@@ -434,6 +565,16 @@ class _SettingsScreenState extends State<SettingsScreen>
         ),
         _div(),
         _settingRow(
+          Icons.manage_accounts_outlined,
+          'Manajemen User',
+          'Kelola akun kasir, waiter, manager, admin',
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const UserManagementScreen()),
+          ),
+        ),
+        _div(),
+        _settingRow(
           Icons.devices_other_outlined,
           'Peran Perangkat',
           'Saat ini: Kasir Utama (Main POS)',
@@ -443,7 +584,7 @@ class _SettingsScreenState extends State<SettingsScreen>
         _settingRow(
           Icons.info_outline,
           'Versi Aplikasi',
-          'POS Resto v1.0.0',
+          'POS Resto v1.2.0  (build 3)',
         ),
       ]),
     );
@@ -647,6 +788,33 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
+  Future<void> _performReset() async {
+    final ok = await _controller.resetDatabase();
+    if (!mounted || !ok) return;
+    // Kembali ke RootGate agar seluruh state UI ikut bersih.
+    // Tidak menarik data dari cloud — reset hanya membersihkan lokal.
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const RootGate()),
+      (route) => false,
+    );
+  }
+
+  Future<void> _restoreFromCloud() async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Memulihkan data dari cloud...')),
+    );
+    final r = await CloudSyncService.instance.restoreFromCloud();
+    if (!mounted) return;
+    final msg = r['unconfigured'] == true
+        ? 'Cloud belum dikonfigurasi.'
+        : r['error'] != null
+            ? 'Gagal memulihkan: ${r['error']}'
+            : 'Dipulihkan: ${r['orders'] ?? 0} order, '
+                '${r['shifts'] ?? 0} shift, ${r['movements'] ?? 0} kas.';
+    messenger.showSnackBar(SnackBar(content: Text(msg)));
+  }
+
   void _showResetDialog() {
     showDialog(
       context: context,
@@ -663,9 +831,9 @@ class _SettingsScreenState extends State<SettingsScreen>
           FilledButton(
             style:
                 FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(ctx);
-              _controller.resetDatabase();
+              await _performReset();
             },
             child: const Text('Reset'),
           ),
