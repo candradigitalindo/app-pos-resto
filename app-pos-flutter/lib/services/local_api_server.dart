@@ -10,6 +10,7 @@ import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../database/database.dart';
+import '../repositories/cashier_repository.dart';
 import '../repositories/order_repository.dart';
 import '../repositories/product_repository.dart';
 import '../repositories/table_repository.dart';
@@ -28,6 +29,7 @@ class LocalApiServer {
   final _orderRepo = OrderRepository();
   final _productRepo = ProductRepository();
   final _tableRepo = TableRepository();
+  final _cashierRepo = CashierRepository();
 
   bool get isRunning => _httpServer != null;
   int? _port;
@@ -48,6 +50,15 @@ class LocalApiServer {
       ..get('/api/orders/<id>', _getOrder)
       ..post('/api/orders', _createOrder)
       ..post('/api/orders/<id>/items', _addItems)
+      // ── Kasir station (klien tipis): operasi kasir di DB perangkat utama ──
+      ..get('/api/orders/<id>/full', _getOrderFull)
+      ..post('/api/orders/<id>/pay', _payOrder)
+      ..post('/api/orders/<id>/split-pay', _splitPayOrder)
+      ..post('/api/orders/<id>/discount', _discountOrder)
+      ..get('/api/shift/active', _getActiveShift)
+      ..post('/api/shift/open', _openShift)
+      ..post('/api/shift/close', _closeShift)
+      ..get('/api/cashier/session-summary', _cashierSessionSummary)
       ..get('/ws', webSocketHandler(_onWsConnect));
 
     final handler = const Pipeline()
@@ -172,14 +183,15 @@ class LocalApiServer {
 
   Future<Response> _getTables(Request req) async {
     try {
+      // 2 query (bukan N+1): daftar meja + semua order aktif sekaligus.
       final tables = await _tableRepo.getTables();
-      final rows = await Future.wait(tables.map((t) async {
-        final order = await _orderRepo.getOrderByTable(t.tableNumber);
-        return <String, dynamic>{
-          ...t.toMap(),
-          'active_order': order?.toMap(),
-        };
-      }));
+      final activeByTable = await _orderRepo.getActiveOrdersByTable();
+      final rows = tables
+          .map((t) => <String, dynamic>{
+                ...t.toMap(),
+                'active_order': activeByTable[t.tableNumber]?.toMap(),
+              })
+          .toList();
       return _ok(rows);
     } catch (e) {
       return _serverError('$e');
@@ -351,6 +363,201 @@ class LocalApiServer {
     if (v is String) return int.tryParse(v);
     return null;
   }
+
+  double? _asDouble(dynamic v) {
+    if (v == null) return null;
+    if (v is num) return v.toDouble();
+    if (v is String) return double.tryParse(v);
+    return null;
+  }
+
+  // ── Kasir station handlers ────────────────────────────────────────────────
+
+  /// GET /api/orders/<id>/full — order + items + charges (untuk tagihan).
+  Future<Response> _getOrderFull(Request req, String id) async {
+    try {
+      final order = await _orderRepo.getOrderById(id);
+      if (order == null) return _notFound('Order tidak ditemukan');
+      final items = await _orderRepo.getOrderItems(id);
+      final charges = await _orderRepo.getOrderCharges(id);
+      return _ok({
+        'order': order.toMap(),
+        'items': items.map((i) => i.toMap()).toList(),
+        'charges': charges.map((c) => c.toMap()).toList(),
+      });
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// POST /api/orders/<id>/pay {payment_method, paid_amount, created_by}
+  Future<Response> _payOrder(Request req, String id) async {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _badRequest('Body JSON tidak valid');
+    }
+    final method = body['payment_method'] as String?;
+    final paid = _asDouble(body['paid_amount']);
+    if (method == null || method.isEmpty) {
+      return _badRequest('payment_method wajib');
+    }
+    if (paid == null) return _badRequest('paid_amount wajib');
+    try {
+      final r = await _orderRepo.processPayment(
+        orderId: id,
+        paymentMethod: method,
+        paidAmount: paid,
+        createdBy: body['created_by'] as String?,
+      );
+      broadcast('order_paid', {'order_id': id});
+      // Hanya field JSON-safe (result berisi objek Transaction/Payment).
+      return _ok({
+        'order_id': r['order_id'],
+        'total_amount': r['total_amount'],
+        'remaining': r['remaining'],
+        'paid_amount': r['paid_amount'],
+        'change': r['change'],
+        'payment_status': r['payment_status'],
+      });
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// POST /api/orders/<id>/split-pay {amount, payment_method, note, created_by}
+  Future<Response> _splitPayOrder(Request req, String id) async {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _badRequest('Body JSON tidak valid');
+    }
+    final method = body['payment_method'] as String?;
+    final amount = _asDouble(body['amount']);
+    if (method == null || method.isEmpty) {
+      return _badRequest('payment_method wajib');
+    }
+    if (amount == null || amount <= 0) return _badRequest('amount wajib > 0');
+    try {
+      final r = await _orderRepo.splitBillPayment(
+        orderId: id,
+        amount: amount,
+        paymentMethod: method,
+        note: body['note'] as String?,
+        createdBy: body['created_by'] as String?,
+      );
+      broadcast('order_paid', {'order_id': id});
+      return _ok({
+        'order_id': r['order_id'],
+        'amount_paid': r['amount_paid'],
+        'remaining': r['remaining'],
+        'payment_status': r['payment_status'],
+      });
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// GET /api/shift/active — shift aktif (atau null).
+  Future<Response> _getActiveShift(Request req) async {
+    try {
+      final shift = await _cashierRepo.getActiveShift();
+      return _ok({'shift': shift?.toMap()});
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// POST /api/shift/open {opened_by, opening_cash}
+  Future<Response> _openShift(Request req) async {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _badRequest('Body JSON tidak valid');
+    }
+    final openedBy = body['opened_by'] as String?;
+    final cash = _asDouble(body['opening_cash']) ?? 0;
+    if (openedBy == null || openedBy.isEmpty) {
+      return _badRequest('opened_by wajib');
+    }
+    try {
+      final shift =
+          await _cashierRepo.openShift(openedBy: openedBy, openingCash: cash);
+      return _ok({'shift': shift.toMap()});
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// POST /api/shift/close {shift_id, closed_by}
+  Future<Response> _closeShift(Request req) async {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _badRequest('Body JSON tidak valid');
+    }
+    final shiftId = body['shift_id'] as String?;
+    final closedBy = body['closed_by'] as String?;
+    if (shiftId == null || closedBy == null) {
+      return _badRequest('shift_id & closed_by wajib');
+    }
+    try {
+      final shift =
+          await _cashierRepo.closeShift(shiftId: shiftId, closedBy: closedBy);
+      return _ok({'shift': shift.toMap()});
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// POST /api/orders/<id>/discount {charge_type, value, note}
+  Future<Response> _discountOrder(Request req, String id) async {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _badRequest('Body JSON tidak valid');
+    }
+    final type = body['charge_type'] as String?;
+    final value = _asDouble(body['value']);
+    if (type == null || value == null) {
+      return _badRequest('charge_type & value wajib');
+    }
+    try {
+      await _orderRepo.applyDiscount(
+        orderId: id,
+        chargeType: type,
+        value: value,
+        note: (body['note'] as String?) ?? '',
+      );
+      broadcast('order_updated', {'order_id': id});
+      return _ok({'ok': true});
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// GET /api/cashier/session-summary?cashier=Nama&since=ISO — rekap kerja
+  /// kasir (per metode + total) sejak login, tanpa menutup shift laci kas.
+  Future<Response> _cashierSessionSummary(Request req) async {
+    final cashier = req.url.queryParameters['cashier'];
+    final since = req.url.queryParameters['since'];
+    if (cashier == null || cashier.isEmpty || since == null || since.isEmpty) {
+      return _badRequest('cashier & since wajib');
+    }
+    try {
+      final summary =
+          await _cashierRepo.getCashierSessionSummary(cashier, since);
+      return _ok(summary);
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
 
   // ── Response helpers ──────────────────────────────────────────────────────
 

@@ -70,17 +70,17 @@ class TablesController extends ChangeNotifier {
   Future<void> loadTables() async {
     _setState(_state.copyWith(isLoading: true, clearError: true));
     try {
-      final tables = await _tableRepo.getTables();
-
-      // Load active orders for all tables in parallel
-      final orderFutures = tables.map(
-        (t) => _orderRepo.getOrderByTable(t.tableNumber),
-      );
-      final orders = await Future.wait(orderFutures);
+      // 2 query saja (bukan N+1): daftar meja + semua order aktif sekaligus.
+      final results = await Future.wait([
+        _tableRepo.getTables(),
+        _orderRepo.getActiveOrdersByTable(),
+      ]);
+      final tables = results[0] as List<RestaurantTable>;
+      final activeByTable = results[1] as Map<String, Order>;
 
       final tableOrders = <String, Order?>{};
-      for (var i = 0; i < tables.length; i++) {
-        tableOrders[tables[i].tableNumber] = orders[i];
+      for (final t in tables) {
+        tableOrders[t.tableNumber] = activeByTable[t.tableNumber];
       }
 
       _setState(_state.copyWith(

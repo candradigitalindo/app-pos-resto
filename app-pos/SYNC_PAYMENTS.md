@@ -150,6 +150,7 @@ Payload sync mengikuti konsep yang sama:
 | `created_by` | root | Nama akun **pembuat order** (1 orang). |
 | `orderer_name` | root | Label **pemesan** gabungan (= baris "Pemesan" di struk). |
 | `customer_name` | root | Nama **pelanggan** (beda dari pemesan). |
+| `pax` | root | **Jumlah tamu** (≥1). Wajib diisi kasir/waiter saat order baru. Simpan di kolom `pax`. |
 | `items[].waiter_name` | per item | Nama **pemesan item** itu — sumber pengelompokan struk. |
 
 ### Payload **transaction** (entityType `transaction`)

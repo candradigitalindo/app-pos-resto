@@ -289,12 +289,32 @@ class CashierRepository {
     final expectedCash =
         shift.openingCash + cashSales + cashInTotal - cashOutTotal;
 
+    // Rincian per kasir (termasuk kasir station) sejak shift dibuka.
+    final cashierRows = await db.rawQuery(
+      '''
+      SELECT created_by, COUNT(*) AS cnt, SUM(amount) AS total
+      FROM payments
+      WHERE created_at >= ? AND created_by != ''
+      GROUP BY created_by
+      ORDER BY total DESC
+    ''',
+      [shift.openedAt.toIso8601String()],
+    );
+    final byCashier = cashierRows
+        .map((r) => {
+              'cashier': r['created_by'],
+              'count': (r['cnt'] as num).toInt(),
+              'total': (r['total'] as num).toDouble(),
+            })
+        .toList();
+
     return {
       'shift_id': shiftId,
       'opening_cash': shift.openingCash,
       'sales_count': salesCount,
       'sales_total': salesTotal,
       'by_method': methods, // {cash:{count,total}, qris:{...}, ...}
+      'by_cashier': byCashier, // [{cashier, count, total}, ...]
       'cash_in_count': cashInCount,
       'cash_in_total': cashInTotal,
       'cash_out_count': cashOutCount,
@@ -332,6 +352,46 @@ class CashierRepository {
         'report': report,
       },
     );
+  }
+
+  /// Ringkasan kerja seorang kasir sejak [sinceIso] (jendela login station):
+  /// jumlah pembayaran & total per metode, dari tabel payments (created_by).
+  /// Tidak menutup shift laci kas — hanya rekap kontribusi kasir tsb.
+  Future<Map<String, dynamic>> getCashierSessionSummary(
+      String cashierName, String sinceIso) async {
+    final db = await _db.database;
+    final rows = await db.rawQuery(
+      '''
+      SELECT payment_method, COUNT(*) AS cnt, SUM(amount) AS total
+      FROM payments
+      WHERE created_by = ? AND created_at >= ?
+      GROUP BY payment_method
+    ''',
+      [cashierName, sinceIso],
+    );
+    final methods = <String, Map<String, num>>{
+      'cash': {'count': 0, 'total': 0},
+      'card': {'count': 0, 'total': 0},
+      'qris': {'count': 0, 'total': 0},
+      'transfer': {'count': 0, 'total': 0},
+    };
+    var count = 0;
+    var total = 0.0;
+    for (final r in rows) {
+      final m = r['payment_method'] as String;
+      final c = (r['cnt'] as num).toInt();
+      final t = (r['total'] as num).toDouble();
+      methods[m] = {'count': c, 'total': t};
+      count += c;
+      total += t;
+    }
+    return {
+      'cashier': cashierName,
+      'since': sinceIso,
+      'count': count,
+      'total': total,
+      'by_method': methods,
+    };
   }
 
   // ==================== USERS ====================

@@ -10,6 +10,8 @@ import 'screens/login/login_screen.dart';
 import 'screens/dashboard/dashboard_screen.dart';
 import 'screens/role/role_selector_screen.dart';
 import 'screens/station/station_screen.dart';
+import 'screens/station/station_login_screen.dart';
+import 'screens/station/cashier_station_screen.dart';
 import 'screens/station/station_setup_screen.dart';
 
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
@@ -170,6 +172,7 @@ class StationGate extends StatefulWidget {
 class _StationGateState extends State<StationGate> {
   bool _loading = true;
   bool _connected = false;
+  Map<String, dynamic>? _user; // user login station (menentukan tampilan)
 
   @override
   void initState() {
@@ -204,7 +207,21 @@ class _StationGateState extends State<StationGate> {
     if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    return _connected ? const StationScreen() : const StationSetupScreen();
+    if (!_connected) return const StationSetupScreen();
+    // Belum login → minta PIN; peran menentukan tampilan berikutnya.
+    if (_user == null) {
+      return StationLoginScreen(
+        onLoggedIn: (u) => setState(() => _user = u),
+      );
+    }
+    final role = (_user!['role'] as String? ?? 'waiter').toLowerCase();
+    final isCashier =
+        role == 'cashier' || role == 'admin' || role == 'manager';
+    void onLogout() => setState(() => _user = null);
+    if (isCashier) {
+      return CashierStationScreen(user: _user!, onLogout: onLogout);
+    }
+    return StationScreen(user: _user!, onLogout: onLogout);
   }
 }
 

@@ -8,6 +8,7 @@ import '../../models/models.dart';
 import '../../services/cloud_sync_service.dart';
 import '../../utils/currency.dart';
 import '../../widgets/menu_avatar.dart';
+import '../../widgets/pax_input_dialog.dart';
 
 class CashierScreen extends StatefulWidget {
   final String? initialTableNumber;
@@ -970,6 +971,7 @@ class _CashierScreenState extends State<CashierScreen> {
   void _showTableSelector() {
     final tables = _controller.state.tables;
     final selectedTable = _controller.state.selectedTable;
+    final rootContext = context; // context layar (untuk dialog setelah sheet ditutup)
 
     showModalBottomSheet(
       context: context,
@@ -1015,9 +1017,18 @@ class _CashierScreenState extends State<CashierScreen> {
                     borderRadius: BorderRadius.circular(12),
                     child: InkWell(
                       borderRadius: BorderRadius.circular(12),
-                      onTap: () {
-                        _controller.selectTable(table);
-                        Navigator.pop(context);
+                      onTap: () async {
+                        Navigator.pop(context); // tutup pemilih meja
+                        if (table.status == 'available') {
+                          // Pesanan baru → wajib input jumlah pax dulu.
+                          // Pakai rootContext (sheet sudah ditutup).
+                          final pax = await showPaxDialog(rootContext);
+                          if (pax == null) return; // dibatalkan
+                          _controller.selectTable(table);
+                          _controller.setPax(pax);
+                        } else {
+                          _controller.selectTable(table); // muat order lama
+                        }
                       },
                       child: Container(
                         width: 80,

@@ -200,6 +200,22 @@ class OrderRepository {
     return Order.fromMap(results.first);
   }
 
+  /// Order aktif (belum lunas, tidak void) terbaru per meja dalam SATU query.
+  /// Hindari N+1 saat memuat daftar meja (waiter/kasir).
+  Future<Map<String, Order>> getActiveOrdersByTable() async {
+    final results = await _db.query(
+      'orders',
+      where: "payment_status != 'paid' AND voided_at IS NULL",
+      orderBy: 'created_at DESC',
+    );
+    final map = <String, Order>{};
+    for (final r in results) {
+      final o = Order.fromMap(r);
+      map.putIfAbsent(o.tableNumber, () => o); // pertama = terbaru per meja
+    }
+    return map;
+  }
+
   // ==================== ORDER ITEMS ====================
 
   Future<List<OrderItem>> getOrderItems(String orderId) async {
@@ -254,7 +270,8 @@ class OrderRepository {
       }
     });
 
-    await _recalculateOrderTotal(orderId);
+    // Pajak/charge otomatis ikut subtotal baru + recalc total & basket_size.
+    await _reapplyAutoChargesAndRecalc(orderId);
 
     // Sync perubahan order (item tambahan) ke cloud
     await _enqueueOrder(orderId, 'upsert');
@@ -432,7 +449,8 @@ class OrderRepository {
       whereArgs: [itemId],
     );
 
-    await _recalculateOrderTotal(item.orderId);
+    // Subtotal berubah → pajak otomatis ikut dihitung ulang.
+    await _reapplyAutoChargesAndRecalc(item.orderId);
   }
 
   // ==================== PAYMENT ====================
@@ -1372,6 +1390,15 @@ class OrderRepository {
         : 'kitchen';
   }
 
+  /// Subtotal berubah (tambah item / ubah qty): buang charge otomatis lama lalu
+  /// terapkan ulang atas subtotal terkini + recalc total. Diskon/Kompliment
+  /// manual (charge_id NULL) dipertahankan.
+  Future<void> _reapplyAutoChargesAndRecalc(String orderId) async {
+    await _db.delete('order_additional_charges',
+        where: 'order_id = ? AND charge_id IS NOT NULL', whereArgs: [orderId]);
+    await _applyAutoCharges(orderId);
+  }
+
   Future<void> _applyAutoCharges(String orderId) async {
     final db = await _db.database;
     final now = DateTime.now();
@@ -1382,35 +1409,36 @@ class OrderRepository {
       where: 'is_active = 1',
     );
 
-    if (charges.isEmpty) return;
+    if (charges.isNotEmpty) {
+      // Get subtotal
+      final items = await getOrderItems(orderId);
+      final subtotal = items.fold(0.0, (sum, item) => sum + item.subtotal);
 
-    // Get subtotal
-    final items = await getOrderItems(orderId);
-    final subtotal = items.fold(0.0, (sum, item) => sum + item.subtotal);
-
-    for (final chargeMap in charges) {
-      final charge = AdditionalCharge.fromMap(chargeMap);
-      double applied = 0;
-      if (subtotal > 0) {
-        if (charge.chargeType == 'percentage') {
-          applied = subtotal * charge.value / 100;
-        } else {
-          applied = charge.value;
+      for (final chargeMap in charges) {
+        final charge = AdditionalCharge.fromMap(chargeMap);
+        double applied = 0;
+        if (subtotal > 0) {
+          if (charge.chargeType == 'percentage') {
+            applied = subtotal * charge.value / 100;
+          } else {
+            applied = charge.value;
+          }
         }
-      }
 
-      await db.insert('order_additional_charges', {
-        'order_id': orderId,
-        'charge_id': charge.id,
-        'name': charge.name,
-        'charge_type': charge.chargeType,
-        'value': charge.value,
-        'applied_amount': applied,
-        'created_at': now.toIso8601String(),
-        'updated_at': now.toIso8601String(),
-      });
+        await db.insert('order_additional_charges', {
+          'order_id': orderId,
+          'charge_id': charge.id,
+          'name': charge.name,
+          'charge_type': charge.chargeType,
+          'value': charge.value,
+          'applied_amount': applied,
+          'created_at': now.toIso8601String(),
+          'updated_at': now.toIso8601String(),
+        });
+      }
     }
 
+    // SELALU hitung ulang total + basket_size (penting untuk merge tanpa charge).
     await _recalculateOrderTotal(orderId);
   }
 

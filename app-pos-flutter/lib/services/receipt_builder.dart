@@ -241,6 +241,23 @@ class ReceiptBuilder {
     buf.addAll(_Esc.boldOff());
     buf.addAll(_Esc.line(_divider()));
 
+    // Rincian per kasir (termasuk kasir station)
+    final byCashier = (report['by_cashier'] as List?) ?? const [];
+    if (byCashier.isNotEmpty) {
+      buf.addAll(_Esc.boldOn());
+      buf.addAll(_Esc.line('PER KASIR'));
+      buf.addAll(_Esc.boldOff());
+      for (final c in byCashier) {
+        final m = (c as Map?) ?? const {};
+        final name = (m['cashier'] as String?) ?? '-';
+        final cnt = (m['count'] as num?)?.toInt() ?? 0;
+        final total = (m['total'] as num?)?.toDouble() ?? 0;
+        buf.addAll(
+            _Esc.line(_rightAlign('$name ($cnt)', _formatAmount(total))));
+      }
+      buf.addAll(_Esc.line(_divider()));
+    }
+
     // Kas laci
     final openingCash = (report['opening_cash'] as num?)?.toDouble() ?? 0;
     final cashSales =
@@ -318,6 +335,64 @@ class ReceiptBuilder {
     buf.addAll(_Esc.feedLine(3));
     buf.addAll(_Esc.line('(__________________)'));
     buf.addAll(_Esc.leftAlign());
+    buf.addAll(_Esc.feedLine(2));
+    buf.addAll(_Esc.cutPartial());
+    return Uint8List.fromList(buf);
+  }
+
+  /// Ringkasan kerja seorang kasir di station (saat "Selesai Kerja").
+  /// BUKAN penutupan shift — shift laci kas tetap di perangkat utama.
+  Uint8List buildCashierSession({
+    required String outletName,
+    required String cashierName,
+    required DateTime loginAt,
+    required DateTime endAt,
+    required Map<String, dynamic> summary,
+  }) {
+    final buf = <int>[];
+    buf.addAll(_Esc.init());
+    buf.addAll(_Esc.centerAlign());
+    buf.addAll(_Esc.boldOn());
+    buf.addAll(_Esc.size(1, 1));
+    buf.addAll(_Esc.line(outletName));
+    buf.addAll(_Esc.size(0, 0));
+    buf.addAll(_Esc.line('RINGKASAN KASIR'));
+    buf.addAll(_Esc.boldOff());
+    buf.addAll(_Esc.leftAlign());
+    buf.addAll(_Esc.line(_divider()));
+    buf.addAll(_Esc.line('Kasir   : $cashierName'));
+    buf.addAll(_Esc.line('Login   : ${_formatDateTime(loginAt)}'));
+    buf.addAll(_Esc.line('Selesai : ${_formatDateTime(endAt)}'));
+    buf.addAll(_Esc.line(_divider()));
+
+    final byMethod = (summary['by_method'] as Map?) ?? const {};
+    buf.addAll(_Esc.boldOn());
+    buf.addAll(_Esc.line('PEMBAYARAN DIPROSES'));
+    buf.addAll(_Esc.boldOff());
+    for (final m in const ['cash', 'qris', 'card', 'transfer']) {
+      final v = (byMethod[m] as Map?) ?? const {};
+      final cnt = (v['count'] as num?)?.toInt() ?? 0;
+      final total = (v['total'] as num?)?.toDouble() ?? 0;
+      buf.addAll(_Esc.line(_rightAlign(
+          '${_paymentMethodLabel(m)} ($cnt)', _formatAmount(total))));
+    }
+    buf.addAll(_Esc.line(_divider()));
+
+    final count = (summary['count'] as num?)?.toInt() ?? 0;
+    final total = (summary['total'] as num?)?.toDouble() ?? 0;
+    buf.addAll(_Esc.boldOn());
+    buf.addAll(_Esc.line(_rightAlign('Jml Pembayaran', '$count')));
+    buf.addAll(_Esc.size(1, 1));
+    buf.addAll(_Esc.line(
+        _rightAlignW('TOTAL', _formatAmount(total), paperWidth ~/ 2)));
+    buf.addAll(_Esc.size(0, 0));
+    buf.addAll(_Esc.boldOff());
+    buf.addAll(_Esc.line(_divider()));
+
+    buf.addAll(_Esc.centerAlign());
+    buf.addAll(_Esc.line('Bukan penutupan shift.'));
+    buf.addAll(_Esc.line('Shift laci kas ditutup'));
+    buf.addAll(_Esc.line('di perangkat utama.'));
     buf.addAll(_Esc.feedLine(2));
     buf.addAll(_Esc.cutPartial());
     return Uint8List.fromList(buf);

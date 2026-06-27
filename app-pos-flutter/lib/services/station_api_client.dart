@@ -314,6 +314,120 @@ class StationApiClient {
     });
   }
 
+  // ── Kasir station (operasi kasir di Main POS) ─────────────────────────────────
+
+  Map<String, dynamic> _data(dynamic resp) {
+    final d = resp.data is Map ? resp.data['data'] : null;
+    return d is Map ? d.cast<String, dynamic>() : <String, dynamic>{};
+  }
+
+  /// Order + items + charges untuk tampilan tagihan.
+  Future<Map<String, dynamic>> getOrderFull(String orderId) async {
+    return _withRetry(() async {
+      final resp = await _dio.get('$_base/api/orders/$orderId/full');
+      return _data(resp);
+    });
+  }
+
+  /// Bayar penuh. Mengembalikan ringkasan (order_id, change, payment_status…).
+  Future<Map<String, dynamic>> payOrder({
+    required String orderId,
+    required String paymentMethod,
+    required double paidAmount,
+    String? createdBy,
+  }) async {
+    return _withRetry(() async {
+      final resp = await _dio.post('$_base/api/orders/$orderId/pay', data: {
+        'payment_method': paymentMethod,
+        'paid_amount': paidAmount,
+        if (createdBy != null) 'created_by': createdBy,
+      });
+      return _data(resp);
+    });
+  }
+
+  /// Bayar sebagian (split / gabung bayar campur metode).
+  Future<Map<String, dynamic>> splitPayOrder({
+    required String orderId,
+    required double amount,
+    required String paymentMethod,
+    String? note,
+    String? createdBy,
+  }) async {
+    return _withRetry(() async {
+      final resp =
+          await _dio.post('$_base/api/orders/$orderId/split-pay', data: {
+        'amount': amount,
+        'payment_method': paymentMethod,
+        if (note != null) 'note': note,
+        if (createdBy != null) 'created_by': createdBy,
+      });
+      return _data(resp);
+    });
+  }
+
+  Future<void> applyDiscount({
+    required String orderId,
+    required String chargeType,
+    required double value,
+    String note = '',
+  }) async {
+    return _withRetry(() async {
+      await _dio.post('$_base/api/orders/$orderId/discount', data: {
+        'charge_type': chargeType,
+        'value': value,
+        'note': note,
+      });
+    });
+  }
+
+  /// Rekap kerja kasir (per metode + total) sejak [sinceIso].
+  Future<Map<String, dynamic>> getCashierSessionSummary(
+      String cashier, String sinceIso) async {
+    return _withRetry(() async {
+      final resp = await _dio.get('$_base/api/cashier/session-summary',
+          queryParameters: {'cashier': cashier, 'since': sinceIso});
+      return _data(resp);
+    });
+  }
+
+  /// Shift aktif (atau null).
+  Future<Map<String, dynamic>?> getActiveShift() async {
+    return _withRetry(() async {
+      final resp = await _dio.get('$_base/api/shift/active');
+      final shift = _data(resp)['shift'];
+      return shift is Map ? shift.cast<String, dynamic>() : null;
+    });
+  }
+
+  Future<Map<String, dynamic>> openShift({
+    required String openedBy,
+    required double openingCash,
+  }) async {
+    return _withRetry(() async {
+      final resp = await _dio.post('$_base/api/shift/open', data: {
+        'opened_by': openedBy,
+        'opening_cash': openingCash,
+      });
+      return (_data(resp)['shift'] as Map?)?.cast<String, dynamic>() ??
+          <String, dynamic>{};
+    });
+  }
+
+  Future<Map<String, dynamic>> closeShift({
+    required String shiftId,
+    required String closedBy,
+  }) async {
+    return _withRetry(() async {
+      final resp = await _dio.post('$_base/api/shift/close', data: {
+        'shift_id': shiftId,
+        'closed_by': closedBy,
+      });
+      return (_data(resp)['shift'] as Map?)?.cast<String, dynamic>() ??
+          <String, dynamic>{};
+    });
+  }
+
   // ── WebSocket (real-time) ────────────────────────────────────────────────────
 
   WebSocketChannel? _ws;

@@ -11,7 +11,11 @@ import 'station_setup_screen.dart';
 
 /// Layar utama mode Station: pilih meja → menu → kirim order ke Main POS.
 class StationScreen extends StatefulWidget {
-  const StationScreen({super.key});
+  /// User login station (opsional) + aksi logout. Diisi saat dirutekan dari
+  /// StationGate berdasar peran; null bila dibuka langsung.
+  final Map<String, dynamic>? user;
+  final VoidCallback? onLogout;
+  const StationScreen({super.key, this.user, this.onLogout});
 
   @override
   State<StationScreen> createState() => _StationScreenState();
@@ -238,10 +242,16 @@ class _StationScreenState extends State<StationScreen> {
               onSelected: (v) {
                 if (v == 'server') _changeServer();
                 if (v == 'exit') _exitStationMode();
+                if (v == 'logout') widget.onLogout?.call();
               },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'server', child: Text('Ganti Main POS')),
-                PopupMenuItem(value: 'exit', child: Text('Keluar Mode Station')),
+              itemBuilder: (_) => [
+                if (widget.onLogout != null)
+                  const PopupMenuItem(
+                      value: 'logout', child: Text('Logout (ganti user)')),
+                const PopupMenuItem(
+                    value: 'server', child: Text('Ganti Main POS')),
+                const PopupMenuItem(
+                    value: 'exit', child: Text('Keluar Mode Station')),
               ],
             ),
           ],

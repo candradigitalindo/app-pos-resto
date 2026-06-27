@@ -4,6 +4,7 @@ import '../../controllers/waiter_controller.dart';
 import '../../models/models.dart';
 import '../../utils/currency.dart';
 import '../../widgets/menu_avatar.dart';
+import '../../widgets/pax_input_dialog.dart';
 
 class WaiterScreen extends StatefulWidget {
   const WaiterScreen({super.key});
@@ -123,9 +124,13 @@ class _WaiterScreenState extends State<WaiterScreen> {
     );
   }
 
-  void _selectTable(RestaurantTable table) {
+  Future<void> _selectTable(RestaurantTable table) async {
     if (table.status == 'available') {
-      _controller.selectTableForOrder(table);
+      // Pesanan baru → wajib input jumlah pax dulu.
+      final pax = await showPaxDialog(context);
+      if (pax == null) return; // dibatalkan
+      await _controller.selectTableForOrder(table);
+      _controller.setPax(pax);
     } else {
       _controller.viewOrderDetail(table);
     }
