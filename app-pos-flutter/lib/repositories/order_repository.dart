@@ -666,6 +666,10 @@ class OrderRepository {
                     'waiter_name': i.waiterName, // pemesan item ini
                   })
               .toList(),
+          // Waktu transaksi ASLI (saat pembayaran), bukan saat sync. Untuk
+          // transaksi offline/tertunda, backend WAJIB pakai ini — bukan waktu
+          // terima. created_at disertakan untuk kompatibilitas.
+          'transaction_date': transaction.transactionDate.toIso8601String(),
           'created_at': transaction.createdAt.toIso8601String(),
         },
       );

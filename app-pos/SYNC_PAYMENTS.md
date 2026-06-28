@@ -170,6 +170,22 @@ Backend perlu: tambah kolom `cashier_name` & `orderer_name` di `transactions`
 (atau tabel terkait), dan `created_by` / `waiter_name` di order & order_items
 bila ingin menyimpannya.
 
+## Waktu transaksi (transaksi offline / tertunda)
+
+Transaksi bisa dibuat saat **offline** lalu disinkron belakangan (outbox). Payload
+karena itu membawa **waktu transaksi ASLI** — backend WAJIB memakainya, bukan
+waktu terima/sync.
+
+| Field | Keterangan |
+|---|---|
+| `transaction_date` | **Waktu transaksi asli** (saat pembayaran di perangkat). Pakai ini untuk kolom tanggal transaksi & laporan. |
+| `created_at` | Sama (kompatibilitas). |
+| `sync_timestamp` (batch) | Waktu batch dikirim — **metadata saja**, JANGAN dijadikan tanggal transaksi. |
+
+Jadi: jangan set `transaction_date = now()` di server saat menerima. Selalu ambil
+dari payload `transaction_date` (fallback `created_at`). Bila tidak, transaksi
+offline yang baru tersinkron akan tercatat dengan tanggal yang salah (hari sync).
+
 ## Sumber payload (sisi app)
 
 `app-pos-flutter/lib/repositories/order_repository.dart` →
