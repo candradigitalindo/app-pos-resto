@@ -5283,25 +5283,51 @@ class _SplitBillDialog extends StatefulWidget {
 }
 
 class _SplitBillDialogState extends State<_SplitBillDialog> {
-  final _paid = <String>{}; // item yang sudah dibayar di sesi split ini
-  final _checked = <String>{}; // pilihan bagian saat ini
+  final _paidQty = <String, int>{}; // unit sudah dibayar per item (sesi ini)
+  final _selQty = <String, int>{}; // unit dipilih untuk bagian saat ini
   String _method = 'cash';
   int _payer = 1;
 
   CashierController get _c => widget.controller;
 
   List<OrderItem> get _items => _c.state.orderItems;
-  List<OrderItem> get _unpaid =>
-      _items.where((i) => !_paid.contains(i.id)).toList();
+
+  int _paidOf(String id) => _paidQty[id] ?? 0;
+  int _selOf(String id) => _selQty[id] ?? 0;
+  int _availOf(OrderItem i) => i.qty - _paidOf(i.id);
+
+  bool get _hasSelection => _selQty.values.any((q) => q > 0);
+
+  /// Semua sisa unit (dari item yang belum lunas) tercentang → bagian terakhir
+  /// (bayar sisa persis, hindari selisih pembulatan).
+  bool get _isFinalSelection {
+    var anyAvail = false;
+    for (final i in _items) {
+      final avail = _availOf(i);
+      if (avail <= 0) continue;
+      anyAvail = true;
+      if (_selOf(i.id) != avail) return false;
+    }
+    return anyAvail;
+  }
+
+  void _setQty(String id, int q, int max) {
+    final v = q.clamp(0, max);
+    setState(() {
+      if (v == 0) {
+        _selQty.remove(id);
+      } else {
+        _selQty[id] = v;
+      }
+    });
+  }
 
   Future<void> _payPart() async {
-    if (_checked.isEmpty) return;
-    // Bagian terakhir bila semua sisa item tercentang.
-    final isFinal = _unpaid.every((i) => _checked.contains(i.id));
-    final res = await _c.paySplitByItems(
-      itemIds: _checked.toList(),
+    if (!_hasSelection) return;
+    final res = await _c.paySplitByQty(
+      qtyByItem: Map<String, int>.from(_selQty),
       method: _method,
-      isFinal: isFinal,
+      isFinal: _isFinalSelection,
     );
     if (res == null) {
       if (mounted && _c.state.errorMessage != null) {
@@ -5322,19 +5348,95 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
       return;
     }
     setState(() {
-      _paid.addAll(_checked);
-      _checked.clear();
+      _selQty.forEach((id, q) => _paidQty[id] = _paidOf(id) + q);
+      _selQty.clear();
       _payer++;
     });
   }
 
+  /// Baris item dengan stepper jumlah unit (0..sisa). Item lunas dikunci.
+  Widget _splitItemRow(OrderItem it) {
+    final total = it.qty;
+    final paid = _paidOf(it.id);
+    final avail = total - paid;
+    final sel = _selOf(it.id);
+    final done = avail <= 0;
+    return Opacity(
+      opacity: done ? 0.5 : 1,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(it.productName,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        decoration: done ? TextDecoration.lineThrough : null,
+                      )),
+                  Text(
+                    done
+                        ? 'LUNAS · ${total}x'
+                        : '${CurrencyHelper.format(it.price)} / unit · sisa $avail dari ${total}x',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: done
+                          ? const Color(0xFF059669)
+                          : const Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (!done)
+              Row(
+                children: [
+                  _qtyBtn(Icons.remove, sel > 0,
+                      () => _setQty(it.id, sel - 1, avail)),
+                  Container(
+                    width: 34,
+                    alignment: Alignment.center,
+                    child: Text('$sel',
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w700)),
+                  ),
+                  _qtyBtn(Icons.add, sel < avail,
+                      () => _setQty(it.id, sel + 1, avail)),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _qtyBtn(IconData icon, bool enabled, VoidCallback onTap) {
+    return InkWell(
+      onTap: enabled ? onTap : null,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: enabled ? const Color(0xFFEFF6FF) : const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(icon,
+            size: 18,
+            color: enabled ? const Color(0xFF2563EB) : const Color(0xFFCBD5E1)),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final share = _c.splitShareFor(_checked.toList());
+    final share = _c.splitShareForQty(_selQty);
     final order = _c.state.currentOrder;
     final remaining = order?.remaining ?? 0;
-    final allSelected =
-        _unpaid.isNotEmpty && _unpaid.every((i) => _checked.contains(i.id));
+    final allSelected = _isFinalSelection;
 
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 36),
@@ -5388,47 +5490,11 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
                 children: [
                   const Padding(
                     padding: EdgeInsets.fromLTRB(8, 4, 8, 8),
-                    child: Text('Centang item untuk pembayar bagian ini:',
+                    child: Text(
+                        'Pilih jumlah unit untuk pembayar bagian ini:',
                         style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
                   ),
-                  ..._items.map((it) {
-                    final paid = _paid.contains(it.id);
-                    final checked = _checked.contains(it.id);
-                    return Opacity(
-                      opacity: paid ? 0.45 : 1,
-                      child: CheckboxListTile(
-                        value: paid ? true : checked,
-                        onChanged: paid
-                            ? null
-                            : (v) => setState(() {
-                                  if (v == true) {
-                                    _checked.add(it.id);
-                                  } else {
-                                    _checked.remove(it.id);
-                                  }
-                                }),
-                        activeColor: const Color(0xFF2563EB),
-                        controlAffinity: ListTileControlAffinity.leading,
-                        dense: true,
-                        title: Text('${it.qty}x ${it.productName}',
-                            style: TextStyle(
-                              fontSize: 14,
-                              decoration:
-                                  paid ? TextDecoration.lineThrough : null,
-                            )),
-                        secondary: Text(
-                          paid ? 'LUNAS' : CurrencyHelper.format(it.subtotal),
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: paid
-                                ? const Color(0xFF059669)
-                                : const Color(0xFF1E293B),
-                          ),
-                        ),
-                      ),
-                    );
-                  }),
+                  ..._items.map(_splitItemRow),
                 ],
               ),
             ),
@@ -5470,7 +5536,7 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
                     child: FilledButton.icon(
                       style: FilledButton.styleFrom(
                           backgroundColor: const Color(0xFF2563EB)),
-                      onPressed: (_checked.isEmpty || _c.state.isProcessing)
+                      onPressed: (!_hasSelection || _c.state.isProcessing)
                           ? null
                           : _payPart,
                       icon: _c.state.isProcessing

@@ -561,30 +561,34 @@ class CashierController extends ChangeNotifier {
     }
   }
 
-  /// Hitung porsi tagihan (termasuk pajak proporsional) untuk item terpilih.
-  double splitShareFor(List<String> itemIds) {
+  /// Hitung porsi tagihan (termasuk pajak proporsional) untuk sejumlah UNIT
+  /// terpilih per item. [qtyByItem] = {itemId: jumlah unit dipilih}.
+  /// Mis. item "5x Nasi" bisa dipilih 2 unit saja.
+  double splitShareForQty(Map<String, int> qtyByItem) {
     final order = _state.currentOrder;
     if (order == null) return 0;
     final items = _state.orderItems;
     final subtotal = items.fold<double>(0, (s, i) => s + i.subtotal);
     if (subtotal <= 0) return 0;
-    final sel = items
-        .where((i) => itemIds.contains(i.id))
-        .fold<double>(0, (s, i) => s + i.subtotal);
+    double sel = 0;
+    for (final i in items) {
+      final q = qtyByItem[i.id] ?? 0;
+      if (q > 0) sel += q * i.price;
+    }
     return (sel / subtotal * order.totalAmount).roundToDouble();
   }
 
-  /// Bayar SPLIT BILL untuk item terpilih. [isFinal] = bagian terakhir → bayar
-  /// sisa persis (hindari sisa receh pembulatan). Mengembalikan map hasil
-  /// (status pembayaran) atau null bila gagal.
-  Future<Map<String, dynamic>?> paySplitByItems({
-    required List<String> itemIds,
+  /// Bayar SPLIT BILL untuk unit terpilih per item. [isFinal] = bagian terakhir
+  /// → bayar sisa persis (hindari sisa receh pembulatan). Mengembalikan map
+  /// hasil (status pembayaran) atau null bila gagal.
+  Future<Map<String, dynamic>?> paySplitByQty({
+    required Map<String, int> qtyByItem,
     required String method,
     required bool isFinal,
   }) async {
     final order = _state.currentOrder;
     if (order == null) return null;
-    final amount = isFinal ? order.remaining : splitShareFor(itemIds);
+    final amount = isFinal ? order.remaining : splitShareForQty(qtyByItem);
     return payPartial(amount: amount, method: method);
   }
 
