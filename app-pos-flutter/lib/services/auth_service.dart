@@ -129,11 +129,15 @@ class AuthService {
   static const List<String> roles = [
     'admin',
     'manager',
+    'svp',
     'cashier',
     'waiter',
     'kitchen',
     'bar',
   ];
+
+  /// Peran yang berwenang mengotorisasi VOID transaksi (selain PIN void bersama).
+  static const List<String> voidAuthorizedRoles = ['admin', 'manager', 'svp'];
 
   /// Daftar semua user (untuk layar manajemen).
   Future<List<User>> getUsers() async {

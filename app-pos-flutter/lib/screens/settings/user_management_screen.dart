@@ -18,6 +18,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   static const _roleLabels = {
     'admin': 'Admin',
     'manager': 'Manager',
+    'svp': 'SVP',
     'cashier': 'Kasir',
     'waiter': 'Waiter',
     'kitchen': 'Dapur',
@@ -202,6 +203,8 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
         return const Color(0xFFEF4444);
       case 'manager':
         return const Color(0xFF7C3AED);
+      case 'svp':
+        return const Color(0xFFDB2777);
       case 'cashier':
         return const Color(0xFF059669);
       case 'waiter':

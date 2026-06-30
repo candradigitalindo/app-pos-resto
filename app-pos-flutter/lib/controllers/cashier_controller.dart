@@ -710,10 +710,18 @@ class CashierController extends ChangeNotifier {
     }
   }
 
-  /// Verifikasi PIN manager untuk otorisasi void.
+  /// Verifikasi otorisasi VOID. Diterima bila:
+  /// 1. PIN cocok dengan PIN void bersama (pengaturan outlet), ATAU
+  /// 2. PIN milik user ber-role berwenang (admin/manager/svp).
   Future<bool> verifyVoidPin(String pin) async {
     final stored = await _outletService.getVoidPin();
-    return pin == stored;
+    if (pin == stored) return true;
+    try {
+      final user = await _authService.loginByPin(pin);
+      return AuthService.voidAuthorizedRoles.contains(user.role);
+    } catch (_) {
+      return false; // PIN tak cocok user mana pun
+    }
   }
 
   /// Daftar order yang sudah di-void (Histori Void).
@@ -736,7 +744,7 @@ class CashierController extends ChangeNotifier {
     try {
       await _orderRepo.voidPaidOrder(
         orderId: orderId,
-        voidedBy: voidedBy ?? 'Kasir',
+        voidedBy: voidedBy ?? await _currentCashierName(),
         reason: reason.isEmpty ? 'Dibatalkan kasir' : reason,
       );
       _setState(_state.copyWith(isProcessing: false));

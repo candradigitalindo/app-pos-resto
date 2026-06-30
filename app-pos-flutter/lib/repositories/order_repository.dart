@@ -308,6 +308,14 @@ class OrderRepository {
     return rows.length;
   }
 
+  /// Timestamp untuk payload cloud: SELALU UTC + 'Z' (zona eksplisit) agar
+  /// server tidak salah menafsir waktu lokal sebagai UTC. Penyimpanan DB lokal
+  /// tetap pakai waktu lokal (query "hari ini"/laporan berbasis lokal).
+  String _isoUtc(DateTime dt) => dt.toUtc().toIso8601String();
+
+  /// Versi untuk string waktu lokal dari DB (tanpa zona) → ISO 8601 UTC.
+  String _isoUtcStr(String s) => DateTime.parse(s).toUtc().toIso8601String();
+
   /// Label "Pemesan" sama persis dengan struk (lihat _orderersLabel di
   /// CashierController): gabungan nama pemesan unik dari item (dipisah koma),
   /// fallback ke pembuat order bila item tak ber-nama.
@@ -370,17 +378,20 @@ class OrderRepository {
               order.discountNote != null &&
               order.discountNote!.isNotEmpty)
             'discount_note': order.discountNote,
-          if (order.voidedAt != null)
-            'voided_at': order.voidedAt!.toIso8601String(),
+          if (order.voidedAt != null) ...{
+            'voided_at': _isoUtc(order.voidedAt!),
+            'voided_by': order.voidedBy ?? '', // siapa yang void
+            'void_reason': order.voidReason ?? '', // alasan void
+          },
           if (order.complimentedAt != null) ...{
-            'complimented_at': order.complimentedAt!.toIso8601String(),
+            'complimented_at': _isoUtc(order.complimentedAt!),
             'compliment_by': order.complimentBy ?? '',
             'compliment_reason': order.complimentReason ?? '',
           },
         },
         'version': DateTime.now().millisecondsSinceEpoch ~/ 1000,
-        'created_at': order.createdAt.toIso8601String(),
-        'updated_at': order.updatedAt.toIso8601String(),
+        'created_at': _isoUtc(order.createdAt),
+        'updated_at': _isoUtc(order.updatedAt),
       };
 
       await _sync.enqueue(
@@ -668,9 +679,9 @@ class OrderRepository {
               .toList(),
           // Waktu transaksi ASLI (saat pembayaran), bukan saat sync. Untuk
           // transaksi offline/tertunda, backend WAJIB pakai ini — bukan waktu
-          // terima. created_at disertakan untuk kompatibilitas.
-          'transaction_date': transaction.transactionDate.toIso8601String(),
-          'created_at': transaction.createdAt.toIso8601String(),
+          // terima. UTC + 'Z' agar tidak tergeser. created_at untuk kompatibilitas.
+          'transaction_date': _isoUtc(transaction.transactionDate),
+          'created_at': _isoUtc(transaction.createdAt),
         },
       );
     } catch (e) {
@@ -801,7 +812,7 @@ class OrderRepository {
                 'payment_method': r['payment_method'],
                 'amount': (r['amount'] as num).toDouble(),
                 'payment_note': r['payment_note'],
-                'created_at': r['created_at'],
+                'created_at': _isoUtcStr(r['created_at'] as String),
               })
           .toList();
 

@@ -50,6 +50,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       'dashboard', 'produk', 'meja', 'waiter',
       'dapur', 'kasir', 'transaksi', 'pengaturan',
     },
+    'svp': {
+      'dashboard', 'produk', 'meja', 'waiter',
+      'dapur', 'kasir', 'transaksi', 'pengaturan',
+    },
     'cashier': {'kasir', 'meja', 'transaksi'},
     'waiter': {'meja', 'waiter'},
     'kitchen': {'dapur'},
@@ -176,7 +180,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final role = user?.role ?? '';
     final allowedMenus = _roleMenuAccess[role] ?? <String>{};
     final dashState = _controller.state;
-    final isAdmin = role == 'admin' || role == 'manager';
+    final isAdmin =
+        role == 'admin' || role == 'manager' || role == 'svp';
     final isPhone = MediaQuery.of(context).size.width < 600;
 
     final allowed =
@@ -651,6 +656,8 @@ class _SidebarState extends State<_Sidebar> {
         return 'Administrator';
       case 'manager':
         return 'Manager';
+      case 'svp':
+        return 'SVP';
       case 'cashier':
         return 'Kasir';
       case 'waiter':

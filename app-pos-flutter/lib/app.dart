@@ -215,8 +215,10 @@ class _StationGateState extends State<StationGate> {
       );
     }
     final role = (_user!['role'] as String? ?? 'waiter').toLowerCase();
-    final isCashier =
-        role == 'cashier' || role == 'admin' || role == 'manager';
+    final isCashier = role == 'cashier' ||
+        role == 'admin' ||
+        role == 'manager' ||
+        role == 'svp';
     void onLogout() => setState(() => _user = null);
     if (isCashier) {
       return CashierStationScreen(user: _user!, onLogout: onLogout);

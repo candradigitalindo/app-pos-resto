@@ -10,6 +10,7 @@ class AppConfig {
   static const List<String> roles = [
     'admin',
     'manager',
+    'svp',
     'cashier',
     'waiter',
     'kitchen',

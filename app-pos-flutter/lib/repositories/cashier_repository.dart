@@ -7,6 +7,10 @@ class CashierRepository {
   final AppDatabase _db = AppDatabase.instance;
   final SyncQueueRepository _sync = SyncQueueRepository();
 
+  /// Timestamp payload cloud: SELALU UTC + 'Z' (zona eksplisit). DB lokal tetap
+  /// waktu lokal.
+  String _isoUtc(DateTime dt) => dt.toUtc().toIso8601String();
+
   // ==================== SHIFT MANAGEMENT ====================
 
   Future<CashierShift?> getActiveShift() async {
@@ -193,7 +197,7 @@ class CashierRepository {
         'amount': movement.amount,
         'counterpart_name': movement.counterpartName,
         'note': movement.note,
-        'created_at': movement.createdAt.toIso8601String(),
+        'created_at': _isoUtc(movement.createdAt),
       },
     );
     return movement;
@@ -335,9 +339,9 @@ class CashierRepository {
       payload: {
         'local_id': shift.id,
         'opened_by': shift.openedBy,
-        'opened_at': shift.openedAt.toIso8601String(),
+        'opened_at': _isoUtc(shift.openedAt),
         'opening_cash': shift.openingCash,
-        'closed_at': shift.closedAt?.toIso8601String() ?? '',
+        'closed_at': shift.closedAt != null ? _isoUtc(shift.closedAt!) : '',
         'closed_by': shift.closedBy ?? '',
         'closing_cash': shift.closingCash ?? 0,
         'closing_card': shift.closingCard ?? 0,

@@ -30,7 +30,7 @@ class AppDatabase {
 
     return openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -66,6 +66,25 @@ class AppDatabase {
       // kategori mana yang dicetaknya).
       await db.execute('ALTER TABLE order_items ADD COLUMN category_id TEXT');
     }
+    if (oldVersion < 7) {
+      // Tambah peran 'svp' ke CHECK constraint kolom role. CHECK tak bisa
+      // di-ALTER → recreate tabel users (data lama dipertahankan).
+      await db.execute('''
+        CREATE TABLE users_new (
+          id TEXT PRIMARY KEY CHECK (length(id) = 26),
+          username TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          full_name TEXT NOT NULL,
+          role TEXT NOT NULL CHECK (role IN ('admin', 'waiter', 'kitchen', 'bar', 'cashier', 'manager', 'svp')),
+          is_active INTEGER NOT NULL DEFAULT 1,
+          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      ''');
+      await db.execute('INSERT INTO users_new SELECT * FROM users');
+      await db.execute('DROP TABLE users');
+      await db.execute('ALTER TABLE users_new RENAME TO users');
+    }
   }
 
   // Antrian cetak dapur/bar (durable + retry). Struk kasir TIDAK lewat sini.
@@ -98,7 +117,7 @@ class AppDatabase {
         username TEXT NOT NULL UNIQUE,
         password_hash TEXT NOT NULL,
         full_name TEXT NOT NULL,
-        role TEXT NOT NULL CHECK (role IN ('admin', 'waiter', 'kitchen', 'bar', 'cashier', 'manager')),
+        role TEXT NOT NULL CHECK (role IN ('admin', 'waiter', 'kitchen', 'bar', 'cashier', 'manager', 'svp')),
         is_active INTEGER NOT NULL DEFAULT 1,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP

@@ -170,6 +170,21 @@ Backend perlu: tambah kolom `cashier_name` & `orderer_name` di `transactions`
 (atau tabel terkait), dan `created_by` / `waiter_name` di order & order_items
 bila ingin menyimpannya.
 
+## Void transaksi (siapa & alasan)
+
+Saat transaksi/order di-void, `payment_info` pada payload **order** kini membawa
+ketiga field (sebelumnya hanya `voided_at`):
+
+| Field (di `payment_info`) | Keterangan |
+|---|---|
+| `voided_at` | Waktu void (ISO). |
+| `voided_by` | **Nama kasir** yang melakukan void (default = kasir login, void di-gate PIN). |
+| `void_reason` | **Alasan** void (mis. "salah input"). Kosong → "Dibatalkan kasir". |
+
+Backend tinggal baca `voided_by` & `void_reason` dari `payment_info` (query &
+kolom UI sudah ada). Pola sama dengan compliment (`compliment_by`,
+`compliment_reason`).
+
 ## Waktu transaksi (transaksi offline / tertunda)
 
 Transaksi bisa dibuat saat **offline** lalu disinkron belakangan (outbox). Payload
@@ -181,6 +196,20 @@ waktu terima/sync.
 | `transaction_date` | **Waktu transaksi asli** (saat pembayaran di perangkat). Pakai ini untuk kolom tanggal transaksi & laporan. |
 | `created_at` | Sama (kompatibilitas). |
 | `sync_timestamp` (batch) | Waktu batch dikirim — **metadata saja**, JANGAN dijadikan tanggal transaksi. |
+
+### Zona waktu (WAJIB) — sudah dipenuhi app
+
+Semua timestamp payload kini dikirim **ISO 8601 UTC + `Z`** (mis.
+`2026-06-29T09:02:00.000Z`), bukan waktu lokal polos. Ini mencegah server salah
+menafsir waktu WIB sebagai UTC (yang sebelumnya menggeser transaksi sore/malam
++7 jam ke hari berikutnya).
+
+Berlaku untuk semua timestamp di payload `order`, `transaction`, `cashier_shift`,
+`cashier_cash_movement`: `transaction_date`, `created_at`, `updated_at`,
+`payments[].created_at`, `voided_at`, `complimented_at`, `opened_at`, `closed_at`.
+Server cukup menyimpan sebagai UTC & mengonversi ke zona outlet (Asia/Jakarta)
+saat menampilkan — tidak perlu menambah offset. Penyimpanan DB lokal app tetap
+waktu lokal (untuk query "hari ini"/laporan lokal).
 
 Jadi: jangan set `transaction_date = now()` di server saat menerima. Selalu ambil
 dari payload `transaction_date` (fallback `created_at`). Bila tidak, transaksi
