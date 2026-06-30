@@ -126,11 +126,13 @@ class _WaiterScreenState extends State<WaiterScreen> {
 
   Future<void> _selectTable(RestaurantTable table) async {
     if (table.status == 'available') {
-      // Pesanan baru → wajib input jumlah pax dulu.
-      final pax = await showPaxDialog(context);
-      if (pax == null) return; // dibatalkan
+      // Pesanan baru → input pax (wajib) + identitas customer (opsional).
+      final res = await showPaxDialog(context);
+      if (res == null) return; // dibatalkan
       await _controller.selectTableForOrder(table);
-      _controller.setPax(pax);
+      _controller.setPax(res.pax);
+      _controller.setCustomer(
+          name: res.customerName, phone: res.customerPhone);
     } else {
       _controller.viewOrderDetail(table);
     }

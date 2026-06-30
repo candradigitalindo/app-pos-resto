@@ -149,7 +149,8 @@ Payload sync mengikuti konsep yang sama:
 |---|---|---|
 | `created_by` | root | Nama akun **pembuat order** (1 orang). |
 | `orderer_name` | root | Label **pemesan** gabungan (= baris "Pemesan" di struk). |
-| `customer_name` | root | Nama **pelanggan** (beda dari pemesan). |
+| `customer_name` | root | Nama **pelanggan** (opsional, diisi saat order baru). |
+| `customer_phone` | root | **No. HP pelanggan** (opsional). Simpan di kolom `customer_phone`. |
 | `pax` | root | **Jumlah tamu** (≥1). Wajib diisi kasir/waiter saat order baru. Simpan di kolom `pax`. |
 | `items[].waiter_name` | per item | Nama **pemesan item** itu — sumber pengelompokan struk. |
 

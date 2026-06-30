@@ -255,4 +255,24 @@ class PrintQueueService {
     );
     unawaited(_drain());
   }
+
+  /// Cetak ulang SATU job (mis. tiket bar/dapur tertentu) — termasuk yang sudah
+  /// 'done'. Job dikembalikan ke antrian lalu dikirim ulang ke printer ASLINYA
+  /// (printer_address tersimpan → routing kategori bar/dapur tetap benar).
+  Future<void> reprint(String id) async {
+    final db = await _db.database;
+    await db.update(
+      'kitchen_print_jobs',
+      {
+        'status': 'pending',
+        'retry_count': 0,
+        'error_message': null,
+        'locked_at': null,
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    unawaited(_drain());
+  }
 }

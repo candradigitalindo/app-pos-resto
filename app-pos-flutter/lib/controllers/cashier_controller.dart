@@ -7,6 +7,7 @@ import '../repositories/product_repository.dart';
 import '../repositories/table_repository.dart';
 import '../services/auth_service.dart';
 import '../services/outlet_service.dart';
+import '../services/print_queue_service.dart';
 import '../services/printer_service.dart';
 import '../services/receipt_builder.dart';
 
@@ -24,6 +25,8 @@ class CashierState {
   final Map<String, String> cartNotes;
   final Map<String, Product> productCache;
   final int pax; // jumlah tamu untuk order baru
+  final String? customerName; // identitas customer (opsional)
+  final String? customerPhone; // no HP customer (opsional)
   final bool isLoading;
   final bool isProcessing;
   final String? errorMessage;
@@ -43,6 +46,8 @@ class CashierState {
     this.cartNotes = const {},
     this.productCache = const {},
     this.pax = 1,
+    this.customerName,
+    this.customerPhone,
     this.isLoading = false,
     this.isProcessing = false,
     this.errorMessage,
@@ -77,6 +82,9 @@ class CashierState {
     Map<String, String>? cartNotes,
     Map<String, Product>? productCache,
     int? pax,
+    String? customerName,
+    String? customerPhone,
+    bool clearCustomer = false,
     bool? isLoading,
     bool? isProcessing,
     String? errorMessage,
@@ -103,6 +111,9 @@ class CashierState {
       cartNotes: cartNotes ?? this.cartNotes,
       productCache: productCache ?? this.productCache,
       pax: pax ?? this.pax,
+      customerName: clearCustomer ? null : (customerName ?? this.customerName),
+      customerPhone:
+          clearCustomer ? null : (customerPhone ?? this.customerPhone),
       isLoading: isLoading ?? this.isLoading,
       isProcessing: isProcessing ?? this.isProcessing,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
@@ -384,6 +395,15 @@ class CashierController extends ChangeNotifier {
     _setState(_state.copyWith(pax: p.clamp(1, 99)));
   }
 
+  /// Atur identitas customer (opsional) untuk order baru.
+  void setCustomer({String? name, String? phone}) {
+    _setState(_state.copyWith(
+      customerName: name,
+      customerPhone: phone,
+      clearCustomer: name == null && phone == null,
+    ));
+  }
+
   void selectTable(RestaurantTable table) {
     _setState(_state.copyWith(
       selectedTable: table,
@@ -392,6 +412,7 @@ class CashierController extends ChangeNotifier {
       currentOrder: null,
       clearCurrentOrder: true,
       pax: 1, // reset pax untuk meja baru
+      clearCustomer: true, // reset identitas customer
     ));
     if (table.status == 'occupied') {
       loadOrderForTable(table.tableNumber);
@@ -446,6 +467,8 @@ class CashierController extends ChangeNotifier {
         tableNumber: _state.selectedTable!.tableNumber,
         items: items,
         pax: _state.pax,
+        customerName: _state.customerName,
+        customerPhone: _state.customerPhone,
         createdBy: orderedBy,
         waiterName: orderedBy, // catat pemesan di tiap item (untuk multi-pemesan)
       );
@@ -456,6 +479,7 @@ class CashierController extends ChangeNotifier {
         cart: {},
         cartNotes: {},
         pax: 1, // reset untuk order berikutnya
+        clearCustomer: true,
         isProcessing: false,
       ));
       return true;
@@ -862,11 +886,12 @@ class CashierController extends ChangeNotifier {
 
       final bytes = ReceiptBuilder(paperWidth: printer.paperCols)
           .buildReceipt(data);
-      if (printer.type == PrinterType.bluetooth) {
-        await printerService.sendBluetooth(printer.address, bytes);
-      } else {
-        await printerService.sendLan(printer.address, bytes);
-      }
+      // Lewat ANTRIAN cetak (durable): retry otomatis + bila gagal tetap
+      // tersimpan dan bisa "Cetak Ulang" dari layar Antrian Cetak.
+      final label =
+          '${data.isBill ? 'Tagihan' : 'Struk Bayar'} Meja ${data.tableNumber}';
+      await PrintQueueService.instance
+          .enqueueForPrinter(printer, bytes: bytes, label: label);
     } catch (e) {
       debugPrint('Cetak struk error: $e');
     }
@@ -913,11 +938,9 @@ class CashierController extends ChangeNotifier {
         handoverToName: handoverToName,
         countedCash: countedCash,
       );
-      if (printer.type == PrinterType.bluetooth) {
-        await printerService.sendBluetooth(printer.address, bytes);
-      } else {
-        await printerService.sendLan(printer.address, bytes);
-      }
+      // Lewat antrian cetak (durable + bisa cetak ulang bila gagal).
+      await PrintQueueService.instance
+          .enqueueForPrinter(printer, bytes: bytes, label: title);
     } catch (e) {
       debugPrint('Cetak laporan shift error: $e');
     }

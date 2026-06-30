@@ -583,6 +583,7 @@ class ReceiptBuilder {
     if (data.customerName != null && data.customerName!.isNotEmpty) {
       buf.addAll(_Esc.line(_kv('Pelanggan', data.customerName!)));
     }
+    // No. HP customer TIDAK dicetak di struk (cukup nama) — tetap disimpan & sync.
   }
 
   void _addItems(List<int> buf, List<ReceiptItem> items) {

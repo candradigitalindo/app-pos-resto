@@ -1020,12 +1020,15 @@ class _CashierScreenState extends State<CashierScreen> {
                       onTap: () async {
                         Navigator.pop(context); // tutup pemilih meja
                         if (table.status == 'available') {
-                          // Pesanan baru → wajib input jumlah pax dulu.
+                          // Pesanan baru → input pax (wajib) + customer (opsional).
                           // Pakai rootContext (sheet sudah ditutup).
-                          final pax = await showPaxDialog(rootContext);
-                          if (pax == null) return; // dibatalkan
+                          final res = await showPaxDialog(rootContext);
+                          if (res == null) return; // dibatalkan
                           _controller.selectTable(table);
-                          _controller.setPax(pax);
+                          _controller.setPax(res.pax);
+                          _controller.setCustomer(
+                              name: res.customerName,
+                              phone: res.customerPhone);
                         } else {
                           _controller.selectTable(table); // muat order lama
                         }

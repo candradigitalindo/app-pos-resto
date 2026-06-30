@@ -353,6 +353,7 @@ class OrderRepository {
         'local_id': order.id,
         'table_number': order.tableNumber,
         'customer_name': order.customerName ?? '',
+        'customer_phone': order.customerPhone ?? '', // no HP customer (opsional)
         'created_by': order.createdBy ?? '', // pembuat order (1 orang)
         'orderer_name': _orderersLabel(items, order), // label pemesan = struk
         'pax': order.pax,

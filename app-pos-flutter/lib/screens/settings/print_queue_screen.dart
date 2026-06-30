@@ -49,6 +49,16 @@ class _PrintQueueScreenState extends State<PrintQueueScreen> {
     });
   }
 
+  Future<void> _reprintJob(String id) async {
+    await _service.reprint(id);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Mencetak ulang ke printer...')),
+      );
+    }
+    _load();
+  }
+
   Future<void> _retryFailed() async {
     await _service.retryFailed();
     if (!mounted) return;
@@ -103,7 +113,11 @@ class _PrintQueueScreenState extends State<PrintQueueScreen> {
                           itemCount: _jobs.length,
                           separatorBuilder: (_, __) =>
                               const SizedBox(height: 8),
-                          itemBuilder: (_, i) => _JobTile(job: _jobs[i]),
+                          itemBuilder: (_, i) => _JobTile(
+                            job: _jobs[i],
+                            onReprint: () =>
+                                _reprintJob(_jobs[i]['id'] as String),
+                          ),
                         ),
                       ),
           ),
@@ -205,7 +219,8 @@ class _PrintQueueScreenState extends State<PrintQueueScreen> {
 
 class _JobTile extends StatelessWidget {
   final Map<String, dynamic> job;
-  const _JobTile({required this.job});
+  final VoidCallback? onReprint;
+  const _JobTile({required this.job, this.onReprint});
 
   @override
   Widget build(BuildContext context) {
@@ -266,6 +281,16 @@ class _JobTile extends StatelessWidget {
                 style: TextStyle(
                     fontSize: 11, color: color, fontWeight: FontWeight.w700)),
           ),
+          // Cetak ulang per-tiket (selain yang masih menunggu).
+          if (status != 'pending' && onReprint != null) ...[
+            const SizedBox(width: 4),
+            IconButton(
+              onPressed: onReprint,
+              icon: const Icon(Icons.refresh, size: 20, color: Color(0xFF2563EB)),
+              tooltip: 'Cetak ulang',
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
         ],
       ),
     );

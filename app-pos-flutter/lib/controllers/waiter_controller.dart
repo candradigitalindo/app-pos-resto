@@ -26,6 +26,8 @@ class WaiterState {
   final Map<String, String> cartNotes;
   final Map<String, Product> productCache;
   final int pax; // jumlah tamu untuk order baru
+  final String? customerName; // identitas customer (opsional)
+  final String? customerPhone; // no HP customer (opsional)
 
   // Existing order detail
   final Order? currentOrder;
@@ -51,6 +53,8 @@ class WaiterState {
     this.cartNotes = const {},
     this.productCache = const {},
     this.pax = 1,
+    this.customerName,
+    this.customerPhone,
     this.currentOrder,
     this.currentOrderItems = const [],
     this.isLoading = false,
@@ -83,6 +87,9 @@ class WaiterState {
     Map<String, String>? cartNotes,
     Map<String, Product>? productCache,
     int? pax,
+    String? customerName,
+    String? customerPhone,
+    bool clearCustomer = false,
     Order? currentOrder,
     bool clearCurrentOrder = false,
     List<OrderItem>? currentOrderItems,
@@ -108,6 +115,9 @@ class WaiterState {
       cartNotes: cartNotes ?? this.cartNotes,
       productCache: productCache ?? this.productCache,
       pax: pax ?? this.pax,
+      customerName: clearCustomer ? null : (customerName ?? this.customerName),
+      customerPhone:
+          clearCustomer ? null : (customerPhone ?? this.customerPhone),
       currentOrder:
           clearCurrentOrder ? null : (currentOrder ?? this.currentOrder),
       currentOrderItems: currentOrderItems ?? this.currentOrderItems,
@@ -185,6 +195,7 @@ class WaiterController extends ChangeNotifier {
       viewMode: 'order',
       cart: {},
       pax: 1, // reset jumlah tamu untuk order baru
+      clearCustomer: true, // reset identitas customer
       clearCurrentOrder: true,
       currentOrderItems: [],
       isLoading: true,
@@ -415,6 +426,15 @@ class WaiterController extends ChangeNotifier {
     _setState(_state.copyWith(pax: p.clamp(1, 99)));
   }
 
+  /// Atur identitas customer (opsional) untuk order baru.
+  void setCustomer({String? name, String? phone}) {
+    _setState(_state.copyWith(
+      customerName: name,
+      customerPhone: phone,
+      clearCustomer: name == null && phone == null,
+    ));
+  }
+
   Future<bool> createOrder({String? customerName, int? pax}) async {
     if (_state.selectedTable == null) {
       _setState(_state.copyWith(errorMessage: 'Pilih meja terlebih dahulu'));
@@ -444,7 +464,8 @@ class WaiterController extends ChangeNotifier {
       final order = await _orderRepo.createOrder(
         tableNumber: _state.selectedTable!.tableNumber,
         items: items,
-        customerName: customerName,
+        customerName: customerName ?? _state.customerName,
+        customerPhone: _state.customerPhone,
         pax: pax ?? _state.pax,
         createdBy: orderedBy,
         waiterName: orderedBy, // catat pemesan di tiap item
@@ -467,6 +488,7 @@ class WaiterController extends ChangeNotifier {
         cartNotes: {},
         clearSelectedTable: true,
         clearCurrentOrder: true,
+        clearCustomer: true,
         currentOrderItems: [],
       ));
       return true;
