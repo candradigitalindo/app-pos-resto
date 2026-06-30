@@ -10,6 +10,7 @@ import '../database/database.dart';
 import '../repositories/order_repository.dart';
 import '../repositories/sync_queue_repository.dart';
 import '../utils/ulid.dart';
+import 'device_heartbeat_service.dart';
 import 'outlet_service.dart';
 
 /// Mengirim outbox (sync_queue) ke cloud-pos via endpoint BatchSync.
@@ -120,6 +121,40 @@ class CloudSyncService {
     // Catat waktu siklus selesai agar bisa dipantau di UI
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_lastSyncAtKey, DateTime.now().toIso8601String());
+
+    // Heartbeat: snapshot kondisi tablet/printer/koneksi (tidak di-retry).
+    await _sendHeartbeat();
+  }
+
+  /// Kirim telemetri perangkat ke cloud (snapshot terkini). Kegagalan tidak
+  /// memengaruhi sync data — hanya pemantauan.
+  Future<void> _sendHeartbeat() async {
+    try {
+      final outlet = await _outletService.loadOutlet();
+      if (!_isConfigured(outlet)) return;
+      final stats = await _queue.stats();
+      final pending = (stats['pending'] ?? 0) + (stats['failed'] ?? 0);
+      final payload = await DeviceHeartbeatService.instance.build(
+        online: _consecutiveFails == 0,
+        pendingSync: pending,
+        lastSyncAt: await lastSyncAt(),
+      );
+      final baseUrl = _normalizeBaseUrl(outlet.cloudApiUrl);
+      final url =
+          '$baseUrl/api/v1/outlets/${outlet.cloudOutletId}/heartbeat';
+      await _dio.post(
+        url,
+        data: payload,
+        options: Options(headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${outlet.cloudApiKey}',
+          'X-Outlet-ID': outlet.cloudOutletId,
+          'X-Outlet-Code': outlet.code,
+        }),
+      );
+    } catch (e) {
+      debugPrint('CloudSync heartbeat error: $e');
+    }
   }
 
   // ── Push ──────────────────────────────────────────────────────────────────

@@ -44,6 +44,11 @@ dependencies:
   crypto: ^3.0.3
   shared_preferences: ^2.2.3
 
+  # Telemetri perangkat (heartbeat: baterai, versi app). Model/OS/penyimpanan
+  # via MethodChannel native (hindari konflik win32 device_info_plus<->network_info_plus).
+  battery_plus: ^6.0.3
+  package_info_plus: ^10.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

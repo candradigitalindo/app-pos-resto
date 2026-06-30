@@ -255,6 +255,18 @@ class PrinterService {
           {Duration timeout = const Duration(seconds: 3)}) =>
       _checkPort(ip, port, timeout);
 
+  /// Ping LAN yang DISERIALISASI dengan job cetak ke printer yang sama (lewat
+  /// kunci per-alamat). Mencegah ping heartbeat bertabrakan dengan perintah
+  /// cetak (printer thermal umumnya hanya menerima 1 koneksi di port 9100).
+  /// Bila printer sedang mencetak, ping menunggu sampai selesai (lalu cepat).
+  Future<bool> pingLanSafe(String addressWithPort,
+      {Duration timeout = const Duration(seconds: 1)}) {
+    final parts = addressWithPort.split(':');
+    final ip = parts.first;
+    final port = parts.length > 1 ? int.tryParse(parts[1]) ?? 9100 : 9100;
+    return _withLanLock(addressWithPort, () => _checkPort(ip, port, timeout));
+  }
+
   // ── Persistence ────────────────────────────────────────────────────────────
 
   Future<List<PrinterDevice>> getSavedPrinters() async {
