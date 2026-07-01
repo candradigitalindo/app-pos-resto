@@ -1322,6 +1322,8 @@ class OrderRepository {
             dateTime: now,
             categoryNames: categoryNames,
             isAdditional: isAdditional,
+            customerName: order.customerName,
+            pax: order.pax,
           );
           await PrintQueueService.instance.enqueueForPrinter(
             p,

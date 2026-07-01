@@ -95,14 +95,16 @@ class _TablesScreenState extends State<TablesScreen> {
             children: [
               TextField(
                 controller: controller,
+                textCapitalization: TextCapitalization.characters,
                 decoration: InputDecoration(
-                  labelText: 'Nomor Meja',
+                  labelText: 'Nomor/Nama Meja',
+                  hintText: 'mis. 1, A5, VIP1',
                   border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12)),
                   contentPadding: const EdgeInsets.symmetric(
                       horizontal: 14, vertical: 12),
                 ),
-                keyboardType: TextInputType.number,
+                keyboardType: TextInputType.text,
               ),
               const SizedBox(height: 16),
               Row(
@@ -216,14 +218,16 @@ class _TablesScreenState extends State<TablesScreen> {
             children: [
               TextField(
                 controller: controller,
+                textCapitalization: TextCapitalization.characters,
                 decoration: InputDecoration(
-                  labelText: 'Nomor Meja',
+                  labelText: 'Nomor/Nama Meja',
+                  hintText: 'mis. 1, A5, VIP1',
                   border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12)),
                   contentPadding: const EdgeInsets.symmetric(
                       horizontal: 14, vertical: 12),
                 ),
-                keyboardType: TextInputType.number,
+                keyboardType: TextInputType.text,
               ),
               const SizedBox(height: 16),
               Row(

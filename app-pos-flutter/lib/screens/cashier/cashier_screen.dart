@@ -968,110 +968,26 @@ class _CashierScreenState extends State<CashierScreen> {
     );
   }
 
-  void _showTableSelector() {
-    final tables = _controller.state.tables;
-    final selectedTable = _controller.state.selectedTable;
-    final rootContext = context; // context layar (untuk dialog setelah sheet ditutup)
-
-    showModalBottomSheet(
+  Future<void> _showTableSelector() async {
+    final table = await showDialog<RestaurantTable>(
       context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text('Pilih Meja',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: tables.map((table) {
-                  final isAvailable = table.status == 'available';
-                  final isSelected =
-                      selectedTable?.tableNumber == table.tableNumber;
-                  return Material(
-                    color: isSelected
-                        ? const Color(0xFF059669)
-                        : isAvailable
-                            ? const Color(0xFFF1F5F9)
-                            : const Color(0xFFFFF3E0),
-                    borderRadius: BorderRadius.circular(12),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () async {
-                        Navigator.pop(context); // tutup pemilih meja
-                        if (table.status == 'available') {
-                          // Pesanan baru → input pax (wajib) + customer (opsional).
-                          // Pakai rootContext (sheet sudah ditutup).
-                          final res = await showPaxDialog(rootContext);
-                          if (res == null) return; // dibatalkan
-                          _controller.selectTable(table);
-                          _controller.setPax(res.pax);
-                          _controller.setCustomer(
-                              name: res.customerName,
-                              phone: res.customerPhone);
-                        } else {
-                          _controller.selectTable(table); // muat order lama
-                        }
-                      },
-                      child: Container(
-                        width: 80,
-                        height: 60,
-                        alignment: Alignment.center,
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              table.tableNumber,
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: isSelected
-                                    ? Colors.white
-                                    : !isAvailable
-                                        ? const Color(0xFFF59E0B)
-                                        : const Color(0xFF1E293B),
-                              ),
-                            ),
-                            Text(
-                              isAvailable ? 'Tersedia' : 'Terisi',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: isSelected
-                                    ? Colors.white70
-                                    : Colors.grey[500],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ],
-          ),
-        ),
+      builder: (_) => _TablePickerDialog(
+        tables: _controller.state.tables,
+        selectedNumber: _controller.state.selectedTable?.tableNumber,
       ),
     );
+    if (table == null || !mounted) return;
+    if (table.status == 'available') {
+      // Pesanan baru → input pax (wajib) + identitas customer (opsional).
+      final res = await showPaxDialog(context);
+      if (res == null) return; // dibatalkan
+      _controller.selectTable(table);
+      _controller.setPax(res.pax);
+      _controller.setCustomer(
+          name: res.customerName, phone: res.customerPhone);
+    } else {
+      _controller.selectTable(table); // muat order lama
+    }
   }
 
   // ── Shift Gate ───────────────────────────────────────────────────────────
@@ -2492,27 +2408,34 @@ class _CashierScreenState extends State<CashierScreen> {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Pindah dari Meja ${order.tableNumber} ke:',
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              if (available.isEmpty)
-                const Text('Tidak ada meja kosong',
-                    style: TextStyle(color: Color(0xFF94A3B8)))
-              else
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: available
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.7,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Pindah dari Meja ${order.tableNumber} ke:',
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 16),
+                if (available.isEmpty)
+                  const Text('Tidak ada meja kosong',
+                      style: TextStyle(color: Color(0xFF94A3B8)))
+                else
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: available
                       .map((t) => Material(
                             color: const Color(0xFFF1F5F9),
                             borderRadius: BorderRadius.circular(12),
@@ -2546,9 +2469,12 @@ class _CashierScreenState extends State<CashierScreen> {
                               ),
                             ),
                           ))
-                      .toList(),
-                ),
-            ],
+                            .toList(),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -5586,6 +5512,143 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
                   color: selected ? Colors.white : const Color(0xFF64748B),
                 )),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Pilih Meja: dialog tengah, besar, scroll, dengan pencarian ────────────────
+class _TablePickerDialog extends StatefulWidget {
+  final List<RestaurantTable> tables;
+  final String? selectedNumber;
+  const _TablePickerDialog({required this.tables, this.selectedNumber});
+
+  @override
+  State<_TablePickerDialog> createState() => _TablePickerDialogState();
+}
+
+class _TablePickerDialogState extends State<_TablePickerDialog> {
+  String _q = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final q = _q.trim().toLowerCase();
+    final filtered = q.isEmpty
+        ? widget.tables
+        : widget.tables
+            .where((t) => t.tableNumber.toLowerCase().contains(q))
+            .toList();
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 40),
+      child: SizedBox(
+        // Selalu tampil BESAR; bila meja banyak → area daftar yang scroll.
+        width: size.width > 820 ? 760 : size.width * 0.9,
+        height: size.height * 0.82,
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.max,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.table_restaurant_outlined,
+                      color: Color(0xFF059669), size: 26),
+                  const SizedBox(width: 10),
+                  const Text('Pilih Meja',
+                      style: TextStyle(
+                          fontSize: 22, fontWeight: FontWeight.w800)),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                autofocus: true,
+                onChanged: (v) => setState(() => _q = v),
+                decoration: InputDecoration(
+                  hintText: 'Cari meja... (mis. A5, 12)',
+                  prefixIcon: const Icon(Icons.search),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Flexible(
+                child: filtered.isEmpty
+                    ? const Center(
+                        child: Text('Meja tidak ditemukan',
+                            style: TextStyle(color: Color(0xFF94A3B8))))
+                    : GridView.builder(
+                        padding: EdgeInsets.zero,
+                        // 5 kolom mengisi lebar; lebih dari muat → scroll ke bawah.
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 5,
+                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                          childAspectRatio: 1.25,
+                        ),
+                        itemCount: filtered.length,
+                        itemBuilder: (_, i) => _tile(filtered[i]),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tile(RestaurantTable table) {
+    final isAvailable = table.status == 'available';
+    final isSelected = widget.selectedNumber == table.tableNumber;
+    return Material(
+      color: isSelected
+          ? const Color(0xFF059669)
+          : isAvailable
+              ? const Color(0xFFF1F5F9)
+              : const Color(0xFFFFF3E0),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => Navigator.pop(context, table),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                table.tableNumber,
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: isSelected
+                      ? Colors.white
+                      : !isAvailable
+                          ? const Color(0xFFF59E0B)
+                          : const Color(0xFF1E293B),
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                isAvailable ? 'Tersedia' : 'Terisi',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isSelected ? Colors.white70 : Colors.grey[500],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

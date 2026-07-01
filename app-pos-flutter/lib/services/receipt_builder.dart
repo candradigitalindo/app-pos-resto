@@ -485,6 +485,8 @@ class ReceiptBuilder {
     required DateTime dateTime,
     Map<String, String> categoryNames = const {},
     bool isAdditional = false,
+    String? customerName,
+    int pax = 0,
   }) {
     final buf = <int>[];
     buf.addAll(_Esc.init());
@@ -503,6 +505,10 @@ class ReceiptBuilder {
     buf.addAll(_Esc.line('Meja: $tableNumber'));
     if (waiterName.isNotEmpty) {
       buf.addAll(_Esc.line('Waiter: $waiterName'));
+    }
+    if (customerName != null && customerName.isNotEmpty) {
+      final paxStr = pax > 0 ? ' ($pax pax)' : '';
+      buf.addAll(_Esc.line('Pelanggan: $customerName$paxStr'));
     }
     buf.addAll(_Esc.line(_formatDateTime(dateTime)));
     buf.addAll(_Esc.line('Total item: ${items.length}'));
