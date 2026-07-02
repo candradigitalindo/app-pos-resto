@@ -737,14 +737,52 @@ class CashierController extends ChangeNotifier {
   /// Verifikasi otorisasi VOID. Diterima bila:
   /// 1. PIN cocok dengan PIN void bersama (pengaturan outlet), ATAU
   /// 2. PIN milik user ber-role berwenang (admin/manager/svp).
-  Future<bool> verifyVoidPin(String pin) async {
+  Future<bool> verifyVoidPin(String pin) async =>
+      (await _voidAuthorizer(pin)) != null;
+
+  /// Nama pihak yang mengotorisasi VOID dari [pin], atau null bila tidak
+  /// berwenang. PIN void bersama → nama kasir aktif; PIN user admin/manager/svp
+  /// → nama user tsb.
+  Future<String?> _voidAuthorizer(String pin) async {
     final stored = await _outletService.getVoidPin();
-    if (pin == stored) return true;
+    if (pin == stored) return _currentCashierName();
     try {
       final user = await _authService.loginByPin(pin);
-      return AuthService.voidAuthorizedRoles.contains(user.role);
-    } catch (_) {
-      return false; // PIN tak cocok user mana pun
+      if (AuthService.voidAuthorizedRoles.contains(user.role)) {
+        return user.fullName.isNotEmpty ? user.fullName : user.username;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// VOID (hapus) satu item order aktif. Butuh PIN manager/SVP (atau PIN void
+  /// bersama). Mengembalikan 'ok' | 'invalid_pin' | 'error'.
+  Future<String> voidOrderItem({
+    required String itemId,
+    required String pin,
+    String reason = '',
+  }) async {
+    final authorizer = await _voidAuthorizer(pin);
+    if (authorizer == null) return 'invalid_pin';
+    if (_state.isProcessing) return 'error';
+    _setState(_state.copyWith(isProcessing: true, clearError: true));
+    try {
+      final order = _state.currentOrder;
+      await _orderRepo.voidOrderItem(
+        itemId: itemId,
+        voidedBy: authorizer,
+        reason: reason.isEmpty ? 'Hapus item' : reason,
+      );
+      if (order != null) await _loadOrderItems(order.id);
+      _setState(_state.copyWith(isProcessing: false));
+      return 'ok';
+    } catch (e) {
+      _setState(_state.copyWith(
+        isProcessing: false,
+        errorMessage: 'Gagal hapus item: '
+            '${e.toString().replaceFirst('Exception: ', '')}',
+      ));
+      return 'error';
     }
   }
 

@@ -465,6 +465,60 @@ class OrderRepository {
     await _reapplyAutoChargesAndRecalc(item.orderId);
   }
 
+  /// VOID (hapus) satu item dari order yang belum lunas. Otorisasi manager/SVP
+  /// dicek di controller. Item dihapus lokal + total dihitung ulang; event
+  /// void item dikirim ke cloud untuk audit (siapa & alasan).
+  Future<void> voidOrderItem({
+    required String itemId,
+    required String voidedBy,
+    String reason = '',
+  }) async {
+    final item = await _getOrderItem(itemId);
+    if (item == null) throw Exception('Item tidak ditemukan');
+    final order = await getOrderById(item.orderId);
+    if (order == null) throw Exception('Order tidak ditemukan');
+    if (order.isPaid) throw Exception('Order sudah dibayar');
+    if (order.isVoided) throw Exception('Order sudah dibatalkan');
+
+    final now = DateTime.now();
+    // Audit void item ke cloud SEBELUM item dihapus (agar datanya lengkap).
+    await _enqueueOrderItemVoid(order, item, voidedBy, reason, now);
+
+    await _db.delete('order_items', where: 'id = ?', whereArgs: [itemId]);
+    // Subtotal berubah → pajak & total dihitung ulang.
+    await _reapplyAutoChargesAndRecalc(item.orderId);
+    // Kirim status order terbaru (item & total) ke cloud.
+    await _enqueueOrder(item.orderId, 'upsert');
+  }
+
+  /// Outbox: audit void item ke cloud (entityType 'order_item_void').
+  Future<void> _enqueueOrderItemVoid(Order order, OrderItem item,
+      String voidedBy, String reason, DateTime now) async {
+    try {
+      await _sync.enqueue(
+        entityType: 'order_item_void',
+        entityId: item.id,
+        operation: 'create',
+        payload: {
+          'local_id': item.id,
+          'order_id': order.id,
+          'table_number': order.tableNumber,
+          'product_name': item.productName,
+          'qty': item.qty,
+          'price': item.price,
+          'subtotal': item.subtotal,
+          'category_id': item.categoryId,
+          'waiter_name': item.waiterName,
+          'voided_by': voidedBy, // manager/SVP yang mengotorisasi
+          'void_reason': reason,
+          'voided_at': _isoUtc(now), // UTC + Z
+        },
+      );
+    } catch (e) {
+      debugPrint('enqueueOrderItemVoid error: $e');
+    }
+  }
+
   // ==================== PAYMENT ====================
 
   Future<Map<String, dynamic>> processPayment({

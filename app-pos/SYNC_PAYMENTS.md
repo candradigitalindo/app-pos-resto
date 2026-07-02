@@ -186,6 +186,33 @@ Backend tinggal baca `voided_by` & `void_reason` dari `payment_info` (query &
 kolom UI sudah ada). Pola sama dengan compliment (`compliment_by`,
 `compliment_reason`).
 
+## Void item (hapus item) — entityType `order_item_void`
+
+Saat kasir menghapus satu item dari order (butuh otorisasi Manager/SVP), app
+mengirim event audit terpisah (item dihapus dari order; order upsert juga
+menyusul dengan item & total terbaru).
+
+```jsonc
+// entity_type: "order_item_void", operation: "create"
+{
+  "local_id": "01J...",          // id item
+  "order_id": "01J...",
+  "table_number": "A5",
+  "product_name": "Mie Goreng",
+  "qty": 1,
+  "price": 20000,
+  "subtotal": 20000,
+  "category_id": "01J...",
+  "waiter_name": "Andi",
+  "voided_by": "Budi (Manager)", // yang mengotorisasi (manager/svp/PIN void)
+  "void_reason": "salah input",
+  "voided_at": "2026-06-30T07:15:00.000Z"  // UTC + Z
+}
+```
+
+Backend simpan sebagai audit void item (mis. tabel `order_item_voids`). Order
+terkait tetap dikirim via entityType `order` (items & total sudah tanpa item ini).
+
 ## Waktu transaksi (transaksi offline / tertunda)
 
 Transaksi bisa dibuat saat **offline** lalu disinkron belakangan (outbox). Payload

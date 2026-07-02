@@ -1758,6 +1758,7 @@ class _CashierScreenState extends State<CashierScreen> {
               qty: item.qty,
               price: item.price,
               status: item.itemStatus,
+              onDelete: () => _showItemVoidDialog(item),
             )),
       ],
     ];
@@ -2399,6 +2400,86 @@ class _CashierScreenState extends State<CashierScreen> {
   }
 
   // ── Pindah Meja ───────────────────────────────────────────────────────────
+  /// Hapus (void) satu item — wajib PIN Manager/SVP (atau PIN void bersama).
+  Future<void> _showItemVoidDialog(OrderItem item) async {
+    final pinCtrl = TextEditingController();
+    final reasonCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.delete_outline, color: Color(0xFFEF4444)),
+            SizedBox(width: 10),
+            Text('Hapus Item'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Hapus "${item.qty}x ${item.productName}"?',
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            const Text('Perlu otorisasi Manager/SVP.',
+                style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+            const SizedBox(height: 16),
+            TextField(
+              controller: pinCtrl,
+              autofocus: true,
+              obscureText: true,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'PIN Manager/SVP',
+                prefixIcon: Icon(Icons.lock_outline),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Alasan (opsional)',
+                prefixIcon: Icon(Icons.notes_outlined),
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Batal')),
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFEF4444)),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Hapus'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final res = await _controller.voidOrderItem(
+      itemId: item.id,
+      pin: pinCtrl.text.trim(),
+      reason: reasonCtrl.text.trim(),
+    );
+    if (!mounted) return;
+    final msg = res == 'ok'
+        ? 'Item dihapus'
+        : res == 'invalid_pin'
+            ? 'PIN salah / tidak berwenang'
+            : (_controller.state.errorMessage ?? 'Gagal hapus item');
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor:
+          res == 'ok' ? const Color(0xFF059669) : Colors.red,
+    ));
+  }
+
   void _showMovePicker() {
     final order = _controller.state.currentOrder;
     if (order == null) return;
@@ -2680,6 +2761,7 @@ class _CartItemTile extends StatelessWidget {
   final VoidCallback? onAdd;
   final VoidCallback? onRemove;
   final VoidCallback? onEditNote;
+  final VoidCallback? onDelete; // hapus/void item (butuh PIN manager/SVP)
 
   const _CartItemTile({
     required this.name,
@@ -2690,6 +2772,7 @@ class _CartItemTile extends StatelessWidget {
     this.onAdd,
     this.onRemove,
     this.onEditNote,
+    this.onDelete,
   });
 
   @override
@@ -2757,8 +2840,23 @@ class _CartItemTile extends StatelessWidget {
                     color: _statusColor(status!),
                     fontWeight: FontWeight.w600),
               ),
-            )
-          else ...[
+            ),
+          if (status != null && onDelete != null)
+            GestureDetector(
+              onTap: onDelete,
+              child: Container(
+                width: 28,
+                height: 28,
+                margin: const EdgeInsets.only(left: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEE2E2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.delete_outline,
+                    size: 16, color: Color(0xFFEF4444)),
+              ),
+            ),
+          if (status == null) ...[
             if (onRemove != null)
               GestureDetector(
                 onTap: onRemove,
