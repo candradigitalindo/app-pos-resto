@@ -333,6 +333,7 @@ class CloudSyncService {
     final cloudCatIds = <String>{};
     final cloudProdIds = <String>{};
     var fetchOk = false;
+    int? cloudTotal; // total produk menurut cloud (bila dikirim)
 
     try {
       // 1. Semua kategori (kategori dulu karena produk punya FK)
@@ -351,9 +352,14 @@ class CloudSyncService {
         }
       }
 
-      // 2. Semua produk (paginasi)
+      // 2. Semua produk (paginasi). PENTING: server bisa membatasi ukuran
+      // halaman (mis. cap 100 walau diminta 200). Jangan berhenti hanya karena
+      // halaman "kurang penuh" — dulu itu membuat produk ke-101+ tak terambil
+      // lalu ikut ter-soft-delete di langkah replace. Andalkan total bila ada;
+      // selain itu teruskan sampai halaman kosong.
       var page = 1;
       const limit = 200;
+      String? prevFirstId;
       while (true) {
         final prodResp = await _dio.get(
           '$baseUrl/api/v1/outlets/${outlet.cloudOutletId}/products',
@@ -364,6 +370,15 @@ class CloudSyncService {
         final prods = body?['data'];
         if (prods is! List || prods.isEmpty) break;
 
+        // Pengaman: server mengabaikan parameter page (mengirim halaman sama
+        // terus) → berhenti agar tidak loop tanpa akhir.
+        final first = prods.first;
+        final firstId = first is Map
+            ? '${first['local_id'] ?? first['cloud_id'] ?? first['id']}'
+            : null;
+        if (firstId != null && firstId == prevFirstId) break;
+        prevFirstId = firstId;
+
         for (final p in prods) {
           if (p is Map) {
             _collectCloudIds(p, cloudProdIds);
@@ -372,8 +387,9 @@ class CloudSyncService {
           }
         }
 
-        final total = (body?['total'] as num?)?.toInt() ?? prodCount;
-        if (prodCount >= total || prods.length < limit) break;
+        cloudTotal = (body?['total'] as num?)?.toInt() ?? cloudTotal;
+        if (cloudTotal != null && prodCount >= cloudTotal) break;
+        if (page >= 500) break; // pengaman loop (500 hal × 200 = 100rb produk)
         page++;
       }
 
@@ -395,11 +411,20 @@ class CloudSyncService {
     //  - Hanya bila cloud benar-benar mengirim data. Bila cloud balas 0 produk &
     //    0 kategori (kemungkinan salah konfigurasi/outlet kosong), JANGAN wipe
     //    seluruh menu lokal — lebih aman membiarkan data lokal apa adanya.
+    //  - Produk: hanya bila daftar dari cloud LENGKAP (prodCount >= total).
+    //    Daftar terpotong (server cap/paging aneh) pernah membuat produk
+    //    ke-101+ ikut ter-soft-delete di sini.
+    final prodListComplete = cloudTotal == null || prodCount >= cloudTotal;
     var delCat = 0;
     var delProd = 0;
     if (fetchOk && (catCount > 0 || prodCount > 0)) {
       delCat = await _softDeleteNotInCloud(db, 'categories', cloudCatIds);
-      delProd = await _softDeleteNotInCloud(db, 'products', cloudProdIds);
+      if (prodListComplete) {
+        delProd = await _softDeleteNotInCloud(db, 'products', cloudProdIds);
+      } else {
+        debugPrint('fullPullFromCloud: daftar produk cloud tidak lengkap '
+            '($prodCount/$cloudTotal) — lewati soft-delete produk lokal.');
+      }
     }
 
     debugPrint('fullPullFromCloud: $catCount kategori, $prodCount produk '
