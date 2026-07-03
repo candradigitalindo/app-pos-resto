@@ -405,7 +405,7 @@ class _BillSheetState extends State<_BillSheet> {
 
   void _recompute() {
     _remaining = (_total - _paid).clamp(0, double.infinity).toDouble();
-    _amountCtrl.text = _remaining.round().toString();
+    _amountCtrl.text = CurrencyHelper.formatInput(_remaining.round());
   }
 
   Future<void> _refreshFull() async {
@@ -441,7 +441,7 @@ class _BillSheetState extends State<_BillSheet> {
   }
 
   Future<void> _pay() async {
-    final amount = double.tryParse(_amountCtrl.text.replaceAll('.', '')) ?? 0;
+    final amount = CurrencyHelper.parseInput(_amountCtrl.text);
     if (amount <= 0) return;
     setState(() => _busy = true);
     try {
@@ -473,7 +473,7 @@ class _BillSheetState extends State<_BillSheet> {
         _hasPartial = true;
         _log.add('${_methods[_method]}: ${CurrencyHelper.format(amount)}');
         _remaining = remaining;
-        _amountCtrl.text = remaining.round().toString();
+        _amountCtrl.text = CurrencyHelper.formatInput(remaining.round());
         _busy = false;
       });
     } catch (e) {
@@ -528,7 +528,8 @@ class _BillSheetState extends State<_BillSheet> {
           const SizedBox(height: 12),
           TextField(
             controller: _amountCtrl,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            keyboardType: TextInputType.number,
+            inputFormatters: [RupiahInputFormatter()],
             decoration: const InputDecoration(
               labelText: 'Jumlah bayar',
               prefixText: 'Rp ',

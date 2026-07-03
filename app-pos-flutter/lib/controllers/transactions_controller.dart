@@ -2,6 +2,11 @@ import 'package:flutter/foundation.dart';
 
 import '../models/models.dart';
 import '../repositories/order_repository.dart';
+import '../services/auth_service.dart';
+import '../services/outlet_service.dart';
+import '../services/print_queue_service.dart';
+import '../services/printer_service.dart';
+import '../services/receipt_builder.dart';
 
 /// State untuk TransactionsScreen
 class TransactionsState {
@@ -128,5 +133,132 @@ class TransactionsController extends ChangeNotifier {
 
   void clearError() {
     _setState(_state.copyWith(clearError: true));
+  }
+
+  // ── Aksi ber-otoritas PIN (void & bayar dari layar Transaksi) ─────────────
+
+  final _authService = AuthService();
+  final _outletService = OutletService();
+
+  /// Nama pihak yang mengotorisasi dari [pin], atau null bila tidak berwenang.
+  /// Sama dengan kasir: PIN void bersama ATAU PIN user admin/manager/svp.
+  Future<String?> _authorizer(String pin) async {
+    final stored = await _outletService.getVoidPin();
+    if (pin == stored) {
+      final user = await _authService.currentUserFromSession();
+      return (user?.fullName.isNotEmpty ?? false)
+          ? user!.fullName
+          : (user?.username ?? 'Kasir');
+    }
+    try {
+      final user = await _authService.loginByPin(pin);
+      if (AuthService.voidAuthorizedRoles.contains(user.role)) {
+        return user.fullName.isNotEmpty ? user.fullName : user.username;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// VOID transaksi lunas. Mengembalikan 'ok' | 'invalid_pin' | 'error'.
+  Future<String> voidOrder({
+    required String orderId,
+    required String pin,
+    String reason = '',
+  }) async {
+    final authorizer = await _authorizer(pin);
+    if (authorizer == null) return 'invalid_pin';
+    try {
+      await _orderRepo.voidPaidOrder(
+        orderId: orderId,
+        voidedBy: authorizer,
+        reason: reason.isEmpty ? 'Dibatalkan kasir' : reason,
+      );
+      await loadOrders(reset: true);
+      return 'ok';
+    } catch (e) {
+      _setState(_state.copyWith(
+        errorMessage: 'Gagal void: '
+            '${e.toString().replaceFirst('Exception: ', '')}',
+      ));
+      return 'error';
+    }
+  }
+
+  /// BAYAR order belum lunas (seperti kasir: metode + jumlah + kembalian),
+  /// digerbang PIN. Mengembalikan hasil {change, ...} atau null bila gagal
+  /// (errorMessage terisi); 'invalid_pin' via return null + flag khusus tidak
+  /// dipakai — cek dilakukan di awal dan dikembalikan sebagai string di UI.
+  Future<Map<String, dynamic>?> payOrder({
+    required String orderId,
+    required String paymentMethod,
+    required double paidAmount,
+    required String pin,
+  }) async {
+    final authorizer = await _authorizer(pin);
+    if (authorizer == null) {
+      _setState(_state.copyWith(errorMessage: 'PIN salah / tidak berwenang'));
+      return null;
+    }
+    try {
+      // Snapshot untuk struk sebelum status berubah.
+      final order = await _orderRepo.getOrderById(orderId);
+      if (order == null) throw Exception('Order tidak ditemukan');
+      final items = await _orderRepo.getOrderItems(orderId);
+
+      final result = await _orderRepo.processPayment(
+        orderId: orderId,
+        paymentMethod: paymentMethod,
+        paidAmount: paidAmount,
+        createdBy: authorizer,
+      );
+
+      final charges = await _orderRepo.getOrderCharges(orderId);
+      await _printReceipt(order, items, charges, result, authorizer);
+      await loadOrders(reset: true);
+      return result;
+    } catch (e) {
+      _setState(_state.copyWith(
+        errorMessage: 'Gagal bayar: '
+            '${e.toString().replaceFirst('Exception: ', '')}',
+      ));
+      return null;
+    }
+  }
+
+  /// Cetak struk pembayaran lewat ANTRIAN cetak (durable, bisa cetak ulang) —
+  /// pola sama dengan kasir.
+  Future<void> _printReceipt(
+    Order order,
+    List<OrderItem> items,
+    List<OrderAdditionalCharge> charges,
+    Map<String, dynamic> result,
+    String cashierName,
+  ) async {
+    try {
+      final o = await _outletService.loadOutlet();
+      final data = ReceiptData.fromPaymentResult(
+        result: result,
+        order: order,
+        orderItems: items,
+        charges: charges,
+        cashierName: cashierName,
+        outletName: o.name.isNotEmpty ? o.name : 'POS Resto',
+        outletAddress: o.address,
+      );
+      final ps = PrinterService();
+      final saved = await ps.getSavedPrinters();
+      if (saved.isEmpty) return;
+      final cps = saved.where((p) => p.hasRole(PrinterRole.cashier)).toList();
+      final printer = cps.isNotEmpty
+          ? cps.first
+          : saved.firstWhere((p) => !p.hasRole(PrinterRole.checker),
+              orElse: () => saved.first);
+      final bytes =
+          ReceiptBuilder(paperWidth: printer.paperCols).buildReceipt(data);
+      await PrintQueueService.instance.enqueueForPrinter(printer,
+          bytes: bytes, label: 'Struk Bayar Meja ${order.tableNumber}');
+    } catch (e) {
+      debugPrint('Cetak struk (transaksi) error: $e');
+    }
   }
 }

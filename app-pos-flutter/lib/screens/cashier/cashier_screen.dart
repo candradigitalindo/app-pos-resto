@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../controllers/cashier_controller.dart';
 import '../../models/models.dart';
@@ -9,6 +8,7 @@ import '../../services/cloud_sync_service.dart';
 import '../../utils/currency.dart';
 import '../../widgets/menu_avatar.dart';
 import '../../widgets/pax_input_dialog.dart';
+import '../../widgets/pin_auth_dialog.dart';
 
 class CashierScreen extends StatefulWidget {
   final String? initialTableNumber;
@@ -168,119 +168,40 @@ class _CashierScreenState extends State<CashierScreen> {
     );
   }
 
-  /// Dialog PIN + alasan untuk void transaksi lunas terpilih.
-  void _showVoidPaidDialog(Order order) {
-    final pinCtrl = TextEditingController();
-    final reasonCtrl = TextEditingController();
-    var pinError = false;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) {
-          return AlertDialog(
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: const Text('Void Transaksi'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: double.infinity,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFEF2F2),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFFECACA)),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('Meja ${order.tableNumber} (LUNAS)',
-                          style: const TextStyle(
-                              fontSize: 13, color: Color(0xFF991B1B))),
-                      Text(CurrencyHelper.format(order.totalAmount),
-                          style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF991B1B))),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: pinCtrl,
-                  autofocus: true,
-                  obscureText: true,
-                  keyboardType: TextInputType.number,
-                  maxLength: 4,
-                  decoration: InputDecoration(
-                    labelText: 'PIN Manager',
-                    hintText: 'Masukkan PIN 4 digit',
-                    counterText: '',
-                    border: const OutlineInputBorder(),
-                    errorText: pinError ? 'PIN salah' : null,
-                  ),
-                  onChanged: (_) {
-                    if (pinError) setS(() => pinError = false);
-                  },
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: reasonCtrl,
-                  textInputAction: TextInputAction.done,
-                  decoration: const InputDecoration(
-                    labelText: 'Alasan (opsional)',
-                    hintText: 'Contoh: salah tagih, refund pelanggan',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Batal'),
-              ),
-              FilledButton(
-                style: FilledButton.styleFrom(backgroundColor: Colors.red),
-                onPressed: () async {
-                  final pin = pinCtrl.text.trim();
-                  if (pin.length != 4) {
-                    setS(() => pinError = true);
-                    return;
-                  }
-                  final result = await _controller.voidPaidOrder(
-                    orderId: order.id,
-                    pin: pin,
-                    reason: reasonCtrl.text.trim(),
-                  );
-                  if (result == 'invalid_pin') {
-                    setS(() => pinError = true);
-                    return;
-                  }
-                  if (!ctx.mounted) return;
-                  Navigator.pop(ctx);
-                  if (!mounted) return;
-                  if (result == 'ok') {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                            'Transaksi Meja ${order.tableNumber} di-void'),
-                        backgroundColor: const Color(0xFFEF4444),
-                      ),
-                    );
-                  }
-                },
-                child: const Text('Void Transaksi'),
-              ),
-            ],
-          );
-        },
-      ),
+  /// Dialog otorisasi PIN + alasan untuk void transaksi lunas terpilih.
+  Future<void> _showVoidPaidDialog(Order order) async {
+    final res = await showPinAuthDialog(
+      context,
+      title: 'Void Transaksi',
+      actionLabel: 'Void Transaksi',
+      icon: Icons.block_outlined,
+      details: {
+        'Meja': order.tableNumber,
+        'Status': 'LUNAS',
+        'Total': CurrencyHelper.format(order.totalAmount),
+        if (order.customerName?.isNotEmpty ?? false)
+          'Pelanggan': order.customerName!,
+      },
+      reasonHint: 'Contoh: salah tagih, refund pelanggan',
     );
+    if (res == null || !mounted) return;
+    final result = await _controller.voidPaidOrder(
+      orderId: order.id,
+      pin: res.pin,
+      reason: res.reason,
+    );
+    if (!mounted) return;
+    if (result == 'ok') {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Transaksi Meja ${order.tableNumber} di-void'),
+        backgroundColor: const Color(0xFFEF4444),
+      ));
+    } else if (result == 'invalid_pin') {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('PIN salah / tidak berwenang'),
+        backgroundColor: Colors.red,
+      ));
+    }
   }
 
   /// Dialog kompliment: catat siapa yang memberi & alasan, lalu gratiskan order.
@@ -733,7 +654,7 @@ class _CashierScreenState extends State<CashierScreen> {
                 controller: valueCtrl,
                 autofocus: true,
                 keyboardType: TextInputType.number,
-                inputFormatters: isPercent ? null : [_RupiahInputFormatter()],
+                inputFormatters: isPercent ? null : [RupiahInputFormatter()],
                 style: const TextStyle(
                     fontSize: 18, fontWeight: FontWeight.bold),
                 decoration: InputDecoration(
@@ -1160,7 +1081,7 @@ class _CashierScreenState extends State<CashierScreen> {
                       TextField(
                         controller: _openShiftCtrl,
                         keyboardType: TextInputType.number,
-                        inputFormatters: [_RupiahInputFormatter()],
+                        inputFormatters: [RupiahInputFormatter()],
                         decoration: InputDecoration(
                           prefixText: 'Rp ',
                           hintText: '0',
@@ -2402,70 +2323,23 @@ class _CashierScreenState extends State<CashierScreen> {
   // ── Pindah Meja ───────────────────────────────────────────────────────────
   /// Hapus (void) satu item — wajib PIN Manager/SVP (atau PIN void bersama).
   Future<void> _showItemVoidDialog(OrderItem item) async {
-    final pinCtrl = TextEditingController();
-    final reasonCtrl = TextEditingController();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.delete_outline, color: Color(0xFFEF4444)),
-            SizedBox(width: 10),
-            Text('Hapus Item'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Hapus "${item.qty}x ${item.productName}"?',
-                style: const TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 4),
-            const Text('Perlu otorisasi Manager/SVP.',
-                style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
-            const SizedBox(height: 16),
-            TextField(
-              controller: pinCtrl,
-              autofocus: true,
-              obscureText: true,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'PIN Manager/SVP',
-                prefixIcon: Icon(Icons.lock_outline),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: reasonCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Alasan (opsional)',
-                prefixIcon: Icon(Icons.notes_outlined),
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Batal')),
-          FilledButton(
-            style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFEF4444)),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Hapus'),
-          ),
-        ],
-      ),
+    final auth = await showPinAuthDialog(
+      context,
+      title: 'Hapus Item',
+      actionLabel: 'Hapus Item',
+      icon: Icons.delete_outline,
+      details: {
+        'Item': '${item.qty}x ${item.productName}',
+        'Harga': CurrencyHelper.format(item.subtotal),
+        if (item.waiterName.isNotEmpty) 'Pemesan': item.waiterName,
+      },
+      reasonHint: 'Contoh: salah input, pelanggan batal',
     );
-    if (ok != true || !mounted) return;
+    if (auth == null || !mounted) return;
     final res = await _controller.voidOrderItem(
       itemId: item.id,
-      pin: pinCtrl.text.trim(),
-      reason: reasonCtrl.text.trim(),
+      pin: auth.pin,
+      reason: auth.reason,
     );
     if (!mounted) return;
     final msg = res == 'ok'
@@ -3938,7 +3812,7 @@ class _CashMovementDialogState extends State<_CashMovementDialog> {
             TextField(
               controller: _amountCtrl,
               keyboardType: TextInputType.number,
-              inputFormatters: [_RupiahInputFormatter()],
+              inputFormatters: [RupiahInputFormatter()],
               decoration: InputDecoration(
                 labelText: 'Nominal',
                 prefixText: 'Rp ',
@@ -4874,7 +4748,7 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
               TextField(
                 controller: _cashCtrl,
                 keyboardType: TextInputType.number,
-                inputFormatters: [_RupiahInputFormatter()],
+                inputFormatters: [RupiahInputFormatter()],
                 decoration: InputDecoration(
                   labelText: 'Kas Awal Shift Baru',
                   prefixText: 'Rp ',
@@ -5198,7 +5072,7 @@ class _PaymentSheetState extends State<_PaymentSheet> {
             TextField(
               controller: widget.controller,
               keyboardType: TextInputType.number,
-              inputFormatters: [_RupiahInputFormatter()],
+              inputFormatters: [RupiahInputFormatter()],
               decoration: InputDecoration(
                 prefixText: 'Rp ',
                 border: OutlineInputBorder(
@@ -5276,26 +5150,6 @@ class _PaymentSheetState extends State<_PaymentSheet> {
       labelStyle: TextStyle(
           color: selected ? Colors.white : const Color(0xFF64748B),
           fontWeight: FontWeight.w600),
-    );
-  }
-}
-
-class _RupiahInputFormatter extends TextInputFormatter {
-  @override
-  TextEditingValue formatEditUpdate(
-      TextEditingValue oldValue, TextEditingValue newValue) {
-    final digits = newValue.text.replaceAll(RegExp(r'[^\d]'), '');
-    if (digits.isEmpty) {
-      return newValue.copyWith(text: '');
-    }
-    final n = int.tryParse(digits) ?? 0;
-    final formatted = n.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-      (m) => '${m[1]}.',
-    );
-    return TextEditingValue(
-      text: formatted,
-      selection: TextSelection.collapsed(offset: formatted.length),
     );
   }
 }
@@ -6036,7 +5890,7 @@ class _MixedPaymentDialogState extends State<_MixedPaymentDialog> {
               TextField(
                 controller: _amountCtrl,
                 keyboardType: TextInputType.number,
-                inputFormatters: [_RupiahInputFormatter()],
+                inputFormatters: [RupiahInputFormatter()],
                 style:
                     const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 decoration: const InputDecoration(

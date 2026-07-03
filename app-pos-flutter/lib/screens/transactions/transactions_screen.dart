@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../controllers/transactions_controller.dart';
 import '../../models/models.dart';
 import '../../utils/currency.dart';
+import '../../widgets/pin_auth_dialog.dart';
 
 class TransactionsScreen extends StatefulWidget {
   const TransactionsScreen({super.key});
@@ -63,6 +64,216 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         _controller.state.hasMore) {
       _controller.loadMore();
     }
+  }
+
+  // ── Aksi transaksi (void & bayar, ber-otoritas PIN) ────────────────────────
+
+  void _showOrderActions(Order order) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('Meja ${order.tableNumber}',
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w800)),
+                  ),
+                  Text(CurrencyHelper.format(order.totalAmount),
+                      style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF059669))),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                order.isVoided
+                    ? 'VOID · ${order.voidedBy ?? '-'}'
+                        '${(order.voidReason?.isNotEmpty ?? false) ? ' · ${order.voidReason}' : ''}'
+                    : order.isPaid
+                        ? 'Lunas'
+                        : 'Belum lunas · sisa ${CurrencyHelper.format(order.remaining)}',
+                style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+              ),
+              const SizedBox(height: 16),
+              if (order.isVoided)
+                const Text('Transaksi sudah di-void.',
+                    style: TextStyle(color: Color(0xFF94A3B8)))
+              else if (!order.isPaid)
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF059669)),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _showPayDialog(order);
+                    },
+                    icon: const Icon(Icons.payments_outlined),
+                    label: const Text('Bayar',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                )
+              else
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFFEF4444)),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _showVoidDialog(order);
+                    },
+                    icon: const Icon(Icons.block_outlined),
+                    label: const Text('Void Transaksi',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Bayar seperti di kasir (metode + jumlah + kembalian), digerbang PIN.
+  Future<void> _showPayDialog(Order order) async {
+    const methods = {
+      'cash': 'Tunai',
+      'qris': 'QRIS',
+      'card': 'Kartu',
+      'transfer': 'Transfer',
+    };
+    var method = 'cash';
+    final amountCtrl = TextEditingController(
+        text: CurrencyHelper.formatInput(order.remaining.round()));
+    final pinCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text('Bayar — Meja ${order.tableNumber}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Sisa tagihan: ${CurrencyHelper.format(order.remaining)}',
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                children: methods.entries
+                    .map((e) => ChoiceChip(
+                          label: Text(e.value),
+                          selected: method == e.key,
+                          onSelected: (_) => setS(() => method = e.key),
+                        ))
+                    .toList(),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: amountCtrl,
+                keyboardType: TextInputType.number,
+                inputFormatters: [RupiahInputFormatter()],
+                decoration: const InputDecoration(
+                  labelText: 'Jumlah bayar',
+                  prefixText: 'Rp ',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: pinCtrl,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'PIN otorisasi (Manager/SVP)',
+                  prefixIcon: Icon(Icons.lock_outline),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Batal')),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF059669)),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Bayar'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final amount = CurrencyHelper.parseInput(amountCtrl.text);
+    final result = await _controller.payOrder(
+      orderId: order.id,
+      paymentMethod: method,
+      paidAmount: amount,
+      pin: pinCtrl.text.trim(),
+    );
+    if (!mounted || result == null) return; // error via snackbar _onStateChanged
+    final change = (result['change'] as num?)?.toDouble() ?? 0;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(change > 0
+          ? 'Lunas — kembalian ${CurrencyHelper.format(change)} · struk dicetak'
+          : 'Lunas — struk dicetak'),
+      backgroundColor: const Color(0xFF059669),
+    ));
+  }
+
+  /// Void transaksi lunas — wajib PIN Manager/SVP (atau PIN void bersama).
+  Future<void> _showVoidDialog(Order order) async {
+    final auth = await showPinAuthDialog(
+      context,
+      title: 'Void Transaksi',
+      actionLabel: 'Void Transaksi',
+      icon: Icons.block_outlined,
+      details: {
+        'Meja': order.tableNumber,
+        'Status': 'LUNAS',
+        'Total': CurrencyHelper.format(order.totalAmount),
+        if (order.customerName?.isNotEmpty ?? false)
+          'Pelanggan': order.customerName!,
+      },
+      reasonHint: 'Contoh: salah tagih, refund pelanggan',
+    );
+    if (auth == null || !mounted) return;
+    final res = await _controller.voidOrder(
+      orderId: order.id,
+      pin: auth.pin,
+      reason: auth.reason,
+    );
+    if (!mounted) return;
+    if (res == 'ok') {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Transaksi di-void'),
+        backgroundColor: Color(0xFF059669),
+      ));
+    } else if (res == 'invalid_pin') {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('PIN salah / tidak berwenang'),
+        backgroundColor: Colors.red,
+      ));
+    } // 'error' → snackbar via _onStateChanged
   }
 
   @override
@@ -134,7 +345,11 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                                 ),
                               );
                             }
-                            return _OrderCard(order: filtered[index]);
+                            final order = filtered[index];
+                            return _OrderCard(
+                              order: order,
+                              onTap: () => _showOrderActions(order),
+                            );
                           },
                         ),
                       ),
@@ -411,7 +626,8 @@ class _FilterControl extends StatelessWidget {
 
 class _OrderCard extends StatelessWidget {
   final Order order;
-  const _OrderCard({required this.order});
+  final VoidCallback? onTap;
+  const _OrderCard({required this.order, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -429,19 +645,13 @@ class _OrderCard extends StatelessWidget {
                 ? 'SEBAGIAN'
                 : 'BELUM';
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
+        onTap: onTap,
+        child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           children: [
@@ -530,6 +740,7 @@ class _OrderCard extends StatelessWidget {
               ],
             ),
           ],
+        ),
         ),
       ),
     );
