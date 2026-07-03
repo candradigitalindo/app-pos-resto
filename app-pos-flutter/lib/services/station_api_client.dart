@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:network_info_plus/network_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -200,10 +201,26 @@ class StationApiClient {
   }
 
   Future<String?> _localIp() async {
+    // IP WiFi paling andal (hindari interface seluler/VPN yang membuat scan
+    // subnet salah — gejala: "Main POS tidak ditemukan" padahal satu jaringan).
+    try {
+      final wifi = await NetworkInfo().getWifiIP();
+      if (wifi != null && wifi.isNotEmpty && wifi != '0.0.0.0') return wifi;
+    } catch (_) {}
+
     final interfaces = await NetworkInterface.list(
       type: InternetAddressType.IPv4,
       includeLinkLocal: false,
     );
+    // Utamakan interface WiFi/hotspot (wlan/ap/swlan) sebelum lainnya (rmnet dst).
+    for (final iface in interfaces) {
+      final n = iface.name.toLowerCase();
+      if (n.contains('wlan') || n.contains('wifi') || n.contains('ap')) {
+        for (final addr in iface.addresses) {
+          if (!addr.isLoopback) return addr.address;
+        }
+      }
+    }
     for (final iface in interfaces) {
       for (final addr in iface.addresses) {
         if (!addr.isLoopback) return addr.address;
@@ -433,14 +450,25 @@ class StationApiClient {
   WebSocketChannel? _ws;
   StreamSubscription? _wsSub;
   void Function(String event, Map data)? _wsOnEvent;
+  Timer? _wsReconnectTimer;
+  bool _wsShouldReconnect = false; // true selama layar station aktif
 
   /// Terhubung ke /ws untuk menerima event order_created / order_items_added.
-  /// [onEvent] dipanggil dengan (event, data).
+  /// [onEvent] dipanggil dengan (event, data). Bila koneksi putus (Main POS
+  /// restart / WiFi drop), tersambung ulang otomatis tiap 5 detik — termasuk
+  /// mencoba rediscover bila IP Main POS berubah.
   void connectWebSocket(void Function(String event, Map data) onEvent) {
     _wsOnEvent = onEvent;
-    disconnectWebSocket();
+    _wsShouldReconnect = true;
+    _openWs();
+  }
+
+  void _openWs() {
+    _wsReconnectTimer?.cancel();
+    _closeWs();
     final b = _baseUrl;
-    if (b == null) return;
+    final onEvent = _wsOnEvent;
+    if (b == null || onEvent == null) return;
     final wsUrl = '${b.replaceFirst('http', 'ws')}/ws';
     try {
       _ws = WebSocketChannel.connect(Uri.parse(wsUrl));
@@ -455,16 +483,41 @@ class StationApiClient {
             }
           } catch (_) {}
         },
-        onError: (_) {},
+        onError: (_) => _scheduleWsReconnect(),
+        onDone: _scheduleWsReconnect, // server tutup/putus → sambung ulang
         cancelOnError: false,
       );
-    } catch (_) {}
+    } catch (_) {
+      _scheduleWsReconnect();
+    }
   }
 
-  void disconnectWebSocket() {
+  void _scheduleWsReconnect() {
+    if (!_wsShouldReconnect) return;
+    _closeWs(); // pastikan channel lama tertutup (rediscover tak dobel-connect)
+    _wsReconnectTimer?.cancel();
+    _wsReconnectTimer = Timer(const Duration(seconds: 5), () async {
+      if (!_wsShouldReconnect) return;
+      // Bila server tak merespons di alamat lama, cari IP barunya dulu.
+      final b = _baseUrl;
+      if (b != null && await ping(b) == null) {
+        await rediscover(); // _ws sudah null → rediscover tak dobel-connect
+      }
+      if (_wsShouldReconnect) _openWs();
+    });
+  }
+
+  void _closeWs() {
     _wsSub?.cancel();
     _wsSub = null;
     _ws?.sink.close();
     _ws = null;
+  }
+
+  void disconnectWebSocket() {
+    _wsShouldReconnect = false;
+    _wsReconnectTimer?.cancel();
+    _wsReconnectTimer = null;
+    _closeWs();
   }
 }
