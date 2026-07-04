@@ -554,6 +554,60 @@ class _StationScreenState extends State<StationScreen> {
     );
   }
 
+  /// Dialog catatan item di keranjang (mis. "tanpa sambal", "level 2").
+  Future<void> _showItemNoteDialog(
+      String productId, String productName, String current) async {
+    final ctrl = TextEditingController(text: current);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.note_add_outlined, color: Color(0xFF059669)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text('Catatan — $productName',
+                  style: const TextStyle(fontSize: 17),
+                  overflow: TextOverflow.ellipsis),
+            ),
+          ],
+        ),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          maxLength: 100,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+          decoration: const InputDecoration(
+            hintText: 'mis. tanpa sambal, level 2, pisah es',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          if (current.isNotEmpty)
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, ''),
+              child: const Text('Hapus Catatan',
+                  style: TextStyle(color: Color(0xFFEF4444))),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF059669)),
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('Simpan'),
+          ),
+        ],
+      ),
+    );
+    if (result == null) return; // batal
+    _controller.setNote(productId, result);
+  }
+
   void _showCartSheet() {
     showModalBottomSheet(
       context: context,
@@ -593,13 +647,37 @@ class _StationScreenState extends State<StationScreen> {
                     children: _controller.cart.entries.map((e) {
                       final p = _controller.productCache[e.key];
                       if (p == null) return const SizedBox.shrink();
+                      final note = _controller.cartNotes[e.key] ?? '';
                       return ListTile(
                         title: Text(p.name),
-                        subtitle:
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                             Text(CurrencyHelper.format(p.price * e.value)),
+                            if (note.isNotEmpty)
+                              Text('📝 $note',
+                                  style: const TextStyle(
+                                      fontSize: 12,
+                                      fontStyle: FontStyle.italic,
+                                      color: Color(0xFF64748B))),
+                          ],
+                        ),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
+                            IconButton(
+                              icon: Icon(
+                                note.isNotEmpty
+                                    ? Icons.edit_note_rounded
+                                    : Icons.note_add_outlined,
+                                color: note.isNotEmpty
+                                    ? const Color(0xFF059669)
+                                    : const Color(0xFFCBD5E1),
+                              ),
+                              tooltip: 'Catatan item',
+                              onPressed: () =>
+                                  _showItemNoteDialog(e.key, p.name, note),
+                            ),
                             IconButton(
                               icon: const Icon(Icons.remove_circle_outline),
                               onPressed: () =>
