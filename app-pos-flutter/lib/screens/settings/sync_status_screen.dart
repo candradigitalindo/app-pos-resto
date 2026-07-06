@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../repositories/sync_queue_repository.dart';
 import '../../services/cloud_sync_service.dart';
+import '../../theme/theme.dart';
+import '../../widgets/ui/ui.dart';
 
 /// Monitor outbox sinkronisasi cloud: lihat pending/sukses/gagal + sync ulang.
 class SyncStatusScreen extends StatefulWidget {
@@ -15,6 +17,8 @@ class SyncStatusScreen extends StatefulWidget {
 
 class _SyncStatusScreenState extends State<SyncStatusScreen> {
   final _queue = SyncQueueRepository();
+
+  static const _accent = AppColors.moduleKasir;
 
   Map<String, int> _stats = const {'pending': 0, 'success': 0, 'failed': 0};
   List<Map<String, dynamic>> _jobs = [];
@@ -55,7 +59,7 @@ class _SyncStatusScreenState extends State<SyncStatusScreen> {
     final msg = (r['unconfigured'] ?? 0) == 1
         ? 'Cloud belum dikonfigurasi (URL/API Key/Outlet ID)'
         : 'Terkirim: ${r['success']} sukses, ${r['failed']} gagal (dari ${r['sent']})';
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    showAppSnack(context, msg);
     await _load();
   }
 
@@ -67,8 +71,7 @@ class _SyncStatusScreenState extends State<SyncStatusScreen> {
   Future<void> _clearSuccess() async {
     final n = await _queue.clearSuccess();
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('$n riwayat sukses dibersihkan')));
+    showAppSnack(context, '$n riwayat sukses dibersihkan');
     await _load();
   }
 
@@ -76,138 +79,143 @@ class _SyncStatusScreenState extends State<SyncStatusScreen> {
   Widget build(BuildContext context) {
     final failed = _stats['failed'] ?? 0;
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F2F7),
-      appBar: AppBar(
-        title: const Text('Status Sinkronisasi Cloud'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
-        ),
-        actions: [
-          IconButton(
-            icon: _syncing
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+      body: AppBackground(
+        child: Column(
+          children: [
+            AppPageHeader(
+              title: 'Status Sinkronisasi',
+              subtitle: 'Outbox cloud (kirim ulang)',
+              icon: Icons.cloud_sync_rounded,
+              accent: _accent,
+              actions: [
+                if (_syncing)
+                  const Padding(
+                    padding: EdgeInsets.all(AppSpacing.sm),
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2.4),
+                    ),
                   )
-                : const Icon(Icons.cloud_upload_outlined),
-            tooltip: 'Sync sekarang',
-            onPressed: _syncing ? null : _syncNow,
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          _buildStatsBar(),
-          if (failed > 0) _buildRetryBanner(failed),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _jobs.isEmpty
-                    ? _buildEmpty()
-                    : RefreshIndicator(
-                        onRefresh: _load,
-                        child: ListView.separated(
-                          padding: const EdgeInsets.all(16),
-                          itemCount: _jobs.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 8),
-                          itemBuilder: (_, i) => _JobTile(job: _jobs[i]),
+                else
+                  AppIconButton(
+                    icon: Icons.cloud_upload_rounded,
+                    tooltip: 'Sync sekarang',
+                    filled: true,
+                    color: _accent,
+                    size: 42,
+                    onPressed: _syncNow,
+                  ),
+              ],
+            ),
+            _buildStatsBar(),
+            if (failed > 0) _buildRetryBanner(failed),
+            Expanded(
+              child: _loading
+                  ? const AppLoader()
+                  : _jobs.isEmpty
+                      ? const EmptyState(
+                          icon: Icons.cloud_done_rounded,
+                          title: 'Tidak ada antrian sinkronisasi',
+                          message: 'Semua data sudah terkirim ke cloud.',
+                          accent: _accent,
+                        )
+                      : RefreshIndicator(
+                          onRefresh: _load,
+                          child: ListView.separated(
+                            padding: const EdgeInsets.all(AppSpacing.md),
+                            itemCount: _jobs.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: AppSpacing.sm),
+                            itemBuilder: (_, i) => _JobTile(job: _jobs[i]),
+                          ),
                         ),
-                      ),
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildStatsBar() {
-    return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-      child: Row(
-        children: [
-          _statChip('Antri', _stats['pending'] ?? 0, const Color(0xFFF59E0B)),
-          const SizedBox(width: 10),
-          _statChip('Terkirim', _stats['success'] ?? 0, const Color(0xFF10B981)),
-          const SizedBox(width: 10),
-          _statChip('Gagal', _stats['failed'] ?? 0, const Color(0xFFEF4444)),
-          const Spacer(),
-          TextButton.icon(
-            onPressed: (_stats['success'] ?? 0) > 0 ? _clearSuccess : null,
-            icon: const Icon(Icons.cleaning_services_outlined, size: 16),
-            label: const Text('Bersihkan'),
-          ),
-        ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.xs),
+      child: AppCard(
+        padding: const EdgeInsets.all(AppSpacing.sm),
+        child: Row(
+          children: [
+            _statChip('Antri', _stats['pending'] ?? 0, AppColors.warning),
+            const SizedBox(width: AppSpacing.xs),
+            _statChip('Terkirim', _stats['success'] ?? 0, AppColors.success),
+            const SizedBox(width: AppSpacing.xs),
+            _statChip('Gagal', _stats['failed'] ?? 0, AppColors.danger),
+            const Spacer(),
+            // Aksi sekunder (bukan CTA utama) → aksen GOLD tonal.
+            AppButton(
+              label: 'Bersihkan',
+              icon: Icons.cleaning_services_rounded,
+              variant: AppButtonVariant.tonal,
+              accent: AppColors.accent,
+              size: AppButtonSize.small,
+              expanded: false,
+              onPressed: (_stats['success'] ?? 0) > 0 ? _clearSuccess : null,
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _statChip(String label, int value, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(10),
+        color: AppColors.soft(color, 0.10),
+        borderRadius: AppRadius.rSm,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('$value',
-              style: TextStyle(
-                  fontWeight: FontWeight.w800, fontSize: 18, color: color)),
+          Text('$value', style: AppType.h3.copyWith(color: color)),
           Text(label,
-              style: TextStyle(
-                  fontSize: 11, color: color, fontWeight: FontWeight.w600)),
+              style: AppType.caption.copyWith(
+                  color: color, fontWeight: FontWeight.w600)),
         ],
       ),
     );
   }
 
   Widget _buildRetryBanner(int failed) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEF4444).withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(10),
-        border:
-            Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.3)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.cloud_off_outlined,
-              color: Color(0xFFEF4444), size: 20),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text('$failed item gagal terkirim ke cloud',
-                style: const TextStyle(
-                    color: Color(0xFFB91C1C),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600)),
-          ),
-          FilledButton(
-            style:
-                FilledButton.styleFrom(backgroundColor: const Color(0xFFEF4444)),
-            onPressed: _retryFailed,
-            child: const Text('Coba Lagi'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmpty() {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.cloud_done_outlined, size: 56, color: Colors.grey[300]),
-          const SizedBox(height: 12),
-          Text('Tidak ada antrian sinkronisasi',
-              style: TextStyle(color: Colors.grey[400], fontSize: 15)),
-        ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, AppSpacing.xs, AppSpacing.md, 0),
+      child: AppCard(
+        color: AppColors.dangerSoft,
+        border: Border.all(color: AppColors.soft(AppColors.danger, 0.3)),
+        shadow: const [],
+        padding: const EdgeInsets.all(AppSpacing.sm),
+        child: Row(
+          children: [
+            const Icon(Icons.cloud_off_rounded,
+                color: AppColors.danger, size: 20),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text('$failed item gagal terkirim ke cloud',
+                  style: AppType.bodySm.copyWith(
+                      color: AppColors.danger, fontWeight: FontWeight.w700)),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            AppButton(
+              label: 'Coba Lagi',
+              variant: AppButtonVariant.danger,
+              size: AppButtonSize.small,
+              expanded: false,
+              onPressed: _retryFailed,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -234,53 +242,41 @@ class _JobTile extends StatelessWidget {
     final error = job['error_message'] as String?;
 
     final (color, icon, text) = switch (status) {
-      'success' => (const Color(0xFF10B981), Icons.check_circle, 'Terkirim'),
-      'failed' => (const Color(0xFFEF4444), Icons.error, 'Gagal'),
-      _ => (const Color(0xFFF59E0B), Icons.schedule, 'Antri'),
+      'success' => (AppColors.success, Icons.check_circle_rounded, 'Terkirim'),
+      'failed' => (AppColors.danger, Icons.error_rounded, 'Gagal'),
+      _ => (AppColors.warning, Icons.schedule_rounded, 'Antri'),
     };
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-      ),
+    return AppCard(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md, vertical: AppSpacing.sm),
       child: Row(
         children: [
-          Icon(icon, color: color, size: 22),
-          const SizedBox(width: 12),
+          IconBadge(icon: icon, color: color, size: 40),
+          const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(_labels[type] ?? type,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600, fontSize: 14)),
+                    style: AppType.title, maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 2),
                 Text('$op${retry > 0 ? ' · retry $retry' : ''}',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+                    style: AppType.caption),
                 if (status == 'failed' && error != null && error.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(error,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 11, color: Color(0xFFB91C1C))),
+                        style: AppType.caption.copyWith(color: AppColors.danger)),
                   ),
               ],
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(text,
-                style: TextStyle(
-                    fontSize: 11, color: color, fontWeight: FontWeight.w700)),
-          ),
+          const SizedBox(width: AppSpacing.xs),
+          StatusPill(label: text, color: color, icon: icon),
         ],
       ),
     );

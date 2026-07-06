@@ -1,7 +1,10 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app.dart';
+import '../../config/app_config.dart';
+import '../../theme/theme.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -16,6 +19,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   String? _error;
   bool _loading = false;
   late AnimationController _shakeController;
+
+  // Aksen putih glass di atas latar hijau majoo.
+  static const _accent = Colors.white;
+  static const _glassBorder = Color(0x33FFFFFF);
 
   Future<void> _submitPin() async {
     if (_pinCode.length != 4 || _loading) return;
@@ -35,8 +42,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
           _pinCode = '';
           _loading = false;
         });
-        // Shake animation trigger
-        _shakeController.forward().then((_) => _shakeController.reverse());
+        _shakeController.forward(from: 0).then((_) => _shakeController.reverse());
       }
     }
   }
@@ -77,34 +83,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
   @override
   Widget build(BuildContext context) {
-    final authState = ref.watch(authProvider);
-
+    final compact = context.isPhone;
     return Scaffold(
-      body: Container(
+      body: DecoratedBox(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF0F172A),
-              Color(0xFF064E3B),
-              Color(0xFF0F172A),
-            ],
+            colors: AppColors.greenGradient,
           ),
         ),
         child: SafeArea(
           child: Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.xl, vertical: AppSpacing.lg),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Branding section
-                  _buildBranding(),
-                  const SizedBox(height: 40),
-
-                  // Login card
-                  _buildLoginCard(authState),
+                  _buildBranding(compact),
+                  SizedBox(height: compact ? AppSpacing.xl : AppSpacing.xxl),
+                  _buildLoginCard(),
                 ],
               ),
             ),
@@ -114,40 +113,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     );
   }
 
-  Widget _buildBranding() {
+  Widget _buildBranding(bool compact) {
     return Column(
       children: [
-        // Logo
         Container(
-          width: 64,
-          height: 64,
+          width: compact ? 64 : 76,
+          height: compact ? 64 : 76,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF34D399), Color(0xFF059669)],
-            ),
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF10B981).withValues(alpha: 0.25),
-                blurRadius: 20,
-                offset: const Offset(0, 8),
-              ),
-            ],
+            color: AppColors.soft(Colors.white, 0.95),
+            borderRadius: AppRadius.rXl,
+            border: Border.all(color: AppColors.soft(Colors.white, 0.6)),
+            boxShadow: AppShadows.glow(AppColors.greenDark, strength: 0.4),
           ),
-          child: const Icon(
-            Icons.restaurant,
-            color: Colors.white,
-            size: 32,
-          ),
+          child: Icon(Icons.restaurant_menu_rounded,
+              color: AppColors.green, size: compact ? 32 : 38),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppSpacing.md),
         const Text(
           'Nusantara POS',
           style: TextStyle(
             fontSize: 28,
-            fontWeight: FontWeight.bold,
+            fontWeight: FontWeight.w800,
             color: Colors.white,
             letterSpacing: -0.5,
           ),
@@ -155,143 +141,81 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         const SizedBox(height: 4),
         Text(
           'Point of Sale System',
-          style: TextStyle(
-            fontSize: 14,
-            color: const Color(0xFF10B981).withValues(alpha: 0.7),
-          ),
+          style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.6)),
         ),
       ],
     );
   }
 
-  Widget _buildLoginCard(AuthState authState) {
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 380),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.07),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.2),
-            blurRadius: 30,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
+  Widget _buildLoginCard() {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 400),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: AppRadius.rXxl,
         child: Container(
-          padding: const EdgeInsets.all(28),
+          padding: const EdgeInsets.all(AppSpacing.xl),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.08),
+            borderRadius: AppRadius.rXxl,
+            border: Border.all(color: _glassBorder),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 40,
+                offset: const Offset(0, 16),
+              ),
+            ],
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Header
               const Text(
                 'Masuk dengan PIN',
                 style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
+                    fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white),
               ),
               const SizedBox(height: 4),
               Text(
                 'Masukkan 4 digit PIN Anda',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.white.withValues(alpha: 0.4),
-                ),
+                style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.5)),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: AppSpacing.xl),
 
-              // PIN dots
               _buildPinDots(),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.md),
 
-              // Error message
               if (_error != null)
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md, vertical: AppSpacing.xs),
+                  margin: const EdgeInsets.only(bottom: AppSpacing.sm),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFEE2E2).withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(10),
+                    color: AppColors.danger.withValues(alpha: 0.15),
+                    borderRadius: AppRadius.rSm,
+                    border: Border.all(color: AppColors.danger.withValues(alpha: 0.3)),
                   ),
                   child: Text(
                     _error!,
                     style: const TextStyle(
-                      color: Color(0xFFFCA5A5),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
+                        color: Color(0xFFFCA5A5), fontSize: 13, fontWeight: FontWeight.w600),
                     textAlign: TextAlign.center,
                   ),
                 ),
 
-              // Loading
               if (_loading)
                 const Padding(
-                  padding: EdgeInsets.only(bottom: 12),
+                  padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
                   child: SizedBox(
                     width: 32,
                     height: 32,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 3,
-                      color: Color(0xFF34D399),
-                    ),
+                    child: CircularProgressIndicator(strokeWidth: 3, color: _accent),
                   ),
-                ),
+                )
+              else
+                _buildNumpad(),
 
-              // Number pad
-              if (!_loading) _buildNumpad(),
-
-              const SizedBox(height: 20),
-
-              // Footer
-              Container(
-                padding: const EdgeInsets.only(top: 16),
-                decoration: BoxDecoration(
-                  border: Border(
-                    top:
-                        BorderSide(color: Colors.white.withValues(alpha: 0.06)),
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 6,
-                          height: 6,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF10B981),
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Koneksi aman',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.white.withValues(alpha: 0.3),
-                          ),
-                        ),
-                      ],
-                    ),
-                    Text(
-                      'v1.0.0',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.white.withValues(alpha: 0.3),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              const SizedBox(height: AppSpacing.lg),
+              _buildFooter(),
             ],
           ),
         ),
@@ -300,44 +224,42 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   }
 
   Widget _buildPinDots() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: List.generate(4, (index) {
-        final filled = index < _pinCode.length;
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          margin: const EdgeInsets.symmetric(horizontal: 8),
-          width: filled ? 16 : 14,
-          height: filled ? 16 : 14,
-          decoration: BoxDecoration(
-            color: filled
-                ? const Color(0xFF34D399)
-                : Colors.white.withValues(alpha: 0.1),
-            shape: BoxShape.circle,
-            border: filled
-                ? null
-                : Border.all(color: Colors.white.withValues(alpha: 0.2)),
-            boxShadow: filled
-                ? [
-                    BoxShadow(
-                      color: const Color(0xFF34D399).withValues(alpha: 0.5),
-                      blurRadius: 10,
-                    ),
-                  ]
-                : null,
-          ),
-        );
-      }),
+    return AnimatedBuilder(
+      animation: _shakeController,
+      builder: (context, child) {
+        // Getaran horizontal saat PIN salah.
+        final dx = math.sin(_shakeController.value * math.pi * 4) * 10;
+        return Transform.translate(offset: Offset(dx, 0), child: child);
+      },
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: List.generate(4, (index) {
+          final filled = index < _pinCode.length;
+          return AnimatedContainer(
+            duration: AppMotion.fast,
+            margin: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
+            width: filled ? 18 : 15,
+            height: filled ? 18 : 15,
+            decoration: BoxDecoration(
+              color: filled ? _accent : Colors.white.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+              border: filled ? null : Border.all(color: Colors.white.withValues(alpha: 0.25)),
+              boxShadow: filled
+                  ? [BoxShadow(color: _accent.withValues(alpha: 0.6), blurRadius: 12)]
+                  : null,
+            ),
+          );
+        }),
+      ),
     );
   }
 
   Widget _buildNumpad() {
     return Column(
       children: [
-        // Rows 1-3: 1-9
         for (var row = 0; row < 3; row++)
           Padding(
-            padding: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.only(bottom: AppSpacing.xs),
             child: Row(
               children: List.generate(3, (col) {
                 final digit = row * 3 + col + 1;
@@ -345,78 +267,80 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
               }),
             ),
           ),
-        // Row 4: empty, 0, delete
-        Padding(
-          padding: const EdgeInsets.only(bottom: 0),
-          child: Row(
-            children: [
-              const Expanded(child: SizedBox()),
-              Expanded(child: _buildNumButton('0')),
-              Expanded(child: _buildDeleteButton()),
-            ],
-          ),
+        Row(
+          children: [
+            const Expanded(child: SizedBox()),
+            Expanded(child: _buildNumButton('0')),
+            Expanded(child: _buildKeyButton(child: Icon(Icons.backspace_rounded,
+                color: AppColors.soft(Colors.white, 0.6), size: 24), onTap: _deletePin, subtle: true)),
+          ],
         ),
       ],
     );
   }
 
-  Widget _buildNumButton(String text) {
+  Widget _buildNumButton(String text) => _buildKeyButton(
+        onTap: () => _tapPin(int.parse(text)),
+        child: Text(
+          text,
+          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: Colors.white),
+        ),
+      );
+
+  Widget _buildKeyButton({
+    required Widget child,
+    required VoidCallback onTap,
+    bool subtle = false,
+  }) {
+    final height = context.isPhone ? 54.0 : 60.0;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
+      padding: const EdgeInsets.all(AppSpacing.xxs),
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: AppRadius.rMd,
         child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: () => _tapPin(int.parse(text)),
+          borderRadius: AppRadius.rMd,
+          onTap: onTap,
+          splashColor: _accent.withValues(alpha: 0.2),
           child: Container(
-            height: 56,
+            height: height,
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.06),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+              color: Colors.white.withValues(alpha: subtle ? 0.04 : 0.08),
+              borderRadius: AppRadius.rMd,
+              border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
             ),
-            child: Center(
-              child: Text(
-                text,
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-            ),
+            child: Center(child: child),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildDeleteButton() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: _deletePin,
-          child: Container(
-            height: 56,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.04),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
-            ),
-            child: const Center(
-              child: Icon(
-                Icons.backspace_outlined,
-                color: Color(0xFF94A3B8),
-                size: 24,
+  Widget _buildFooter() {
+    return Container(
+      padding: const EdgeInsets.only(top: AppSpacing.md),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.08))),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(color: AppColors.success, shape: BoxShape.circle),
               ),
-            ),
+              const SizedBox(width: 6),
+              Text('Koneksi aman',
+                  style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.4))),
+            ],
           ),
-        ),
+          Text('v${AppConfig.version}',
+              style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.4))),
+        ],
       ),
     );
   }

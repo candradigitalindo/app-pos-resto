@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import '../../controllers/cashier_controller.dart';
 import '../../models/models.dart';
 import '../../services/cloud_sync_service.dart';
+import '../../theme/theme.dart';
 import '../../utils/currency.dart';
 import '../../widgets/menu_avatar.dart';
 import '../../widgets/pax_input_dialog.dart';
 import '../../widgets/pin_auth_dialog.dart';
+import '../../widgets/ui/ui.dart';
 
 class CashierScreen extends StatefulWidget {
   final String? initialTableNumber;
@@ -43,6 +45,13 @@ class _CashierScreenState extends State<CashierScreen> {
     _refreshSync();
     _syncTimer = Timer.periodic(
         const Duration(seconds: 8), (_) => _refreshSync());
+    // Perbarui status segera setelah siklus sync (otomatis maupun manual)
+    // selesai, tanpa menunggu poll 8-detik berikutnya.
+    CloudSyncService.instance.syncing.addListener(_onSyncingChanged);
+  }
+
+  void _onSyncingChanged() {
+    if (!CloudSyncService.instance.isSyncing) _refreshSync();
   }
 
   Future<void> _refreshSync() async {
@@ -59,6 +68,7 @@ class _CashierScreenState extends State<CashierScreen> {
   @override
   void dispose() {
     _syncTimer?.cancel();
+    CloudSyncService.instance.syncing.removeListener(_onSyncingChanged);
     _sync.dispose();
     _openShiftCtrl.dispose();
     _controller.dispose();
@@ -82,9 +92,7 @@ class _CashierScreenState extends State<CashierScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         if (errorMsg != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(errorMsg)),
-          );
+          showAppSnack(context, errorMsg, isError: true);
         }
         if (paymentResult != null) {
           _showReceiptDialog(paymentResult);
@@ -157,12 +165,8 @@ class _CashierScreenState extends State<CashierScreen> {
           Navigator.pop(ctx);
           await _controller.reprintReceiptFor(order);
           if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Struk Meja ${order.tableNumber} dicetak ulang'),
-              backgroundColor: const Color(0xFF0F766E),
-            ),
-          );
+          showAppSnack(context, 'Struk Meja ${order.tableNumber} dicetak ulang',
+              icon: Icons.print_outlined);
         },
       ),
     );
@@ -192,15 +196,10 @@ class _CashierScreenState extends State<CashierScreen> {
     );
     if (!mounted) return;
     if (result == 'ok') {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Transaksi Meja ${order.tableNumber} di-void'),
-        backgroundColor: const Color(0xFFEF4444),
-      ));
+      showAppSnack(context, 'Transaksi Meja ${order.tableNumber} di-void',
+          isError: true, icon: Icons.block_rounded);
     } else if (result == 'invalid_pin') {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('PIN salah / tidak berwenang'),
-        backgroundColor: Colors.red,
-      ));
+      showAppSnack(context, 'PIN salah / tidak berwenang', isError: true);
     }
   }
 
@@ -219,8 +218,8 @@ class _CashierScreenState extends State<CashierScreen> {
         builder: (ctx, setS) {
           return _actionDialogShell(
             ctx: ctx,
-            accent: const Color(0xFFD97706),
-            accentBg: const Color(0xFFFEF3C7),
+            accent: AppColors.moduleWaiter,
+            accentBg: AppColors.warningSoft,
             icon: Icons.card_giftcard,
             title: 'Kompliment',
             subtitle: 'Gratiskan seluruh tagihan order ini',
@@ -228,9 +227,9 @@ class _CashierScreenState extends State<CashierScreen> {
               _orderSummaryCard(
                 order: order,
                 items: items,
-                accent: const Color(0xFFD97706),
-                accentBg: const Color(0xFFFFFBEB),
-                accentBorder: const Color(0xFFFDE68A),
+                accent: AppColors.moduleWaiter,
+                accentBg: AppColors.warningSoft,
+                accentBorder: AppColors.soft(AppColors.warning, 0.35),
               ),
               const SizedBox(height: 16),
               // Banner total → gratis
@@ -239,9 +238,9 @@ class _CashierScreenState extends State<CashierScreen> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFFBEB),
+                  color: AppColors.warningSoft,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFFDE68A)),
+                  border: Border.all(color: AppColors.soft(AppColors.warning, 0.35)),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -250,20 +249,20 @@ class _CashierScreenState extends State<CashierScreen> {
                         style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
-                            color: Color(0xFF92400E))),
+                            color: AppColors.moduleWaiter)),
                     Row(
                       children: [
                         Text(CurrencyHelper.format(order.totalAmount),
                             style: const TextStyle(
                                 fontSize: 14,
-                                color: Color(0xFF92400E),
+                                color: AppColors.moduleWaiter,
                                 decoration: TextDecoration.lineThrough)),
                         const SizedBox(width: 10),
                         const Text('GRATIS',
                             style: TextStyle(
                                 fontSize: 20,
                                 fontWeight: FontWeight.w900,
-                                color: Color(0xFFD97706))),
+                                color: AppColors.moduleWaiter)),
                       ],
                     ),
                   ],
@@ -315,13 +314,10 @@ class _CashierScreenState extends State<CashierScreen> {
               Navigator.pop(ctx);
               if (!mounted) return;
               if (ok) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                        'Meja ${order.tableNumber} digratiskan (kompliment oleh $by)'),
-                    backgroundColor: const Color(0xFFD97706),
-                  ),
-                );
+                showAppSnack(
+                    context,
+                    'Meja ${order.tableNumber} digratiskan (kompliment oleh $by)',
+                    icon: Icons.card_giftcard);
               }
             },
           );
@@ -368,9 +364,9 @@ class _CashierScreenState extends State<CashierScreen> {
                 children: [
                   Container(
                     padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
+                    decoration: const BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: AppRadius.rSm,
                     ),
                     child: Icon(icon, color: accent, size: 24),
                   ),
@@ -379,16 +375,11 @@ class _CashierScreenState extends State<CashierScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(title,
-                            style: TextStyle(
-                                fontSize: 19,
-                                fontWeight: FontWeight.bold,
-                                color: accent)),
+                        Text(title, style: AppType.h3.copyWith(color: accent)),
                         const SizedBox(height: 2),
                         Text(subtitle,
-                            style: TextStyle(
-                                fontSize: 13,
-                                color: accent.withValues(alpha: 0.75))),
+                            style: AppType.caption
+                                .copyWith(color: accent.withValues(alpha: 0.75))),
                       ],
                     ),
                   ),
@@ -415,39 +406,17 @@ class _CashierScreenState extends State<CashierScreen> {
               child: Row(
                 children: [
                   Expanded(
-                    child: SizedBox(
-                      height: 50,
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF64748B),
-                          side: const BorderSide(color: Color(0xFFCBD5E1)),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14)),
-                        ),
-                        child: const Text('Batal',
-                            style: TextStyle(
-                                fontSize: 15, fontWeight: FontWeight.w600)),
-                      ),
-                    ),
+                    child: AppButton.neutral('Batal',
+                        onPressed: () => Navigator.pop(ctx)),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     flex: 2,
-                    child: SizedBox(
-                      height: 50,
-                      child: FilledButton.icon(
-                        onPressed: onPrimary,
-                        icon: Icon(primaryIcon, size: 20),
-                        label: Text(primaryLabel,
-                            style: const TextStyle(
-                                fontSize: 15, fontWeight: FontWeight.bold)),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: accent,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14)),
-                        ),
-                      ),
+                    child: AppButton(
+                      label: primaryLabel,
+                      icon: primaryIcon,
+                      accent: accent,
+                      onPressed: onPrimary,
                     ),
                   ),
                 ],
@@ -499,17 +468,17 @@ class _CashierScreenState extends State<CashierScreen> {
               Text('$itemCount item',
                   style: const TextStyle(
                       fontSize: 13,
-                      color: Color(0xFF64748B),
+                      color: AppColors.textSecondary,
                       fontWeight: FontWeight.w500)),
               if (order.customerName != null &&
                   order.customerName!.isNotEmpty) ...[
                 const Text(' • ',
-                    style: TextStyle(color: Color(0xFFCBD5E1))),
+                    style: TextStyle(color: AppColors.textTertiary)),
                 Flexible(
                   child: Text(order.customerName!,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                          fontSize: 13, color: Color(0xFF64748B))),
+                          fontSize: 13, color: AppColors.textSecondary)),
                 ),
               ],
             ],
@@ -524,17 +493,17 @@ class _CashierScreenState extends State<CashierScreen> {
                         style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.bold,
-                            color: Color(0xFF475569))),
+                            color: AppColors.textSecondary)),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(it.productName,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                              fontSize: 13, color: Color(0xFF475569))),
+                              fontSize: 13, color: AppColors.textSecondary)),
                     ),
                     Text(CurrencyHelper.format(it.subtotal),
                         style: const TextStyle(
-                            fontSize: 13, color: Color(0xFF475569))),
+                            fontSize: 13, color: AppColors.textSecondary)),
                   ],
                 ),
               )),
@@ -545,7 +514,7 @@ class _CashierScreenState extends State<CashierScreen> {
                   style: const TextStyle(
                       fontSize: 12,
                       fontStyle: FontStyle.italic,
-                      color: Color(0xFF94A3B8))),
+                      color: AppColors.textTertiary)),
             ),
           const Divider(height: 18),
           Row(
@@ -555,7 +524,7 @@ class _CashierScreenState extends State<CashierScreen> {
                   style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFF475569))),
+                      color: AppColors.textSecondary)),
               Text(CurrencyHelper.format(subtotal),
                   style: const TextStyle(
                       fontSize: 15, fontWeight: FontWeight.bold)),
@@ -600,8 +569,8 @@ class _CashierScreenState extends State<CashierScreen> {
 
           return _actionDialogShell(
             ctx: ctx,
-            accent: const Color(0xFF2563EB),
-            accentBg: const Color(0xFFDBEAFE),
+            accent: AppColors.moduleProduk,
+            accentBg: AppColors.soft(AppColors.moduleProduk, 0.15),
             icon: Icons.local_offer_outlined,
             title: 'Diskon',
             subtitle: 'Potong harga sebelum pembayaran',
@@ -609,9 +578,9 @@ class _CashierScreenState extends State<CashierScreen> {
               _orderSummaryCard(
                 order: order,
                 items: items,
-                accent: const Color(0xFF2563EB),
-                accentBg: const Color(0xFFEFF6FF),
-                accentBorder: const Color(0xFFBFDBFE),
+                accent: AppColors.moduleProduk,
+                accentBg: AppColors.soft(AppColors.moduleProduk, 0.10),
+                accentBorder: AppColors.soft(AppColors.moduleProduk, 0.30),
               ),
               const SizedBox(height: 16),
               // Toggle tipe
@@ -685,9 +654,9 @@ class _CashierScreenState extends State<CashierScreen> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
+                  color: AppColors.surfaceAlt,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: AppColors.border),
                 ),
                 child: Column(
                   children: [
@@ -697,14 +666,14 @@ class _CashierScreenState extends State<CashierScreen> {
                     _discountPreviewRow(
                       isPercent && v > 0 ? 'Diskon (${v.toStringAsFixed(0)}%)' : 'Diskon',
                       '- ${CurrencyHelper.format(discount)}',
-                      color: const Color(0xFFEF4444),
+                      color: AppColors.danger,
                     ),
                     const Divider(height: 18),
                     _discountPreviewRow(
                       'Total Baru',
                       CurrencyHelper.format(newTotal),
                       bold: true,
-                      color: const Color(0xFF059669),
+                      color: AppColors.moduleKasir,
                     ),
                   ],
                 ),
@@ -730,13 +699,9 @@ class _CashierScreenState extends State<CashierScreen> {
               if (ok) {
                 Navigator.pop(ctx);
                 if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                        'Diskon ${CurrencyHelper.format(discount)} diterapkan'),
-                    backgroundColor: const Color(0xFF2563EB),
-                  ),
-                );
+                showAppSnack(context,
+                    'Diskon ${CurrencyHelper.format(discount)} diterapkan',
+                    icon: Icons.local_offer_outlined);
               } else {
                 setS(() => errorText = _controller.state.errorMessage ??
                     'Gagal menerapkan diskon');
@@ -753,16 +718,18 @@ class _CashierScreenState extends State<CashierScreen> {
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+        constraints: const BoxConstraints(minHeight: 44),
+        alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: const Color(0xFFEFF6FF),
+          color: AppColors.soft(AppColors.moduleProduk, 0.10),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFBFDBFE)),
+          border: Border.all(color: AppColors.soft(AppColors.moduleProduk, 0.30)),
         ),
         child: Text(label,
             style: const TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF2563EB))),
+                color: AppColors.moduleProduk)),
       ),
     );
   }
@@ -773,15 +740,16 @@ class _CashierScreenState extends State<CashierScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12),
         alignment: Alignment.center,
+        constraints: const BoxConstraints(minHeight: 44),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFF2563EB) : const Color(0xFFF1F5F9),
+          color: selected ? AppColors.moduleProduk : AppColors.surfaceMuted,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Text(label,
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
-              color: selected ? Colors.white : const Color(0xFF64748B),
+              color: selected ? Colors.white : AppColors.textSecondary,
             )),
       ),
     );
@@ -795,13 +763,13 @@ class _CashierScreenState extends State<CashierScreen> {
         Text(label,
             style: TextStyle(
                 fontSize: 13,
-                color: const Color(0xFF64748B),
+                color: AppColors.textSecondary,
                 fontWeight: bold ? FontWeight.bold : FontWeight.normal)),
         Text(value,
             style: TextStyle(
                 fontSize: bold ? 16 : 13,
                 fontWeight: bold ? FontWeight.bold : FontWeight.w500,
-                color: color ?? const Color(0xFF1E293B))),
+                color: color ?? AppColors.textPrimary)),
       ],
     );
   }
@@ -820,20 +788,17 @@ class _CashierScreenState extends State<CashierScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        backgroundColor: AppColors.surface,
+        shape: const RoundedRectangleBorder(borderRadius: AppRadius.rXxl),
         title: Row(
           children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFD1FAE5),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(Icons.check_circle,
-                  color: Color(0xFF059669), size: 24),
-            ),
-            const SizedBox(width: 12),
-            const Text('Pembayaran Berhasil', style: TextStyle(fontSize: 18)),
+            const IconBadge(
+                icon: Icons.check_circle_rounded,
+                color: AppColors.moduleKasir,
+                filled: true,
+                size: 44),
+            const SizedBox(width: AppSpacing.sm),
+            Text('Pembayaran Berhasil', style: AppType.h3),
           ],
         ),
         content: Column(
@@ -843,31 +808,24 @@ class _CashierScreenState extends State<CashierScreen> {
                 CurrencyHelper.format(result['total_amount'] as double)),
             _receiptRow('Bayar',
                 CurrencyHelper.format(result['paid_amount'] as double)),
-            const Divider(color: Color(0xFFF1F5F9)),
+            const Divider(color: AppColors.surfaceMuted),
             _receiptRow(
               'Kembalian',
               CurrencyHelper.format(result['change'] as double),
               valueStyle: const TextStyle(
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF059669),
+                color: AppColors.moduleKasir,
                 fontSize: 18,
               ),
             ),
           ],
         ),
         actions: [
-          SizedBox(
-            width: double.infinity,
-            height: 44,
-            child: FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF059669),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-              ),
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Selesai'),
-            ),
+          AppButton(
+            label: 'Selesai',
+            accent: AppColors.moduleKasir,
+            size: AppButtonSize.medium,
+            onPressed: () => Navigator.pop(context),
           ),
         ],
       ),
@@ -880,7 +838,7 @@ class _CashierScreenState extends State<CashierScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(color: Colors.grey[500])),
+          Text(label, style: const TextStyle(color: AppColors.textSecondary)),
           Text(value,
               style:
                   valueStyle ?? const TextStyle(fontWeight: FontWeight.w600)),
@@ -915,262 +873,166 @@ class _CashierScreenState extends State<CashierScreen> {
 
   Widget _buildShiftGate(CashierState state) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9),
-      body: Column(
-        children: [
-          // Same green gradient header
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF059669), Color(0xFF10B981)],
-                begin: Alignment.centerLeft,
-                end: Alignment.centerRight,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Color(0x1A000000),
-                  blurRadius: 10,
-                  offset: Offset(0, 4),
+      backgroundColor: AppColors.canvas,
+      body: AppBackground(
+        child: Column(
+          children: [
+            // Header gradasi teal modul Kasir
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: AppColors.gradientOf(AppColors.moduleKasir),
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
                 ),
-              ],
-            ),
-            child: SafeArea(
-              bottom: false,
-              child: SizedBox(
-                height: 64,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    children: [
-                      Material(
-                        color: Colors.white.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(10),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(10),
-                          onTap: () => Navigator.pop(context),
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            alignment: Alignment.center,
-                            child: const Icon(Icons.arrow_back,
-                                color: Colors.white, size: 22),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(Icons.point_of_sale_outlined,
-                            color: Colors.white, size: 24),
-                      ),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text('Kasir',
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                )),
-                            Text('Buka Shift untuk Memulai',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Color(0xFFA7F3D0),
-                                )),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                boxShadow: AppShadows.glow(AppColors.moduleKasir, strength: 0.28),
               ),
-            ),
-          ),
-
-          // Body — centered card
-          Expanded(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: Container(
-                  constraints: const BoxConstraints(maxWidth: 420),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.08),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  padding: const EdgeInsets.all(32),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Icon
-                      Container(
-                        width: 80,
-                        height: 80,
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF34D399), Color(0xFF059669)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFF059669)
-                                  .withValues(alpha: 0.3),
-                              blurRadius: 16,
-                              offset: const Offset(0, 6),
-                            ),
-                          ],
+              child: SafeArea(
+                bottom: false,
+                child: SizedBox(
+                  height: 66,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                    child: Row(
+                      children: [
+                        AppIconButton(
+                          icon: Icons.arrow_back_ios_new_rounded,
+                          onPressed: () => Navigator.pop(context),
+                          color: Colors.white,
+                          filled: true,
+                          size: 44,
+                          tooltip: 'Kembali',
                         ),
-                        child: const Icon(Icons.point_of_sale,
-                            color: Colors.white, size: 40),
-                      ),
-                      const SizedBox(height: 24),
-
-                      // Title
-                      const Text(
-                        'Buka Kasir',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF0F172A),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-
-                      // Subtitle
-                      const Text(
-                        'Masukkan modal kas awal untuk memulai shift',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Color(0xFF64748B),
-                          height: 1.5,
-                        ),
-                      ),
-                      const SizedBox(height: 32),
-
-                      // Kas Awal input
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Kas Awal',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey[700],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: _openShiftCtrl,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [RupiahInputFormatter()],
-                        decoration: InputDecoration(
-                          prefixText: 'Rp ',
-                          hintText: '0',
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 14),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide:
-                                const BorderSide(color: Color(0xFFE2E8F0)),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(
-                                color: Color(0xFF059669), width: 2),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 28),
-
-                      // BUKA KASIR button
-                      SizedBox(
-                        width: double.infinity,
-                        height: 56,
-                        child: Container(
+                        const SizedBox(width: AppSpacing.sm),
+                        Container(
+                          width: 44,
+                          height: 44,
                           decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              colors: [Color(0xFF059669), Color(0xFF10B981)],
-                            ),
-                            borderRadius: BorderRadius.circular(14),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFF059669)
-                                    .withValues(alpha: 0.35),
-                                blurRadius: 12,
-                                offset: const Offset(0, 5),
-                              ),
+                            color: AppColors.soft(Colors.white, 0.2),
+                            borderRadius: AppRadius.rSm,
+                          ),
+                          child: const Icon(Icons.point_of_sale_outlined,
+                              color: Colors.white, size: 24),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text('Kasir',
+                                  style: AppType.h3.copyWith(color: Colors.white)),
+                              Text('Buka Shift untuk Memulai',
+                                  style: AppType.caption
+                                      .copyWith(color: AppColors.soft(Colors.white, 0.85))),
                             ],
                           ),
-                          child: Material(
-                            color: Colors.transparent,
-                            borderRadius: BorderRadius.circular(14),
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(14),
-                              onTap: state.isProcessing
-                                  ? null
-                                  : () {
-                                      final rawDigits = _openShiftCtrl.text
-                                          .replaceAll('.', '');
-                                      final cash =
-                                          double.tryParse(rawDigits) ?? 0;
-                                      _controller.openShift(
-                                        openingCash: cash,
-                                        openedBy: 'Kasir',
-                                      );
-                                    },
-                              child: Center(
-                                child: state.isProcessing
-                                    ? const SizedBox(
-                                        width: 24,
-                                        height: 24,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : const Text(
-                                        'BUKA KASIR',
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.white,
-                                          letterSpacing: 0.5,
-                                        ),
-                                      ),
-                              ),
-                            ),
-                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+
+            // Body — centered card
+            Expanded(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(AppSpacing.xl),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: AppCard(
+                      padding: const EdgeInsets.all(AppSpacing.xxl),
+                      radius: AppRadius.rXxl,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Icon
+                          Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: AppColors.gradientOf(AppColors.moduleKasir),
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: AppRadius.rXl,
+                              boxShadow: AppShadows.glow(AppColors.moduleKasir),
+                            ),
+                            child: const Icon(Icons.point_of_sale,
+                                color: Colors.white, size: 40),
+                          ),
+                          const SizedBox(height: AppSpacing.xl),
+
+                          // Title
+                          Text('Buka Kasir', style: AppType.h1),
+                          const SizedBox(height: AppSpacing.xs),
+
+                          // Subtitle
+                          Text(
+                            'Masukkan modal kas awal untuk memulai shift',
+                            textAlign: TextAlign.center,
+                            style: AppType.body.copyWith(color: AppColors.textSecondary),
+                          ),
+                          const SizedBox(height: AppSpacing.xxl),
+
+                          // Kas Awal input
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text('Kas Awal', style: AppType.label),
+                          ),
+                          const SizedBox(height: AppSpacing.xs),
+                          TextField(
+                            controller: _openShiftCtrl,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [RupiahInputFormatter()],
+                            decoration: const InputDecoration(
+                              prefixText: 'Rp ',
+                              hintText: '0',
+                              contentPadding: EdgeInsets.symmetric(
+                                  horizontal: AppSpacing.md, vertical: 14),
+                              border: OutlineInputBorder(
+                                borderRadius: AppRadius.rSm,
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: AppRadius.rSm,
+                                borderSide: BorderSide(color: AppColors.border),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: AppRadius.rSm,
+                                borderSide: BorderSide(
+                                    color: AppColors.moduleKasir, width: 2),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.xl),
+
+                          // BUKA KASIR button
+                          AppButton(
+                            label: 'BUKA KASIR',
+                            loading: state.isProcessing,
+                            accent: AppColors.moduleKasir,
+                            onPressed: () {
+                              final rawDigits =
+                                  _openShiftCtrl.text.replaceAll('.', '');
+                              final cash = double.tryParse(rawDigits) ?? 0;
+                              _controller.openShift(
+                                openingCash: cash,
+                                openedBy: 'Kasir',
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1211,91 +1073,94 @@ class _CashierScreenState extends State<CashierScreen> {
   }
 
   // Tombol di dalam group
+  // Ukuran tombol aksi header — SERAGAM & sebesar jari (target sentuh ~84×60).
+  static const double _headerBtnW = 84;
+  static const double _headerBtnH = 60;
+
   Widget _headerBtn({
     required IconData icon,
     required String label,
     required VoidCallback onTap,
     Color? iconColor,
-    double hPad = 12,
   }) {
     return InkWell(
       onTap: onTap,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 60, minWidth: 72),
-        child: Container(
-          padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 8),
-          alignment: Alignment.center,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, color: iconColor ?? Colors.white, size: 24),
-              const SizedBox(height: 4),
-              Text(label,
+      borderRadius: BorderRadius.circular(10),
+      child: SizedBox(
+        width: _headerBtnW,
+        height: _headerBtnH,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: iconColor ?? Colors.white, size: 22),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 3),
+              child: Text(label,
                   textAlign: TextAlign.center,
                   maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: iconColor ?? Colors.white,
-                    fontSize: 12,
+                    fontSize: 11,
                     fontWeight: FontWeight.w600,
                   )),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Pil status sinkronisasi di header: Offline / menunggu antre / online.
-  /// Dibungkus ValueListenableBuilder → update tiap 8 detik hanya merebuild pil.
-  Widget _syncPill() {
-    return ValueListenableBuilder(
-      valueListenable: _sync,
-      builder: (_, s, __) => _syncPillContent(s),
-    );
-  }
-
-  Widget _syncPillContent(({bool enabled, int pending, bool online})? s) {
-    if (s == null || !s.enabled) return const SizedBox.shrink();
-
-    final Color bg;
-    final IconData icon;
-    final String label;
-    if (!s.online) {
-      bg = const Color(0xFFF59E0B); // amber — offline
-      icon = Icons.cloud_off;
-      label = s.pending > 0 ? 'Offline · ${s.pending}' : 'Offline';
-    } else if (s.pending > 0) {
-      bg = const Color(0xFF3B82F6); // biru — antre kirim
-      icon = Icons.sync;
-      label = '${s.pending} antre';
-    } else {
-      bg = const Color(0xFF10B981); // hijau — tersinkron
-      icon = Icons.cloud_done;
-      label = 'Sinkron';
-    }
-
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.18),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: bg.withValues(alpha: 0.9), width: 1.5),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: Colors.white, size: 15),
-            const SizedBox(width: 5),
-            Text(label,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700)),
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  /// Tombol Sinkron di header (ukuran seragam 84×60): status + tap untuk
+  /// sinkron ke cloud, dengan animasi berputar saat proses.
+  Widget _syncButton() {
+    // Dengarkan status siklus dari service (true saat auto-sync timer maupun
+    // manual) agar tombol ikut berputar walau sync dipicu otomatis.
+    return ValueListenableBuilder<bool>(
+      valueListenable: CloudSyncService.instance.syncing,
+      builder: (_, syncing, __) => ValueListenableBuilder(
+        valueListenable: _sync,
+        builder: (_, s, __) => _SyncButton(
+          syncing: syncing,
+          status: s,
+          onTap: _doSync,
+        ),
+      ),
+    );
+  }
+
+  /// Jalankan sinkron ke cloud (push + pull + heartbeat) secara manual.
+  Future<void> _doSync() async {
+    // Siklus (auto/manual) sedang berjalan → jangan picu siklus kedua.
+    // syncCycle() sendiri sudah anti-dobel, ini sekadar hindari snackbar ganda.
+    if (CloudSyncService.instance.isSyncing) return;
+    final cur = _sync.value;
+    if (cur != null && !cur.enabled) {
+      showAppSnack(context,
+          'Sinkron cloud belum diaktifkan (Pengaturan → Cloud).',
+          isError: true);
+      return;
+    }
+    // Animasi berputar digerakkan oleh CloudSyncService.syncing (via listener).
+    try {
+      await CloudSyncService.instance.syncCycle();
+    } catch (_) {}
+    try {
+      _sync.value = await CloudSyncService.instance.status();
+    } catch (_) {}
+    if (!mounted) return;
+    final now = _sync.value;
+    final ok = now != null && now.online && now.pending == 0;
+    showAppSnack(
+      context,
+      ok
+          ? 'Tersinkron ke cloud.'
+          : (now != null && !now.online
+              ? 'Offline — data tersimpan, dikirim saat online.'
+              : 'Sinkron: ${now?.pending ?? 0} data masih menunggu.'),
+      isError: !ok,
     );
   }
 
@@ -1367,10 +1232,8 @@ class _CashierScreenState extends State<CashierScreen> {
 
     if (state.isLoading && state.products.isEmpty) {
       return const Scaffold(
-        backgroundColor: Color(0xFFF8FAFC),
-        body: Center(
-          child: CircularProgressIndicator(color: Color(0xFF10B981)),
-        ),
+        backgroundColor: AppColors.canvas,
+        body: AppLoader(label: 'Memuat kasir...'),
       );
     }
 
@@ -1380,7 +1243,7 @@ class _CashierScreenState extends State<CashierScreen> {
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.canvas,
       body: Column(
         children: [
           // ── Header ──
@@ -1436,8 +1299,8 @@ class _CashierScreenState extends State<CashierScreen> {
       top: false,
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white,
-          border: const Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+          color: AppColors.surface,
+          border: const Border(top: BorderSide(color: AppColors.border)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.06),
@@ -1452,24 +1315,28 @@ class _CashierScreenState extends State<CashierScreen> {
             Expanded(
               child: GestureDetector(
                 onTap: () => _showPhoneCartSheet(),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '${state.cartItemCount} item',
-                      style: const TextStyle(
-                          fontSize: 12, color: Color(0xFF94A3B8)),
-                    ),
-                    Text(
-                      'Rp ${displayTotal.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]}.')}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF059669),
+                child: Container(
+                  constraints: const BoxConstraints(minHeight: 48),
+                  alignment: Alignment.centerLeft,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${state.cartItemCount} item',
+                        style: const TextStyle(
+                            fontSize: 12, color: AppColors.textTertiary),
                       ),
-                    ),
-                  ],
+                      Text(
+                        'Rp ${displayTotal.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]}.')}',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.moduleKasir,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1492,45 +1359,13 @@ class _CashierScreenState extends State<CashierScreen> {
 
   Widget _buildBarButton(
       String label, bool isLoading, VoidCallback onTap) {
-    return Container(
-      height: 44,
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-            colors: [Color(0xFF059669), Color(0xFF10B981)]),
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF10B981).withValues(alpha: 0.3),
-            blurRadius: 6,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: isLoading ? null : onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Center(
-              child: isLoading
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
-                  : Text(label,
-                      style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white)),
-            ),
-          ),
-        ),
-      ),
+    return AppButton(
+      label: label,
+      loading: isLoading,
+      onPressed: onTap,
+      accent: AppColors.moduleKasir,
+      size: AppButtonSize.medium,
+      expanded: false,
     );
   }
 
@@ -1548,8 +1383,8 @@ class _CashierScreenState extends State<CashierScreen> {
           builder: (context, scrollController) {
             return Container(
               decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                color: AppColors.surface,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
               ),
               child: ListenableBuilder(
                 listenable: _controller,
@@ -1563,7 +1398,7 @@ class _CashierScreenState extends State<CashierScreen> {
                           width: 36,
                           height: 4,
                           decoration: BoxDecoration(
-                            color: Colors.grey[300],
+                            color: AppColors.borderStrong,
                             borderRadius: BorderRadius.circular(2),
                           ),
                         ),
@@ -1573,25 +1408,25 @@ class _CashierScreenState extends State<CashierScreen> {
                         child: Row(
                           children: [
                             const Icon(Icons.receipt_long_outlined,
-                                color: Color(0xFF059669), size: 20),
+                                color: AppColors.moduleKasir, size: 20),
                             const SizedBox(width: 8),
                             const Text('Pesanan',
                                 style: TextStyle(
                                     fontSize: 16,
                                     fontWeight: FontWeight.bold,
-                                    color: Color(0xFF1E293B))),
+                                    color: AppColors.textPrimary)),
                             const Spacer(),
                             if (state.cartItemCount > 0)
                               Container(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 8, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFFD1FAE5),
+                                  color: AppColors.soft(AppColors.moduleKasir, 0.14),
                                   borderRadius: BorderRadius.circular(10),
                                 ),
                                 child: Text('${state.cartItemCount} item',
                                     style: const TextStyle(
-                                        color: Color(0xFF059669),
+                                        color: AppColors.moduleKasir,
                                         fontSize: 12,
                                         fontWeight: FontWeight.w600)),
                               ),
@@ -1671,7 +1506,7 @@ class _CashierScreenState extends State<CashierScreen> {
           child: Text('Dipesan',
               style: TextStyle(
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF94A3B8),
+                  color: AppColors.textTertiary,
                   fontSize: 12)),
         ),
         ...state.orderItems.map((item) => _CartItemTile(
@@ -1687,19 +1522,13 @@ class _CashierScreenState extends State<CashierScreen> {
 
   Widget _buildHeader(CashierState state) {
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFF059669), Color(0xFF10B981)],
+          colors: AppColors.gradientOf(AppColors.moduleKasir),
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Color(0x1A000000),
-            blurRadius: 10,
-            offset: Offset(0, 4),
-          ),
-        ],
+        boxShadow: AppShadows.glow(AppColors.moduleKasir, strength: 0.28),
       ),
       child: SafeArea(
         bottom: false,
@@ -1725,20 +1554,9 @@ class _CashierScreenState extends State<CashierScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Container(
-                  width: 60,
-                  height: 60,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(Icons.point_of_sale_outlined,
-                      color: Colors.white, size: 24),
-                ),
-                const SizedBox(width: 12),
 
-                // ── Indikator status sinkronisasi (offline / menunggu) ──
-                _syncPill(),
+                // ── Tombol Sinkron: status + tap untuk sinkron ke cloud ──
+                _syncButton(),
 
                 // ── Grup tombol — mulai dari kiri, scroll bila layar sempit ──
                 Expanded(
@@ -1755,7 +1573,6 @@ class _CashierScreenState extends State<CashierScreen> {
                                     ? 'Meja ${state.selectedTable!.tableNumber}'
                                     : 'Pilih Meja',
                             onTap: _showTableSelector,
-                            hPad: 14,
                           ),
                         ]),
                         const SizedBox(width: 10),
@@ -1763,8 +1580,7 @@ class _CashierScreenState extends State<CashierScreen> {
                           _headerBtn(
                               icon: Icons.swap_horiz,
                               label: 'Ganti Shift',
-                              onTap: _showSwapShiftDialog,
-                              hPad: 14),
+                              onTap: _showSwapShiftDialog),
                         ]),
                         const SizedBox(width: 10),
                         _headerGroup([
@@ -1782,13 +1598,13 @@ class _CashierScreenState extends State<CashierScreen> {
                               icon: Icons.remove_shopping_cart_outlined,
                               label: 'Void',
                               onTap: _showVoidTransactionPicker,
-                              iconColor: const Color(0xFFEF4444)),
+                              iconColor: AppColors.danger),
                           _groupDivider(),
                           _headerBtn(
                               icon: Icons.history_toggle_off,
                               label: 'Histori Void',
                               onTap: _showVoidHistory,
-                              iconColor: const Color(0xFFEF4444)),
+                              iconColor: AppColors.danger),
                           _groupDivider(),
                           _headerBtn(
                               icon: Icons.print_outlined,
@@ -1802,52 +1618,69 @@ class _CashierScreenState extends State<CashierScreen> {
 
                 const SizedBox(width: 10),
 
-                // ── Refresh ──
+                // ── Refresh (ukuran seragam 84×60) ──
                 Material(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(12),
                     onTap: () => _controller.loadData(),
-                    child: Container(
-                      width: 60,
-                      height: 60,
-                      alignment: Alignment.center,
-                      child: const Icon(Icons.refresh,
-                          color: Color(0xFF059669), size: 26),
+                    child: const SizedBox(
+                      width: _headerBtnW,
+                      height: _headerBtnH,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.refresh,
+                              color: AppColors.moduleKasir, size: 22),
+                          SizedBox(height: 4),
+                          Text('Muat Ulang',
+                              textAlign: TextAlign.center,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: AppColors.moduleKasir,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              )),
+                        ],
+                      ),
                     ),
                   ),
                 ),
 
                 const SizedBox(width: 10),
 
-                // ── Tutup Kasir (paling ujung, merah) ──
+                // ── Tutup Kasir (paling ujung, merah) — ukuran seragam 84×60 ──
                 Material(
-                  color: const Color(0xFFEF4444),
+                  color: AppColors.danger,
                   borderRadius: BorderRadius.circular(12),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(12),
                     onTap: _showCloseShiftDialog,
-                    child: ConstrainedBox(
-                      constraints:
-                          const BoxConstraints(minHeight: 60, minWidth: 84),
-                      child: const Padding(
-                        padding:
-                            EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.logout, color: Colors.white, size: 24),
-                            SizedBox(height: 4),
-                            Text('Tutup Kasir',
+                    child: const SizedBox(
+                      width: _headerBtnW,
+                      height: _headerBtnH,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.logout, color: Colors.white, size: 22),
+                          SizedBox(height: 4),
+                          Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 3),
+                            child: Text('Tutup Kasir',
+                                textAlign: TextAlign.center,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   color: Colors.white,
-                                  fontSize: 12,
+                                  fontSize: 11,
                                   fontWeight: FontWeight.w600,
                                 )),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -1862,8 +1695,11 @@ class _CashierScreenState extends State<CashierScreen> {
 
   Widget _buildCategoryTabs(CashierState state) {
     return Container(
-      height: 52,
-      color: Colors.white,
+      height: 54,
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(bottom: BorderSide(color: AppColors.border)),
+      ),
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1920,14 +1756,15 @@ class _CashierScreenState extends State<CashierScreen> {
   Widget _buildCartPanel(CashierState state, {double width = 320}) {
     return Container(
       width: width,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: const Border(left: BorderSide(color: Color(0xFFE2E8F0))),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(left: BorderSide(color: AppColors.border)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(-4, 0),
+            color: Color(0x0F1B1F3B),
+            blurRadius: 18,
+            offset: Offset(-6, 0),
+            spreadRadius: -4,
           ),
         ],
       ),
@@ -1935,21 +1772,21 @@ class _CashierScreenState extends State<CashierScreen> {
         children: [
           // Header
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppSpacing.md),
             decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
+              border: Border(bottom: BorderSide(color: AppColors.surfaceMuted)),
             ),
             child: Row(
               children: [
                 const Icon(Icons.receipt_long_outlined,
-                    color: Color(0xFF059669), size: 20),
+                    color: AppColors.moduleKasir, size: 20),
                 const SizedBox(width: 8),
                 const Text(
                   'Pesanan',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: Color(0xFF1E293B),
+                    color: AppColors.textPrimary,
                   ),
                 ),
                 const Spacer(),
@@ -1958,13 +1795,13 @@ class _CashierScreenState extends State<CashierScreen> {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFD1FAE5),
+                      color: AppColors.soft(AppColors.moduleKasir, 0.14),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
                       '${state.cartItemCount} item',
                       style: const TextStyle(
-                        color: Color(0xFF059669),
+                        color: AppColors.moduleKasir,
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
@@ -1997,14 +1834,14 @@ class _CashierScreenState extends State<CashierScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
+        border: Border(bottom: BorderSide(color: AppColors.surfaceMuted)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.people_outline, size: 18, color: Color(0xFF64748B)),
+          const Icon(Icons.people_outline, size: 18, color: AppColors.textSecondary),
           const SizedBox(width: 8),
           const Text('Jumlah Tamu',
-              style: TextStyle(fontSize: 13, color: Color(0xFF475569))),
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
           const Spacer(),
           if (hasOrder)
             Text('$value pax',
@@ -2032,15 +1869,15 @@ class _CashierScreenState extends State<CashierScreen> {
 
   Widget _paxBtn(IconData icon, VoidCallback onTap) {
     return Material(
-      color: const Color(0xFFF1F5F9),
+      color: AppColors.surfaceMuted,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
         onTap: onTap,
         child: SizedBox(
-          width: 32,
-          height: 32,
-          child: Icon(icon, size: 18, color: const Color(0xFF059669)),
+          width: 44,
+          height: 44,
+          child: Icon(icon, size: 18, color: AppColors.moduleKasir),
         ),
       ),
     );
@@ -2048,22 +1885,16 @@ class _CashierScreenState extends State<CashierScreen> {
 
   Widget _buildCartItems(CashierState state) {
     if (state.cart.isEmpty && state.orderItems.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.shopping_cart_outlined,
-                size: 48, color: Colors.grey[300]),
-            const SizedBox(height: 12),
-            Text('Belum ada item',
-                style: TextStyle(color: Colors.grey[400], fontSize: 14)),
-          ],
-        ),
+      return const EmptyState(
+        icon: Icons.shopping_cart_outlined,
+        title: 'Belum ada item',
+        message: 'Pilih menu untuk mulai pesanan',
+        accent: AppColors.moduleKasir,
       );
     }
 
     return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       children: _buildCartItemWidgets(state),
     );
   }
@@ -2076,7 +1907,7 @@ class _CashierScreenState extends State<CashierScreen> {
 
     return Container(
       decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFFF1F5F9))),
+        border: Border(top: BorderSide(color: AppColors.surfaceMuted)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -2095,32 +1926,23 @@ class _CashierScreenState extends State<CashierScreen> {
                     c.name,
                     c.appliedAmount,
                     signed: true,
-                    color: isDiscount ? const Color(0xFFEF4444) : null,
+                    color: isDiscount ? AppColors.danger : null,
                   ),
                 );
               }),
-              const Divider(height: 14, color: Color(0xFFE2E8F0)),
+              const Divider(height: 14, color: AppColors.border),
             ],
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Total',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E293B),
-                    )),
+                Text('Total', style: AppType.title),
                 Text(
                   CurrencyHelper.format(displayTotal),
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF059669),
-                  ),
+                  style: AppType.amount.copyWith(color: AppColors.moduleKasir),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.sm),
             if (state.currentOrder != null && state.cart.isNotEmpty) ...[
               _buildActionButton(
                 label: 'TAMBAH',
@@ -2167,14 +1989,14 @@ class _CashierScreenState extends State<CashierScreen> {
         Flexible(
           child: Text(label,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13, color: Color(0xFF64748B))),
+              style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
         ),
         const SizedBox(width: 8),
         Text('$prefix${CurrencyHelper.format(amount.abs())}',
             style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
-                color: color ?? const Color(0xFF475569))),
+                color: color ?? AppColors.textSecondary)),
       ],
     );
   }
@@ -2184,53 +2006,16 @@ class _CashierScreenState extends State<CashierScreen> {
     required bool isLoading,
     required VoidCallback onTap,
   }) {
-    return SizedBox(
-      width: double.infinity,
-      height: 48,
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFF059669), Color(0xFF10B981)],
-          ),
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF10B981).withValues(alpha: 0.3),
-              blurRadius: 8,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(14),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(14),
-            onTap: isLoading ? null : onTap,
-            child: Center(
-              child: isLoading
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Text(label,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      )),
-            ),
-          ),
-        ),
-      ),
+    return AppButton(
+      label: label,
+      loading: isLoading,
+      onPressed: onTap,
+      accent: AppColors.moduleKasir,
+      size: AppButtonSize.medium,
     );
   }
 
-  /// Aksi sekunder pada order aktif: Diskon (biru) + Kompliment (amber).
+  /// Aksi sekunder pada order aktif (Diskon, Kompliment, Split, dll) — gold tonal.
   Widget _buildSecondaryActions(bool isLoading) {
     return Column(
       children: [
@@ -2240,8 +2025,8 @@ class _CashierScreenState extends State<CashierScreen> {
               child: _secondaryButton(
                 icon: Icons.local_offer_outlined,
                 label: 'Diskon',
-                color: const Color(0xFF2563EB),
-                borderColor: const Color(0xFF93C5FD),
+                color: AppColors.moduleProduk,
+                borderColor: AppColors.soft(AppColors.moduleProduk, 0.40),
                 onTap: isLoading ? null : _showDiscountDialog,
               ),
             ),
@@ -2250,8 +2035,8 @@ class _CashierScreenState extends State<CashierScreen> {
               child: _secondaryButton(
                 icon: Icons.card_giftcard,
                 label: 'Kompliment',
-                color: const Color(0xFFD97706),
-                borderColor: const Color(0xFFFBBF24),
+                color: AppColors.moduleWaiter,
+                borderColor: AppColors.warning,
                 onTap: isLoading ? null : _showComplimentDialog,
               ),
             ),
@@ -2264,8 +2049,8 @@ class _CashierScreenState extends State<CashierScreen> {
               child: _secondaryButton(
                 icon: Icons.call_split,
                 label: 'Split Bill',
-                color: const Color(0xFF2563EB),
-                borderColor: const Color(0xFF93C5FD),
+                color: AppColors.moduleProduk,
+                borderColor: AppColors.soft(AppColors.moduleProduk, 0.40),
                 onTap: isLoading ? null : _showSplitBillDialog,
               ),
             ),
@@ -2274,8 +2059,8 @@ class _CashierScreenState extends State<CashierScreen> {
               child: _secondaryButton(
                 icon: Icons.payments_outlined,
                 label: 'Gabung Bayar',
-                color: const Color(0xFF7C3AED),
-                borderColor: const Color(0xFFC4B5FD),
+                color: AppColors.moduleMeja,
+                borderColor: AppColors.soft(AppColors.moduleMeja, 0.35),
                 onTap: isLoading ? null : _showMixedPaymentDialog,
               ),
             ),
@@ -2288,8 +2073,8 @@ class _CashierScreenState extends State<CashierScreen> {
               child: _secondaryButton(
                 icon: Icons.swap_horiz,
                 label: 'Pindah Meja',
-                color: const Color(0xFF0891B2),
-                borderColor: const Color(0xFF67E8F9),
+                color: AppColors.info,
+                borderColor: AppColors.soft(AppColors.info, 0.40),
                 onTap: isLoading ? null : _showMovePicker,
               ),
             ),
@@ -2298,8 +2083,8 @@ class _CashierScreenState extends State<CashierScreen> {
               child: _secondaryButton(
                 icon: Icons.merge_type,
                 label: 'Gabung Meja',
-                color: const Color(0xFF0891B2),
-                borderColor: const Color(0xFF67E8F9),
+                color: AppColors.info,
+                borderColor: AppColors.soft(AppColors.info, 0.40),
                 onTap: isLoading ? null : _showMergePicker,
               ),
             ),
@@ -2311,8 +2096,8 @@ class _CashierScreenState extends State<CashierScreen> {
           child: _secondaryButton(
             icon: Icons.receipt_long_outlined,
             label: 'Cetak Tagihan',
-            color: const Color(0xFF0F766E),
-            borderColor: const Color(0xFF5EEAD4),
+            color: AppColors.moduleKasir,
+            borderColor: AppColors.soft(AppColors.moduleKasir, 0.40),
             onTap: isLoading ? null : _printBill,
           ),
         ),
@@ -2347,11 +2132,7 @@ class _CashierScreenState extends State<CashierScreen> {
         : res == 'invalid_pin'
             ? 'PIN salah / tidak berwenang'
             : (_controller.state.errorMessage ?? 'Gagal hapus item');
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
-      backgroundColor:
-          res == 'ok' ? const Color(0xFF059669) : Colors.red,
-    ));
+    showAppSnack(context, msg, isError: res != 'ok');
   }
 
   void _showMovePicker() {
@@ -2362,7 +2143,7 @@ class _CashierScreenState extends State<CashierScreen> {
         .toList();
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
@@ -2383,7 +2164,7 @@ class _CashierScreenState extends State<CashierScreen> {
                 const SizedBox(height: 16),
                 if (available.isEmpty)
                   const Text('Tidak ada meja kosong',
-                      style: TextStyle(color: Color(0xFF94A3B8)))
+                      style: TextStyle(color: AppColors.textTertiary))
                 else
                   Flexible(
                     child: SingleChildScrollView(
@@ -2392,7 +2173,7 @@ class _CashierScreenState extends State<CashierScreen> {
                         runSpacing: 10,
                         children: available
                       .map((t) => Material(
-                            color: const Color(0xFFF1F5F9),
+                            color: AppColors.surfaceMuted,
                             borderRadius: BorderRadius.circular(12),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(12),
@@ -2401,17 +2182,13 @@ class _CashierScreenState extends State<CashierScreen> {
                                 final ok = await _controller
                                     .moveOrderToTable(t.tableNumber);
                                 if (!mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(ok
+                                showAppSnack(
+                                    context,
+                                    ok
                                         ? 'Pindah ke Meja ${t.tableNumber}'
                                         : _controller.state.errorMessage ??
-                                            'Gagal pindah'),
-                                    backgroundColor: ok
-                                        ? const Color(0xFF0891B2)
-                                        : Colors.red,
-                                  ),
-                                );
+                                            'Gagal pindah',
+                                    isError: !ok);
                               },
                               child: Container(
                                 width: 72,
@@ -2449,14 +2226,12 @@ class _CashierScreenState extends State<CashierScreen> {
           Navigator.pop(ctx);
           final ok = await _controller.mergeTable(src.id);
           if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(ok
+          showAppSnack(
+              context,
+              ok
                   ? 'Meja ${src.tableNumber} digabung ke ${order.tableNumber}'
-                  : _controller.state.errorMessage ?? 'Gagal gabung'),
-              backgroundColor: ok ? const Color(0xFF0891B2) : Colors.red,
-            ),
-          );
+                  : _controller.state.errorMessage ?? 'Gagal gabung',
+              isError: !ok);
         },
       ),
     );
@@ -2475,12 +2250,8 @@ class _CashierScreenState extends State<CashierScreen> {
   Future<void> _printBill() async {
     final ok = await _controller.printCurrentBill();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(ok ? 'Tagihan dicetak' : 'Tidak ada order aktif'),
-        backgroundColor: ok ? const Color(0xFF0F766E) : Colors.grey,
-      ),
-    );
+    showAppSnack(context, ok ? 'Tagihan dicetak' : 'Tidak ada order aktif',
+        isError: !ok, icon: ok ? Icons.receipt_long_outlined : null);
   }
 
   Widget _secondaryButton({
@@ -2490,42 +2261,36 @@ class _CashierScreenState extends State<CashierScreen> {
     required Color borderColor,
     required VoidCallback? onTap,
   }) {
-    return SizedBox(
-      height: 44,
-      child: OutlinedButton.icon(
-        onPressed: onTap,
-        icon: Icon(icon, size: 18),
-        label: Text(label, overflow: TextOverflow.ellipsis),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: color,
-          side: BorderSide(color: borderColor),
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          textStyle:
-              const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-        ),
-      ),
+    return AppButton(
+      label: label,
+      icon: icon,
+      onPressed: onTap,
+      variant: AppButtonVariant.tonal,
+      // SECONDARY gold tonal untuk seluruh aksi sekunder (bukan CTA bayar).
+      accent: AppColors.accent,
+      size: AppButtonSize.medium,
     );
   }
 
   Widget _categoryChip(String label, bool selected, VoidCallback onTap) {
     return Padding(
-      padding: const EdgeInsets.only(right: 6),
+      padding: const EdgeInsets.only(right: AppSpacing.xs),
       child: Material(
-        color: selected ? const Color(0xFF059669) : const Color(0xFFF1F5F9),
-        borderRadius: BorderRadius.circular(10),
+        // SECONDARY gold untuk kategori terpilih (identitas hijau+emas).
+        color: selected ? AppColors.accent : AppColors.surfaceMuted,
+        borderRadius: AppRadius.rPill,
         child: InkWell(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: AppRadius.rPill,
           onTap: onTap,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md, vertical: AppSpacing.xs),
+            constraints: const BoxConstraints(minHeight: 44),
+            alignment: Alignment.center,
             child: Text(
               label,
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
-                color: selected ? Colors.white : const Color(0xFF64748B),
+              style: AppType.label.copyWith(
+                color: selected ? Colors.white : AppColors.textSecondary,
               ),
             ),
           ),
@@ -2536,6 +2301,129 @@ class _CashierScreenState extends State<CashierScreen> {
 }
 
 // ─── Widgets ─────────────────────────────────────────────────────────────────
+
+// ── Tombol Sinkron header: status + animasi berputar saat proses ──
+class _SyncButton extends StatefulWidget {
+  final bool syncing;
+  final ({bool enabled, int pending, bool online})? status;
+  final VoidCallback onTap;
+
+  const _SyncButton({
+    required this.syncing,
+    required this.status,
+    required this.onTap,
+  });
+
+  @override
+  State<_SyncButton> createState() => _SyncButtonState();
+}
+
+class _SyncButtonState extends State<_SyncButton>
+    with SingleTickerProviderStateMixin {
+  // Diinisialisasi EAGER di initState (bukan `late` malas) agar createTicker
+  // memanggil TickerMode.of(context) saat elemen masih aktif — mencegah lookup
+  // ancestor di dispose() yang memicu "deactivated widget's ancestor is unsafe".
+  late final AnimationController _spin;
+
+  @override
+  void initState() {
+    super.initState();
+    _spin = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    if (widget.syncing) _spin.repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant _SyncButton old) {
+    super.didUpdateWidget(old);
+    if (widget.syncing && !_spin.isAnimating) {
+      _spin.repeat();
+    } else if (!widget.syncing && _spin.isAnimating) {
+      _spin.stop();
+      _spin.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _spin.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = widget.status;
+    // Sync dimatikan di Pengaturan → tombol tampak nonaktif (redup, tak sinkron).
+    final disabled = !widget.syncing && (s == null || !s.enabled);
+    IconData icon;
+    String label;
+    Color color = Colors.white;
+
+    if (widget.syncing) {
+      icon = Icons.sync_rounded;
+      label = 'Menyinkron';
+    } else if (s == null || !s.enabled) {
+      icon = Icons.cloud_off_rounded;
+      label = 'Nonaktif';
+      color = Colors.white.withValues(alpha: 0.55);
+    } else if (!s.online) {
+      icon = Icons.cloud_off_rounded;
+      label = s.pending > 0 ? 'Offline ${s.pending}' : 'Offline';
+      color = const Color(0xFFFCD34D); // amber terang di atas hijau
+    } else if (s.pending > 0) {
+      icon = Icons.cloud_upload_rounded;
+      label = '${s.pending} Antre';
+    } else {
+      icon = Icons.cloud_done_rounded;
+      label = 'Sinkron';
+    }
+
+    final iconWidget = Icon(icon, color: color, size: 22);
+
+    return Opacity(
+      opacity: disabled ? 0.55 : 1,
+      child: Material(
+        color: Colors.white.withValues(alpha: disabled ? 0.06 : 0.15),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          // Nonaktif → tetap bisa ditekan agar memunculkan petunjuk aktivasi,
+          // tapi tampil redup. Saat sedang sinkron → tidak bisa ditekan.
+          onTap: widget.syncing ? null : widget.onTap,
+          child: SizedBox(
+            width: 84,
+            height: 60,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                widget.syncing
+                    ? RotationTransition(turns: _spin, child: iconWidget)
+                    : iconWidget,
+                const SizedBox(height: 4),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  child: Text(label,
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white
+                            .withValues(alpha: disabled ? 0.7 : 1),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      )),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _ProductTile extends StatelessWidget {
   final Product product;
@@ -2550,71 +2438,83 @@ class _ProductTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final active = inCart > 0;
     return Material(
-      color: inCart > 0 ? const Color(0xFFD1FAE5) : Colors.white,
-      borderRadius: BorderRadius.circular(14),
+      color: active ? AppColors.soft(AppColors.moduleKasir, 0.10) : AppColors.surface,
+      borderRadius: AppRadius.rLg,
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: AppRadius.rLg,
         onTap: onTap,
+        splashColor: AppColors.soft(AppColors.moduleKasir, 0.10),
         child: Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: AppRadius.rLg,
             border: Border.all(
-              color: inCart > 0
-                  ? const Color(0xFF10B981).withValues(alpha: 0.3)
-                  : const Color(0xFFF1F5F9),
+              color: active
+                  ? AppColors.soft(AppColors.moduleKasir, 0.45)
+                  : AppColors.border,
+              width: active ? 1.5 : 1,
             ),
+            boxShadow: active ? null : AppShadows.card,
           ),
           child: Padding(
-            padding: const EdgeInsets.all(10),
+            padding: const EdgeInsets.all(AppSpacing.xs),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: MenuAvatar.fill(name: product.name),
-                      ),
-                      if (inCart > 0)
-                        Positioned(
-                          top: 6,
-                          right: 6,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF059669),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              '$inCart',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
+                  child: ClipRRect(
+                    borderRadius: AppRadius.rMd,
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: MenuAvatar.fill(name: product.name),
+                        ),
+                        if (active)
+                          Positioned(
+                            top: 6,
+                            right: 6,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: AppSpacing.xs, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: AppColors.moduleKasir,
+                                borderRadius: AppRadius.rSm,
+                                boxShadow: AppShadows.glow(AppColors.moduleKasir),
+                              ),
+                              child: Text(
+                                '$inCart',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  product.name,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w600, fontSize: 13),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                const SizedBox(height: AppSpacing.xs),
+                // Tinggi tetap 2 baris → nama panjang tampil penuh & area gambar
+                // tetap seragam di semua tile.
+                SizedBox(
+                  height: 34,
+                  child: Text(
+                    product.name,
+                    style: AppType.label
+                        .copyWith(color: AppColors.textPrimary, height: 1.2),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   CurrencyHelper.format(product.price),
-                  style: const TextStyle(
-                    color: Color(0xFF059669),
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
+                  style: AppType.body.copyWith(
+                    color: AppColors.moduleKasir,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ],
@@ -2655,6 +2555,34 @@ class _CartItemTile extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       child: Row(
         children: [
+          // Tombol catatan diletakkan PALING DEPAN (sebelum item) agar terpisah
+          // jauh dari tombol +/− di kanan — mengurangi risiko salah ketuk.
+          if (onEditNote != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: GestureDetector(
+                onTap: onEditNote,
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: (notes != null && notes!.isNotEmpty)
+                        ? AppColors.soft(AppColors.moduleKasir, 0.12)
+                        : AppColors.surfaceMuted,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    (notes != null && notes!.isNotEmpty)
+                        ? Icons.edit_note_rounded
+                        : Icons.note_add_outlined,
+                    size: 20,
+                    color: (notes != null && notes!.isNotEmpty)
+                        ? AppColors.moduleKasir
+                        : AppColors.textTertiary,
+                  ),
+                ),
+              ),
+            ),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2665,7 +2593,7 @@ class _CartItemTile extends StatelessWidget {
                 Text(
                   CurrencyHelper.format(price * qty),
                   style: const TextStyle(
-                      color: Color(0xFF059669),
+                      color: AppColors.moduleKasir,
                       fontSize: 12,
                       fontWeight: FontWeight.w600),
                 ),
@@ -2676,7 +2604,7 @@ class _CartItemTile extends StatelessWidget {
                       '📝 $notes',
                       style: const TextStyle(
                         fontSize: 11,
-                        color: Color(0xFF64748B),
+                        color: AppColors.textSecondary,
                         fontStyle: FontStyle.italic,
                       ),
                     ),
@@ -2684,22 +2612,6 @@ class _CartItemTile extends StatelessWidget {
               ],
             ),
           ),
-          if (onEditNote != null)
-            GestureDetector(
-              onTap: onEditNote,
-              child: Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: Icon(
-                  (notes != null && notes!.isNotEmpty)
-                      ? Icons.edit_note_rounded
-                      : Icons.note_add_outlined,
-                  size: 18,
-                  color: (notes != null && notes!.isNotEmpty)
-                      ? const Color(0xFF059669)
-                      : const Color(0xFFCBD5E1),
-                ),
-              ),
-            ),
           if (status != null)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -2719,15 +2631,15 @@ class _CartItemTile extends StatelessWidget {
             GestureDetector(
               onTap: onDelete,
               child: Container(
-                width: 28,
-                height: 28,
+                width: 44,
+                height: 44,
                 margin: const EdgeInsets.only(left: 8),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFEE2E2),
+                  color: AppColors.soft(AppColors.danger, 0.12),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Icon(Icons.delete_outline,
-                    size: 16, color: Color(0xFFEF4444)),
+                    size: 16, color: AppColors.danger),
               ),
             ),
           if (status == null) ...[
@@ -2735,10 +2647,10 @@ class _CartItemTile extends StatelessWidget {
               GestureDetector(
                 onTap: onRemove,
                 child: Container(
-                  width: 28,
-                  height: 28,
+                  width: 44,
+                  height: 44,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF1F5F9),
+                    color: AppColors.surfaceMuted,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Icon(Icons.remove, size: 16),
@@ -2754,10 +2666,10 @@ class _CartItemTile extends StatelessWidget {
               GestureDetector(
                 onTap: onAdd,
                 child: Container(
-                  width: 28,
-                  height: 28,
+                  width: 44,
+                  height: 44,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF059669),
+                    color: AppColors.moduleKasir,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Icon(Icons.add, size: 16, color: Colors.white),
@@ -2772,15 +2684,15 @@ class _CartItemTile extends StatelessWidget {
   Color _statusColor(String status) {
     switch (status) {
       case 'pending':
-        return Colors.orange;
+        return AppColors.warning;
       case 'cooking':
-        return Colors.blue;
+        return AppColors.moduleProduk;
       case 'ready':
-        return Colors.green;
+        return AppColors.success;
       case 'served':
-        return Colors.grey;
+        return AppColors.textTertiary;
       default:
-        return Colors.grey;
+        return AppColors.textTertiary;
     }
   }
 }
@@ -2886,11 +2798,11 @@ class _VoidTransactionPickerState extends State<_VoidTransactionPicker> {
                   Container(
                     padding: const EdgeInsets.all(7),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFEE2E2),
+                      color: AppColors.soft(AppColors.danger, 0.12),
                       borderRadius: BorderRadius.circular(9),
                     ),
                     child: Icon(widget.icon,
-                        color: const Color(0xFFEF4444), size: 18),
+                        color: AppColors.danger, size: 18),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -2904,7 +2816,7 @@ class _VoidTransactionPickerState extends State<_VoidTransactionPicker> {
                           Text(
                             '${filtered.length} transaksi • ${CurrencyHelper.format(total)}',
                             style: const TextStyle(
-                                fontSize: 12, color: Color(0xFF94A3B8)),
+                                fontSize: 12, color: AppColors.textTertiary),
                           ),
                       ],
                     ),
@@ -2916,12 +2828,12 @@ class _VoidTransactionPickerState extends State<_VoidTransactionPicker> {
                             setState(() => _orders = null);
                             _loadOrders();
                           },
-                    icon: const Icon(Icons.refresh, color: Color(0xFF94A3B8)),
+                    icon: const Icon(Icons.refresh, color: AppColors.textTertiary),
                     tooltip: 'Muat ulang',
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
+                    icon: const Icon(Icons.close, color: AppColors.textTertiary),
                   ),
                 ],
               ),
@@ -2946,7 +2858,7 @@ class _VoidTransactionPickerState extends State<_VoidTransactionPicker> {
                         ),
                   isDense: true,
                   filled: true,
-                  fillColor: const Color(0xFFF2F2F7),
+                  fillColor: AppColors.surfaceMuted,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
                     borderSide: BorderSide.none,
@@ -2972,7 +2884,7 @@ class _VoidTransactionPickerState extends State<_VoidTransactionPicker> {
             if (filtered == null)
               const Expanded(
                 child: Center(
-                  child: CircularProgressIndicator(color: Color(0xFF059669)),
+                  child: CircularProgressIndicator(color: AppColors.moduleKasir),
                 ),
               )
             else if (filtered.isEmpty)
@@ -2982,13 +2894,13 @@ class _VoidTransactionPickerState extends State<_VoidTransactionPicker> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       const Icon(Icons.search_off,
-                          size: 44, color: Color(0xFFCBD5E1)),
+                          size: 44, color: AppColors.textTertiary),
                       const SizedBox(height: 8),
                       Text(
                         (all?.isEmpty ?? true)
                             ? 'Belum ada transaksi lunas'
                             : 'Tidak ada hasil',
-                        style: const TextStyle(color: Color(0xFF94A3B8)),
+                        style: const TextStyle(color: AppColors.textTertiary),
                       ),
                     ],
                   ),
@@ -3014,15 +2926,17 @@ class _VoidTransactionPickerState extends State<_VoidTransactionPicker> {
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        constraints: const BoxConstraints(minHeight: 44),
+        alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFF059669) : const Color(0xFFF2F2F7),
+          color: selected ? AppColors.moduleKasir : AppColors.surfaceMuted,
           borderRadius: BorderRadius.circular(20),
         ),
         child: Text(label,
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
-              color: selected ? Colors.white : const Color(0xFF64748B),
+              color: selected ? Colors.white : AppColors.textSecondary,
             )),
       ),
     );
@@ -3030,7 +2944,7 @@ class _VoidTransactionPickerState extends State<_VoidTransactionPicker> {
 
   Widget _txCard(Order o) {
     return Material(
-      color: Colors.white,
+      color: AppColors.surface,
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
@@ -3039,7 +2953,7 @@ class _VoidTransactionPickerState extends State<_VoidTransactionPicker> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            border: Border.all(color: AppColors.border),
           ),
           child: Row(
             children: [
@@ -3047,7 +2961,7 @@ class _VoidTransactionPickerState extends State<_VoidTransactionPicker> {
                 width: 46,
                 height: 46,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFD1FAE5),
+                  color: AppColors.soft(AppColors.moduleKasir, 0.14),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Center(
@@ -3056,7 +2970,7 @@ class _VoidTransactionPickerState extends State<_VoidTransactionPicker> {
                     style: const TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: 15,
-                        color: Color(0xFF059669)),
+                        color: AppColors.moduleKasir),
                   ),
                 ),
               ),
@@ -3072,7 +2986,7 @@ class _VoidTransactionPickerState extends State<_VoidTransactionPicker> {
                     Text(
                       '${o.basketSize} item • ${_fmtTime(o.updatedAt)}',
                       style: const TextStyle(
-                          fontSize: 12, color: Color(0xFF94A3B8)),
+                          fontSize: 12, color: AppColors.textTertiary),
                     ),
                   ],
                 ),
@@ -3089,14 +3003,14 @@ class _VoidTransactionPickerState extends State<_VoidTransactionPicker> {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFEE2E2),
+                      color: AppColors.soft(AppColors.danger, 0.12),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(widget.actionLabel,
                         style: const TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.w800,
-                            color: Color(0xFFEF4444))),
+                            color: AppColors.danger)),
                   ),
                 ],
               ),
@@ -3200,11 +3114,11 @@ class _VoidHistoryDialogState extends State<_VoidHistoryDialog> {
                   Container(
                     padding: const EdgeInsets.all(7),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFEE2E2),
+                      color: AppColors.soft(AppColors.danger, 0.12),
                       borderRadius: BorderRadius.circular(9),
                     ),
                     child: const Icon(Icons.history_toggle_off,
-                        color: Color(0xFFEF4444), size: 18),
+                        color: AppColors.danger, size: 18),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -3218,7 +3132,7 @@ class _VoidHistoryDialogState extends State<_VoidHistoryDialog> {
                           Text(
                             '${filtered.length} order • ${CurrencyHelper.format(total)}',
                             style: const TextStyle(
-                                fontSize: 12, color: Color(0xFF94A3B8)),
+                                fontSize: 12, color: AppColors.textTertiary),
                           ),
                       ],
                     ),
@@ -3230,12 +3144,12 @@ class _VoidHistoryDialogState extends State<_VoidHistoryDialog> {
                             setState(() => _orders = null);
                             _load();
                           },
-                    icon: const Icon(Icons.refresh, color: Color(0xFF94A3B8)),
+                    icon: const Icon(Icons.refresh, color: AppColors.textTertiary),
                     tooltip: 'Muat ulang',
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
+                    icon: const Icon(Icons.close, color: AppColors.textTertiary),
                   ),
                 ],
               ),
@@ -3260,7 +3174,7 @@ class _VoidHistoryDialogState extends State<_VoidHistoryDialog> {
                         ),
                   isDense: true,
                   filled: true,
-                  fillColor: const Color(0xFFF2F2F7),
+                  fillColor: AppColors.surfaceMuted,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
                     borderSide: BorderSide.none,
@@ -3286,7 +3200,7 @@ class _VoidHistoryDialogState extends State<_VoidHistoryDialog> {
             if (filtered == null)
               const Expanded(
                 child: Center(
-                  child: CircularProgressIndicator(color: Color(0xFF059669)),
+                  child: CircularProgressIndicator(color: AppColors.moduleKasir),
                 ),
               )
             else if (filtered.isEmpty)
@@ -3296,13 +3210,13 @@ class _VoidHistoryDialogState extends State<_VoidHistoryDialog> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       const Icon(Icons.search_off,
-                          size: 44, color: Color(0xFFCBD5E1)),
+                          size: 44, color: AppColors.textTertiary),
                       const SizedBox(height: 8),
                       Text(
                         (all?.isEmpty ?? true)
                             ? 'Belum ada order yang di-void'
                             : 'Tidak ada hasil',
-                        style: const TextStyle(color: Color(0xFF94A3B8)),
+                        style: const TextStyle(color: AppColors.textTertiary),
                       ),
                     ],
                   ),
@@ -3328,15 +3242,17 @@ class _VoidHistoryDialogState extends State<_VoidHistoryDialog> {
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        constraints: const BoxConstraints(minHeight: 44),
+        alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFF059669) : const Color(0xFFF2F2F7),
+          color: selected ? AppColors.moduleKasir : AppColors.surfaceMuted,
           borderRadius: BorderRadius.circular(20),
         ),
         child: Text(label,
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
-              color: selected ? Colors.white : const Color(0xFF64748B),
+              color: selected ? Colors.white : AppColors.textSecondary,
             )),
       ),
     );
@@ -3346,9 +3262,9 @@ class _VoidHistoryDialogState extends State<_VoidHistoryDialog> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFECACA)),
+        border: Border.all(color: AppColors.soft(AppColors.danger, 0.30)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3357,7 +3273,7 @@ class _VoidHistoryDialogState extends State<_VoidHistoryDialog> {
             width: 46,
             height: 46,
             decoration: BoxDecoration(
-              color: const Color(0xFFFEE2E2),
+              color: AppColors.soft(AppColors.danger, 0.12),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Center(
@@ -3366,7 +3282,7 @@ class _VoidHistoryDialogState extends State<_VoidHistoryDialog> {
                 style: const TextStyle(
                     fontWeight: FontWeight.w800,
                     fontSize: 15,
-                    color: Color(0xFFEF4444)),
+                    color: AppColors.danger),
               ),
             ),
           ),
@@ -3385,14 +3301,14 @@ class _VoidHistoryDialogState extends State<_VoidHistoryDialog> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFEE2E2),
+                        color: AppColors.soft(AppColors.danger, 0.12),
                         borderRadius: BorderRadius.circular(5),
                       ),
                       child: const Text('VOID',
                           style: TextStyle(
                               fontSize: 9,
                               fontWeight: FontWeight.w800,
-                              color: Color(0xFFEF4444))),
+                              color: AppColors.danger)),
                     ),
                   ],
                 ),
@@ -3400,20 +3316,20 @@ class _VoidHistoryDialogState extends State<_VoidHistoryDialog> {
                 Row(
                   children: [
                     const Icon(Icons.schedule,
-                        size: 12, color: Color(0xFF94A3B8)),
+                        size: 12, color: AppColors.textTertiary),
                     const SizedBox(width: 3),
                     Text(_fmtTime(o.voidedAt),
                         style: const TextStyle(
-                            fontSize: 12, color: Color(0xFF94A3B8))),
+                            fontSize: 12, color: AppColors.textTertiary)),
                     const SizedBox(width: 10),
                     const Icon(Icons.person_outline,
-                        size: 12, color: Color(0xFF94A3B8)),
+                        size: 12, color: AppColors.textTertiary),
                     const SizedBox(width: 3),
                     Flexible(
                       child: Text(o.voidedBy ?? '-',
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                              fontSize: 12, color: Color(0xFF94A3B8))),
+                              fontSize: 12, color: AppColors.textTertiary)),
                     ),
                   ],
                 ),
@@ -3424,20 +3340,20 @@ class _VoidHistoryDialogState extends State<_VoidHistoryDialog> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF8FAFC),
+                        color: AppColors.surfaceAlt,
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Icon(Icons.notes,
-                              size: 12, color: Color(0xFF94A3B8)),
+                              size: 12, color: AppColors.textTertiary),
                           const SizedBox(width: 4),
                           Expanded(
                             child: Text(
                               o.voidReason!,
                               style: const TextStyle(
-                                  fontSize: 12, color: Color(0xFF64748B)),
+                                  fontSize: 12, color: AppColors.textSecondary),
                             ),
                           ),
                         ],
@@ -3453,7 +3369,7 @@ class _VoidHistoryDialogState extends State<_VoidHistoryDialog> {
             style: const TextStyle(
                 fontWeight: FontWeight.w800,
                 fontSize: 14,
-                color: Color(0xFFEF4444),
+                color: AppColors.danger,
                 decoration: TextDecoration.lineThrough),
           ),
         ],
@@ -3512,11 +3428,11 @@ class _MovementsHistoryDialogState extends State<_MovementsHistoryDialog> {
                   Container(
                     padding: const EdgeInsets.all(7),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF1F5F9),
+                      color: AppColors.surfaceMuted,
                       borderRadius: BorderRadius.circular(9),
                     ),
                     child: const Icon(Icons.account_balance_wallet_outlined,
-                        color: Color(0xFF475569), size: 18),
+                        color: AppColors.textSecondary, size: 18),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -3530,14 +3446,14 @@ class _MovementsHistoryDialogState extends State<_MovementsHistoryDialog> {
                           Text(
                             '${movements.length} transaksi',
                             style: const TextStyle(
-                                fontSize: 12, color: Color(0xFF94A3B8)),
+                                fontSize: 12, color: AppColors.textTertiary),
                           ),
                       ],
                     ),
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
+                    icon: const Icon(Icons.close, color: AppColors.textTertiary),
                     padding: EdgeInsets.zero,
                   ),
                 ],
@@ -3547,7 +3463,7 @@ class _MovementsHistoryDialogState extends State<_MovementsHistoryDialog> {
             if (movements == null)
               const Padding(
                 padding: EdgeInsets.all(32),
-                child: CircularProgressIndicator(color: Color(0xFF059669)),
+                child: CircularProgressIndicator(color: AppColors.moduleKasir),
               )
             else if (movements.isEmpty)
               const Padding(
@@ -3555,10 +3471,10 @@ class _MovementsHistoryDialogState extends State<_MovementsHistoryDialog> {
                 child: Column(
                   children: [
                     Icon(Icons.inbox_outlined,
-                        size: 44, color: Color(0xFFCBD5E1)),
+                        size: 44, color: AppColors.textTertiary),
                     SizedBox(height: 8),
                     Text('Belum ada transaksi kas',
-                        style: TextStyle(color: Color(0xFF94A3B8))),
+                        style: TextStyle(color: AppColors.textTertiary)),
                   ],
                 ),
               )
@@ -3569,29 +3485,29 @@ class _MovementsHistoryDialogState extends State<_MovementsHistoryDialog> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
+                  color: AppColors.surfaceAlt,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: AppColors.border),
                 ),
                 child: Row(
                   children: [
-                    _chip('Masuk', totalIn, const Color(0xFF059669)),
+                    _chip('Masuk', totalIn, AppColors.moduleKasir),
                     const Spacer(),
-                    _chip('Keluar', totalOut, const Color(0xFFDC2626)),
+                    _chip('Keluar', totalOut, AppColors.danger),
                     const Spacer(),
                     _chip(
                       'Net',
                       totalIn - totalOut,
                       (totalIn - totalOut) >= 0
-                          ? const Color(0xFF059669)
-                          : const Color(0xFFDC2626),
+                          ? AppColors.moduleKasir
+                          : AppColors.danger,
                       bold: true,
                     ),
                   ],
                 ),
               ),
 
-              const Divider(height: 1, color: Color(0xFFF1F5F9)),
+              const Divider(height: 1, color: AppColors.surfaceMuted),
 
               // List — Flexible agar scroll saat banyak item
               Flexible(
@@ -3599,13 +3515,13 @@ class _MovementsHistoryDialogState extends State<_MovementsHistoryDialog> {
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                   itemCount: movements.length,
                   separatorBuilder: (_, __) =>
-                      const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                      const Divider(height: 1, color: AppColors.surfaceMuted),
                 itemBuilder: (_, i) {
                   final m = movements[i];
                   final isIn = m.isCashIn;
                   final color = isIn
-                      ? const Color(0xFF059669)
-                      : const Color(0xFFDC2626);
+                      ? AppColors.moduleKasir
+                      : AppColors.danger;
                   final time =
                       '${m.createdAt.hour.toString().padLeft(2, '0')}:${m.createdAt.minute.toString().padLeft(2, '0')}';
                   return Padding(
@@ -3638,11 +3554,11 @@ class _MovementsHistoryDialogState extends State<_MovementsHistoryDialog> {
                                 Text(m.note,
                                     style: const TextStyle(
                                         fontSize: 11,
-                                        color: Color(0xFF94A3B8))),
+                                        color: AppColors.textTertiary)),
                               Text(time,
                                   style: const TextStyle(
                                       fontSize: 10,
-                                      color: Color(0xFFCBD5E1))),
+                                      color: AppColors.textTertiary)),
                             ],
                           ),
                         ),
@@ -3674,7 +3590,7 @@ class _MovementsHistoryDialogState extends State<_MovementsHistoryDialog> {
       children: [
         Text(label,
             style: const TextStyle(
-                fontSize: 10, color: Color(0xFF94A3B8))),
+                fontSize: 10, color: AppColors.textTertiary)),
         Text(CurrencyHelper.format(amount),
             style: TextStyle(
               fontSize: 12,
@@ -3726,7 +3642,7 @@ class _CashMovementDialogState extends State<_CashMovementDialog> {
   bool get _isOut => _type == 'out';
 
   Color get _accentColor =>
-      _isOut ? const Color(0xFFDC2626) : const Color(0xFF059669);
+      _isOut ? AppColors.danger : AppColors.moduleKasir;
 
   @override
   Widget build(BuildContext context) {
@@ -3764,7 +3680,7 @@ class _CashMovementDialogState extends State<_CashMovementDialog> {
                 ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
+                  icon: const Icon(Icons.close, color: AppColors.textTertiary),
                   padding: EdgeInsets.zero,
                 ),
               ],
@@ -3774,7 +3690,7 @@ class _CashMovementDialogState extends State<_CashMovementDialog> {
             // Toggle Masuk / Keluar
             Container(
               decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9),
+                color: AppColors.surfaceMuted,
                 borderRadius: BorderRadius.circular(12),
               ),
               padding: const EdgeInsets.all(4),
@@ -3795,7 +3711,7 @@ class _CashMovementDialogState extends State<_CashMovementDialog> {
                 labelText: _isOut ? 'Keperluan / Penerima' : 'Sumber / Pemberi',
                 hintText: _isOut ? 'Contoh: Bayar listrik' : 'Contoh: Setoran modal',
                 prefixIcon: const Icon(Icons.person_outline,
-                    color: Color(0xFF94A3B8), size: 20),
+                    color: AppColors.textTertiary, size: 20),
                 border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12)),
                 focusedBorder: OutlineInputBorder(
@@ -3838,7 +3754,7 @@ class _CashMovementDialogState extends State<_CashMovementDialog> {
                     ? 'Wajib diisi untuk kas keluar'
                     : 'Opsional',
                 prefixIcon: const Icon(Icons.notes,
-                    color: Color(0xFF94A3B8), size: 20),
+                    color: AppColors.textTertiary, size: 20),
                 border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12)),
                 focusedBorder: OutlineInputBorder(
@@ -3852,28 +3768,12 @@ class _CashMovementDialogState extends State<_CashMovementDialog> {
             const SizedBox(height: 20),
 
             // Submit
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: FilledButton(
-                style: FilledButton.styleFrom(
-                  backgroundColor: _accentColor,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                ),
-                onPressed: _saving ? null : _submit,
-                child: _saving
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : Text(
-                        _isOut ? 'SIMPAN KAS KELUAR' : 'SIMPAN KAS MASUK',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-              ),
+            AppButton(
+              label: _isOut ? 'SIMPAN KAS KELUAR' : 'SIMPAN KAS MASUK',
+              icon: _isOut ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+              accent: _accentColor,
+              loading: _saving,
+              onPressed: _saving ? null : _submit,
             ),
           ],
         ),
@@ -3884,13 +3784,15 @@ class _CashMovementDialogState extends State<_CashMovementDialog> {
   Widget _typeBtn(String type, String label, IconData icon) {
     final selected = _type == type;
     final color =
-        type == 'out' ? const Color(0xFFDC2626) : const Color(0xFF059669);
+        type == 'out' ? AppColors.danger : AppColors.moduleKasir;
     return Expanded(
       child: GestureDetector(
         onTap: () => setState(() => _type = type),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           padding: const EdgeInsets.symmetric(vertical: 10),
+          constraints: const BoxConstraints(minHeight: 44),
+          alignment: Alignment.center,
           decoration: BoxDecoration(
             color: selected ? color : Colors.transparent,
             borderRadius: BorderRadius.circular(9),
@@ -3900,7 +3802,7 @@ class _CashMovementDialogState extends State<_CashMovementDialog> {
             children: [
               Icon(icon,
                   size: 16,
-                  color: selected ? Colors.white : const Color(0xFF64748B)),
+                  color: selected ? Colors.white : AppColors.textSecondary),
               const SizedBox(width: 6),
               Text(label,
                   style: TextStyle(
@@ -3908,7 +3810,7 @@ class _CashMovementDialogState extends State<_CashMovementDialog> {
                     fontWeight: FontWeight.w600,
                     color: selected
                         ? Colors.white
-                        : const Color(0xFF64748B),
+                        : AppColors.textSecondary,
                   )),
             ],
           ),
@@ -4017,11 +3919,11 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFBBF24).withValues(alpha: 0.15),
+                      color: AppColors.warning.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Icon(Icons.logout,
-                        color: Color(0xFFFBBF24), size: 22),
+                        color: AppColors.warning, size: 22),
                   ),
                   const SizedBox(width: 12),
                   const Expanded(
@@ -4031,7 +3933,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
+                    icon: const Icon(Icons.close, color: AppColors.textTertiary),
                     padding: EdgeInsets.zero,
                   ),
                 ],
@@ -4043,9 +3945,9 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
+                  color: AppColors.surfaceAlt,
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: AppColors.border),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -4056,7 +3958,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
-                              color: Color(0xFF94A3B8),
+                              color: AppColors.textTertiary,
                               letterSpacing: 0.8,
                             )),
                         const Spacer(),
@@ -4065,13 +3967,13 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 8, vertical: 3),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFD1FAE5),
+                              color: AppColors.soft(AppColors.moduleKasir, 0.14),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text('Durasi ${_duration()}',
                                 style: const TextStyle(
                                     fontSize: 11,
-                                    color: Color(0xFF059669),
+                                    color: AppColors.moduleKasir,
                                     fontWeight: FontWeight.w600)),
                           ),
                       ],
@@ -4080,7 +3982,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                     Text(
                       'Kasir: ${widget.activeShift.openedBy}  •  Buka: ${_timeStr(widget.activeShift.openedAt)}',
                       style: const TextStyle(
-                          fontSize: 12, color: Color(0xFF64748B)),
+                          fontSize: 12, color: AppColors.textSecondary),
                     ),
                     const SizedBox(height: 12),
                     if (_loading)
@@ -4090,7 +3992,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                           child: SizedBox(
                             width: 24, height: 24,
                             child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Color(0xFF059669)),
+                                strokeWidth: 2, color: AppColors.moduleKasir),
                           ),
                         ),
                       )
@@ -4100,24 +4002,24 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                           isSubtle: true),
                       const Padding(
                           padding: EdgeInsets.symmetric(vertical: 8),
-                          child: Divider(height: 1, color: Color(0xFFE2E8F0))),
+                          child: Divider(height: 1, color: AppColors.border)),
                       _row('Tunai', CurrencyHelper.format(cashIn),
-                          icon: Icons.money, iconColor: const Color(0xFF059669)),
+                          icon: Icons.money, iconColor: AppColors.moduleKasir),
                       const SizedBox(height: 6),
                       _row('Kartu', CurrencyHelper.format(cardIn),
                           icon: Icons.credit_card,
-                          iconColor: const Color(0xFF3B82F6)),
+                          iconColor: AppColors.moduleProduk),
                       const SizedBox(height: 6),
                       _row('QRIS', CurrencyHelper.format(qrisIn),
                           icon: Icons.qr_code,
-                          iconColor: const Color(0xFF8B5CF6)),
+                          iconColor: AppColors.moduleMeja),
                       const SizedBox(height: 6),
                       _row('Transfer', CurrencyHelper.format(transferIn),
                           icon: Icons.account_balance,
-                          iconColor: const Color(0xFFF59E0B)),
+                          iconColor: AppColors.warning),
                       const Padding(
                           padding: EdgeInsets.symmetric(vertical: 8),
-                          child: Divider(height: 1, color: Color(0xFFE2E8F0))),
+                          child: Divider(height: 1, color: AppColors.border)),
                       Row(
                         children: [
                           const Text('Total Pendapatan',
@@ -4128,7 +4030,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                               style: const TextStyle(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w800,
-                                  color: Color(0xFF059669))),
+                                  color: AppColors.moduleKasir)),
                         ],
                       ),
                       const SizedBox(height: 8),
@@ -4136,27 +4038,27 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 8),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFF0FDF4),
+                          color: AppColors.successSoft,
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                              color: const Color(0xFF10B981)
+                              color: AppColors.moduleKasir
                                   .withValues(alpha: 0.3)),
                         ),
                         child: Row(
                           children: [
                             const Icon(
                                 Icons.account_balance_wallet_outlined,
-                                size: 16, color: Color(0xFF059669)),
+                                size: 16, color: AppColors.moduleKasir),
                             const SizedBox(width: 8),
                             const Text('Kas di Laci',
                                 style: TextStyle(
-                                    fontSize: 12, color: Color(0xFF059669))),
+                                    fontSize: 12, color: AppColors.moduleKasir)),
                             const Spacer(),
                             Text(CurrencyHelper.format(kasLaci),
                                 style: const TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.w700,
-                                    color: Color(0xFF059669))),
+                                    color: AppColors.moduleKasir)),
                           ],
                         ),
                       ),
@@ -4171,9 +4073,9 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                 Container(
                   width: double.infinity,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF8FAFC),
+                    color: AppColors.surfaceAlt,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    border: Border.all(color: AppColors.border),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -4187,7 +4089,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                                 style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.w700,
-                                  color: Color(0xFF94A3B8),
+                                  color: AppColors.textTertiary,
                                   letterSpacing: 0.8,
                                 )),
                             const Spacer(),
@@ -4197,14 +4099,14 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                                 fontSize: 11,
                                 fontWeight: FontWeight.w700,
                                 color: (totalMovIn - totalMovOut) >= 0
-                                    ? const Color(0xFF059669)
-                                    : const Color(0xFFDC2626),
+                                    ? AppColors.moduleKasir
+                                    : AppColors.danger,
                               ),
                             ),
                           ],
                         ),
                       ),
-                      const Divider(height: 1, color: Color(0xFFE2E8F0)),
+                      const Divider(height: 1, color: AppColors.border),
                       ConstrainedBox(
                         constraints: const BoxConstraints(maxHeight: 160),
                         child: ListView(
@@ -4213,7 +4115,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                           children: [
                             if (cashIns.isNotEmpty) ...[
                               _movHeader('Kas Masuk', totalMovIn,
-                                  const Color(0xFF059669)),
+                                  AppColors.moduleKasir),
                               const SizedBox(height: 4),
                               ...cashIns.map(_movItem),
                             ],
@@ -4221,7 +4123,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                               if (cashIns.isNotEmpty)
                                 const SizedBox(height: 10),
                               _movHeader('Kas Keluar', totalMovOut,
-                                  const Color(0xFFDC2626)),
+                                  AppColors.danger),
                               const SizedBox(height: 4),
                               ...cashOuts.map(_movItem),
                             ],
@@ -4239,29 +4141,17 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
               Row(
                 children: [
                   Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        side: const BorderSide(color: Color(0xFFE2E8F0)),
-                      ),
-                      child: const Text('Batal',
-                          style: TextStyle(color: Color(0xFF64748B))),
-                    ),
+                    child: AppButton.neutral('Batal',
+                        onPressed: () => Navigator.pop(context)),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     flex: 2,
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFFBBF24),
-                        foregroundColor: const Color(0xFF78350F),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
+                    child: AppButton(
+                      label: 'TUTUP KASIR',
+                      icon: Icons.logout_rounded,
+                      accent: AppColors.warning,
+                      loading: _closing,
                       onPressed: _closing
                           ? null
                           : () async {
@@ -4269,14 +4159,6 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                               Navigator.pop(context);
                               await widget.onClose();
                             },
-                      child: _closing
-                          ? const SizedBox(
-                              width: 20, height: 20,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Color(0xFF78350F)))
-                          : const Text('TUTUP KASIR',
-                              style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ),
                 ],
@@ -4300,16 +4182,16 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
             style: TextStyle(
                 fontSize: 13,
                 color: isSubtle
-                    ? const Color(0xFF94A3B8)
-                    : const Color(0xFF475569))),
+                    ? AppColors.textTertiary
+                    : AppColors.textSecondary)),
         const Spacer(),
         Text(value,
             style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
                 color: isSubtle
-                    ? const Color(0xFF94A3B8)
-                    : const Color(0xFF0F172A))),
+                    ? AppColors.textTertiary
+                    : AppColors.textPrimary)),
       ],
     );
   }
@@ -4338,7 +4220,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
       child: Row(
         children: [
           Text(time,
-              style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8))),
+              style: const TextStyle(fontSize: 11, color: AppColors.textTertiary)),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
@@ -4349,7 +4231,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                 if (m.note.isNotEmpty)
                   Text(m.note,
                       style: const TextStyle(
-                          fontSize: 11, color: Color(0xFF94A3B8))),
+                          fontSize: 11, color: AppColors.textTertiary)),
               ],
             ),
           ),
@@ -4459,11 +4341,11 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFD1FAE5),
+                      color: AppColors.soft(AppColors.moduleKasir, 0.14),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Icon(Icons.swap_horiz,
-                        color: Color(0xFF059669), size: 22),
+                        color: AppColors.moduleKasir, size: 22),
                   ),
                   const SizedBox(width: 12),
                   const Expanded(
@@ -4473,7 +4355,7 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
+                    icon: const Icon(Icons.close, color: AppColors.textTertiary),
                     padding: EdgeInsets.zero,
                   ),
                 ],
@@ -4485,9 +4367,9 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
+                  color: AppColors.surfaceAlt,
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: AppColors.border),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -4498,7 +4380,7 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
-                              color: Color(0xFF94A3B8),
+                              color: AppColors.textTertiary,
                               letterSpacing: 0.8,
                             )),
                         const Spacer(),
@@ -4507,14 +4389,14 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 8, vertical: 3),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFD1FAE5),
+                              color: AppColors.soft(AppColors.moduleKasir, 0.14),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
                               'Durasi ${_duration()}',
                               style: const TextStyle(
                                 fontSize: 11,
-                                color: Color(0xFF059669),
+                                color: AppColors.moduleKasir,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -4525,7 +4407,7 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                     Text(
                       'Kasir: ${widget.activeShift.openedBy}  •  Buka: ${_timeStr(widget.activeShift.openedAt)}',
                       style: const TextStyle(
-                          fontSize: 12, color: Color(0xFF64748B)),
+                          fontSize: 12, color: AppColors.textSecondary),
                     ),
                     const SizedBox(height: 12),
 
@@ -4537,7 +4419,7 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                             width: 24, height: 24,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: Color(0xFF059669),
+                              color: AppColors.moduleKasir,
                             ),
                           ),
                         ),
@@ -4548,30 +4430,30 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                           isSubtle: true),
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Divider(height: 1, color: Color(0xFFE2E8F0)),
+                        child: Divider(height: 1, color: AppColors.border),
                       ),
                       _summaryRow('Tunai',
                           CurrencyHelper.format(cashIn),
                           icon: Icons.money,
-                          iconColor: const Color(0xFF059669)),
+                          iconColor: AppColors.moduleKasir),
                       const SizedBox(height: 6),
                       _summaryRow('Kartu',
                           CurrencyHelper.format(cardIn),
                           icon: Icons.credit_card,
-                          iconColor: const Color(0xFF3B82F6)),
+                          iconColor: AppColors.moduleProduk),
                       const SizedBox(height: 6),
                       _summaryRow('QRIS',
                           CurrencyHelper.format(qrisIn),
                           icon: Icons.qr_code,
-                          iconColor: const Color(0xFF8B5CF6)),
+                          iconColor: AppColors.moduleMeja),
                       const SizedBox(height: 6),
                       _summaryRow('Transfer',
                           CurrencyHelper.format(transferIn),
                           icon: Icons.account_balance,
-                          iconColor: const Color(0xFFF59E0B)),
+                          iconColor: AppColors.warning),
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Divider(height: 1, color: Color(0xFFE2E8F0)),
+                        child: Divider(height: 1, color: AppColors.border),
                       ),
                       Row(
                         children: [
@@ -4584,7 +4466,7 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                             style: const TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w800,
-                              color: Color(0xFF059669),
+                              color: AppColors.moduleKasir,
                             ),
                           ),
                         ],
@@ -4594,27 +4476,27 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 8),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFF0FDF4),
+                          color: AppColors.successSoft,
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                              color: const Color(0xFF10B981)
+                              color: AppColors.moduleKasir
                                   .withValues(alpha: 0.3)),
                         ),
                         child: Row(
                           children: [
                             const Icon(Icons.account_balance_wallet_outlined,
-                                size: 16, color: Color(0xFF059669)),
+                                size: 16, color: AppColors.moduleKasir),
                             const SizedBox(width: 8),
                             const Text('Kas di Laci',
                                 style: TextStyle(
-                                    fontSize: 12, color: Color(0xFF059669))),
+                                    fontSize: 12, color: AppColors.moduleKasir)),
                             const Spacer(),
                             Text(
                               CurrencyHelper.format(kasLaci),
                               style: const TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w700,
-                                color: Color(0xFF059669),
+                                color: AppColors.moduleKasir,
                               ),
                             ),
                           ],
@@ -4638,7 +4520,7 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    color: Color(0xFF94A3B8),
+                    color: AppColors.textTertiary,
                     letterSpacing: 0.8,
                   )),
               const SizedBox(height: 10),
@@ -4668,15 +4550,15 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                       labelText: 'Nama Kasir Baru',
                       hintText: 'Cari atau ketik nama...',
                       prefixIcon: const Icon(Icons.person_outline,
-                          color: Color(0xFF94A3B8), size: 20),
+                          color: AppColors.textTertiary, size: 20),
                       suffixIcon: const Icon(Icons.arrow_drop_down,
-                          color: Color(0xFF94A3B8)),
+                          color: AppColors.textTertiary),
                       border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12)),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: const BorderSide(
-                            color: Color(0xFF059669), width: 2),
+                            color: AppColors.moduleKasir, width: 2),
                       ),
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 14),
@@ -4706,11 +4588,11 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                                   children: [
                                     CircleAvatar(
                                       radius: 14,
-                                      backgroundColor: const Color(0xFFD1FAE5),
+                                      backgroundColor: AppColors.soft(AppColors.moduleKasir, 0.14),
                                       child: Text(
                                         user.fullName[0].toUpperCase(),
                                         style: const TextStyle(
-                                          color: Color(0xFF059669),
+                                          color: AppColors.moduleKasir,
                                           fontSize: 12,
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -4729,7 +4611,7 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                                           Text(user.role,
                                               style: const TextStyle(
                                                   fontSize: 11,
-                                                  color: Color(0xFF94A3B8))),
+                                                  color: AppColors.textTertiary)),
                                         ],
                                       ),
                                     ),
@@ -4753,13 +4635,13 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                   labelText: 'Kas Awal Shift Baru',
                   prefixText: 'Rp ',
                   prefixIcon: const Icon(Icons.money,
-                      color: Color(0xFF94A3B8), size: 20),
+                      color: AppColors.textTertiary, size: 20),
                   border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12)),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide:
-                        const BorderSide(color: Color(0xFF059669), width: 2),
+                        const BorderSide(color: AppColors.moduleKasir, width: 2),
                   ),
                   contentPadding: const EdgeInsets.symmetric(
                       horizontal: 12, vertical: 14),
@@ -4771,28 +4653,17 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
               Row(
                 children: [
                   Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        side: const BorderSide(color: Color(0xFFE2E8F0)),
-                      ),
-                      child: const Text('Batal',
-                          style: TextStyle(color: Color(0xFF64748B))),
-                    ),
+                    child: AppButton.neutral('Batal',
+                        onPressed: () => Navigator.pop(context)),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     flex: 2,
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF059669),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
+                    child: AppButton(
+                      label: 'GANTI SHIFT',
+                      icon: Icons.swap_horiz_rounded,
+                      accent: AppColors.moduleKasir,
+                      loading: _submitting,
                       onPressed: _submitting
                           ? null
                           : () async {
@@ -4805,15 +4676,6 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                               Navigator.pop(context);
                               await widget.onSwap(name, cash);
                             },
-                      child: _submitting
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Text('GANTI SHIFT',
-                              style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ),
                 ],
@@ -4834,14 +4696,14 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
 
     if (cashIns.isNotEmpty) {
       allItems.add(_movGroupHeader(
-          'Kas Masuk', totalIn, const Color(0xFF059669)));
+          'Kas Masuk', totalIn, AppColors.moduleKasir));
       allItems.add(const SizedBox(height: 4));
       allItems.addAll(cashIns.map(_movRow));
     }
     if (cashOuts.isNotEmpty) {
       if (allItems.isNotEmpty) allItems.add(const SizedBox(height: 10));
       allItems.add(_movGroupHeader(
-          'Kas Keluar', totalOut, const Color(0xFFDC2626)));
+          'Kas Keluar', totalOut, AppColors.danger));
       allItems.add(const SizedBox(height: 4));
       allItems.addAll(cashOuts.map(_movRow));
     }
@@ -4849,9 +4711,9 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppColors.surfaceAlt,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4866,7 +4728,7 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
-                      color: Color(0xFF94A3B8),
+                      color: AppColors.textTertiary,
                       letterSpacing: 0.8,
                     )),
                 const Spacer(),
@@ -4876,14 +4738,14 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                     color: (totalIn - totalOut) >= 0
-                        ? const Color(0xFF059669)
-                        : const Color(0xFFDC2626),
+                        ? AppColors.moduleKasir
+                        : AppColors.danger,
                   ),
                 ),
               ],
             ),
           ),
-          const Divider(height: 1, color: Color(0xFFE2E8F0)),
+          const Divider(height: 1, color: AppColors.border),
           // List scrollable dengan maxHeight
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 180),
@@ -4933,7 +4795,7 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
         children: [
           Text(time,
               style: const TextStyle(
-                  fontSize: 11, color: Color(0xFF94A3B8))),
+                  fontSize: 11, color: AppColors.textTertiary)),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
@@ -4944,7 +4806,7 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                 if (m.note.isNotEmpty)
                   Text(m.note,
                       style: const TextStyle(
-                          fontSize: 11, color: Color(0xFF94A3B8))),
+                          fontSize: 11, color: AppColors.textTertiary)),
               ],
             ),
           ),
@@ -4961,15 +4823,15 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
     return Row(
       children: [
         if (icon != null) ...[
-          Icon(icon, size: 14, color: iconColor ?? const Color(0xFF94A3B8)),
+          Icon(icon, size: 14, color: iconColor ?? AppColors.textTertiary),
           const SizedBox(width: 6),
         ],
         Text(label,
             style: TextStyle(
               fontSize: 13,
               color: isSubtle
-                  ? const Color(0xFF94A3B8)
-                  : const Color(0xFF475569),
+                  ? AppColors.textTertiary
+                  : AppColors.textSecondary,
             )),
         const Spacer(),
         Text(value,
@@ -4977,8 +4839,8 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
               fontSize: 13,
               fontWeight: FontWeight.w600,
               color: isSubtle
-                  ? const Color(0xFF94A3B8)
-                  : const Color(0xFF0F172A),
+                  ? AppColors.textTertiary
+                  : AppColors.textPrimary,
             )),
       ],
     );
@@ -5026,23 +4888,18 @@ class _PaymentSheetState extends State<_PaymentSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Pembayaran',
-                        style: TextStyle(
-                            fontSize: 20, fontWeight: FontWeight.bold)),
+                    Text('Pembayaran', style: AppType.h2),
                     const SizedBox(height: 2),
                     Text(
                       'Total: ${CurrencyHelper.format(widget.total)}',
-                      style: const TextStyle(
-                          color: Color(0xFF059669),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15),
+                      style: AppType.title.copyWith(color: AppColors.moduleKasir),
                     ),
                   ],
                 ),
               ),
               IconButton(
                 onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
+                icon: const Icon(Icons.close, color: AppColors.textTertiary),
                 padding: EdgeInsets.zero,
               ),
             ],
@@ -5050,8 +4907,7 @@ class _PaymentSheetState extends State<_PaymentSheet> {
           const SizedBox(height: 20),
 
           // Payment method
-          const Text('Metode Pembayaran',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          Text('Metode Pembayaran', style: AppType.label),
           const SizedBox(height: 10),
           Wrap(
             spacing: 8,
@@ -5066,8 +4922,7 @@ class _PaymentSheetState extends State<_PaymentSheet> {
 
           // Amount input (only cash)
           if (_method == 'cash') ...[
-            const Text('Jumlah Bayar',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+            Text('Jumlah Bayar', style: AppType.label),
             const SizedBox(height: 8),
             TextField(
               controller: widget.controller,
@@ -5080,7 +4935,7 @@ class _PaymentSheetState extends State<_PaymentSheet> {
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide:
-                      const BorderSide(color: Color(0xFF059669), width: 2),
+                      const BorderSide(color: AppColors.moduleKasir, width: 2),
                 ),
                 contentPadding: const EdgeInsets.symmetric(
                     horizontal: 16, vertical: 14),
@@ -5096,35 +4951,26 @@ class _PaymentSheetState extends State<_PaymentSheet> {
                 fontWeight: FontWeight.bold,
                 fontSize: 14,
                 color: change >= 0
-                    ? const Color(0xFF059669)
-                    : const Color(0xFFDC2626),
+                    ? AppColors.moduleKasir
+                    : AppColors.danger,
               ),
             ),
             const SizedBox(height: 16),
           ],
 
           const SizedBox(height: 4),
-          SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF059669),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
-              ),
-              onPressed: () {
-                if (_method == 'cash') {
-                  if (_parsedAmount < widget.total) return;
-                  widget.onPay(_method, _parsedAmount);
-                } else {
-                  widget.onPay(_method, widget.total);
-                }
-              },
-              child: const Text('PROSES PEMBAYARAN',
-                  style:
-                      TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            ),
+          AppButton(
+            label: 'PROSES PEMBAYARAN',
+            icon: Icons.check_circle_outline_rounded,
+            accent: AppColors.moduleKasir,
+            onPressed: () {
+              if (_method == 'cash') {
+                if (_parsedAmount < widget.total) return;
+                widget.onPay(_method, _parsedAmount);
+              } else {
+                widget.onPay(_method, widget.total);
+              }
+            },
           ),
         ],
       ),
@@ -5139,16 +4985,16 @@ class _PaymentSheetState extends State<_PaymentSheet> {
         children: [
           Icon(icon,
               size: 16,
-              color: selected ? Colors.white : const Color(0xFF64748B)),
+              color: selected ? Colors.white : AppColors.textSecondary),
           const SizedBox(width: 4),
           Text(label),
         ],
       ),
       selected: selected,
       onSelected: (_) => setState(() => _method = value),
-      selectedColor: const Color(0xFF059669),
+      selectedColor: AppColors.moduleKasir,
       labelStyle: TextStyle(
-          color: selected ? Colors.white : const Color(0xFF64748B),
+          color: selected ? Colors.white : AppColors.textSecondary,
           fontWeight: FontWeight.w600),
     );
   }
@@ -5212,20 +5058,14 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
     );
     if (res == null) {
       if (mounted && _c.state.errorMessage != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_c.state.errorMessage!), backgroundColor: Colors.red),
-        );
+        showAppSnack(context, _c.state.errorMessage!, isError: true);
       }
       return;
     }
     if (!mounted) return;
     if (res['payment_status'] == 'paid') {
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('Split bill selesai — semua bagian lunas'),
-            backgroundColor: Color(0xFF059669)),
-      );
+      showAppSnack(context, 'Split bill selesai — semua bagian lunas');
       return;
     }
     setState(() {
@@ -5265,8 +5105,8 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
                     style: TextStyle(
                       fontSize: 11,
                       color: done
-                          ? const Color(0xFF059669)
-                          : const Color(0xFF64748B),
+                          ? AppColors.moduleKasir
+                          : AppColors.textSecondary,
                     ),
                   ),
                 ],
@@ -5299,15 +5139,15 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
       onTap: enabled ? onTap : null,
       borderRadius: BorderRadius.circular(8),
       child: Container(
-        width: 32,
-        height: 32,
+        width: 44,
+        height: 44,
         decoration: BoxDecoration(
-          color: enabled ? const Color(0xFFEFF6FF) : const Color(0xFFF1F5F9),
+          color: enabled ? AppColors.soft(AppColors.moduleProduk, 0.10) : AppColors.surfaceMuted,
           borderRadius: BorderRadius.circular(8),
         ),
         child: Icon(icon,
             size: 18,
-            color: enabled ? const Color(0xFF2563EB) : const Color(0xFFCBD5E1)),
+            color: enabled ? AppColors.moduleProduk : AppColors.textTertiary),
       ),
     );
   }
@@ -5334,13 +5174,13 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
-              decoration: const BoxDecoration(
-                color: Color(0xFFEFF6FF),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              decoration: BoxDecoration(
+                color: AppColors.soft(AppColors.moduleProduk, 0.10),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.call_split, color: Color(0xFF2563EB)),
+                  const Icon(Icons.call_split, color: AppColors.moduleProduk),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
@@ -5350,16 +5190,16 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
                             style: TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
-                                color: Color(0xFF2563EB))),
+                                color: AppColors.moduleProduk)),
                         Text('Bagian ke-$_payer • sisa tagihan ${CurrencyHelper.format(remaining)}',
                             style: const TextStyle(
-                                fontSize: 12, color: Color(0xFF60A5FA))),
+                                fontSize: 12, color: AppColors.moduleProduk)),
                       ],
                     ),
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close, color: Color(0xFF60A5FA)),
+                    icon: const Icon(Icons.close, color: AppColors.moduleProduk),
                   ),
                 ],
               ),
@@ -5373,7 +5213,7 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
                     padding: EdgeInsets.fromLTRB(8, 4, 8, 8),
                     child: Text(
                         'Pilih jumlah unit untuk pembayar bagian ini:',
-                        style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                        style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                   ),
                   ..._items.map(_splitItemRow),
                 ],
@@ -5401,35 +5241,26 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
                     children: [
                       Text(allSelected ? 'Bayar sisa (bagian akhir)' : 'Bagian ini',
                           style: const TextStyle(
-                              fontSize: 14, color: Color(0xFF475569))),
+                              fontSize: 14, color: AppColors.textSecondary)),
                       Text(
                         CurrencyHelper.format(allSelected ? remaining : share),
                         style: const TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
-                            color: Color(0xFF2563EB)),
+                            color: AppColors.moduleProduk),
                       ),
                     ],
                   ),
                   const SizedBox(height: 12),
-                  SizedBox(
-                    height: 48,
-                    child: FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFF2563EB)),
-                      onPressed: (!_hasSelection || _c.state.isProcessing)
-                          ? null
-                          : _payPart,
-                      icon: _c.state.isProcessing
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white))
-                          : const Icon(Icons.payments_outlined),
-                      label: const Text('Bayar Bagian Ini',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                    ),
+                  AppButton(
+                    label: 'Bayar Bagian Ini',
+                    icon: Icons.payments_outlined,
+                    accent: AppColors.moduleProduk,
+                    loading: _c.state.isProcessing,
+                    size: AppButtonSize.medium,
+                    onPressed: (!_hasSelection || _c.state.isProcessing)
+                        ? null
+                        : _payPart,
                   ),
                 ],
               ),
@@ -5446,8 +5277,10 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
       onTap: () => setState(() => _method = value),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        constraints: const BoxConstraints(minHeight: 44),
+        alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFF2563EB) : const Color(0xFFF1F5F9),
+          color: selected ? AppColors.moduleProduk : AppColors.surfaceMuted,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(
@@ -5455,13 +5288,13 @@ class _SplitBillDialogState extends State<_SplitBillDialog> {
           children: [
             Icon(icon,
                 size: 16,
-                color: selected ? Colors.white : const Color(0xFF64748B)),
+                color: selected ? Colors.white : AppColors.textSecondary),
             const SizedBox(width: 6),
             Text(label,
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: selected ? Colors.white : const Color(0xFF64748B),
+                  color: selected ? Colors.white : AppColors.textSecondary,
                 )),
           ],
         ),
@@ -5509,7 +5342,7 @@ class _TablePickerDialogState extends State<_TablePickerDialog> {
               Row(
                 children: [
                   const Icon(Icons.table_restaurant_outlined,
-                      color: Color(0xFF059669), size: 26),
+                      color: AppColors.moduleKasir, size: 26),
                   const SizedBox(width: 10),
                   const Text('Pilih Meja',
                       style: TextStyle(
@@ -5539,7 +5372,7 @@ class _TablePickerDialogState extends State<_TablePickerDialog> {
                 child: filtered.isEmpty
                     ? const Center(
                         child: Text('Meja tidak ditemukan',
-                            style: TextStyle(color: Color(0xFF94A3B8))))
+                            style: TextStyle(color: AppColors.textTertiary)))
                     : GridView.builder(
                         padding: EdgeInsets.zero,
                         // 5 kolom mengisi lebar; lebih dari muat → scroll ke bawah.
@@ -5566,10 +5399,10 @@ class _TablePickerDialogState extends State<_TablePickerDialog> {
     final isSelected = widget.selectedNumber == table.tableNumber;
     return Material(
       color: isSelected
-          ? const Color(0xFF059669)
+          ? AppColors.moduleKasir
           : isAvailable
-              ? const Color(0xFFF1F5F9)
-              : const Color(0xFFFFF3E0),
+              ? AppColors.surfaceMuted
+              : AppColors.warningSoft,
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
@@ -5587,8 +5420,8 @@ class _TablePickerDialogState extends State<_TablePickerDialog> {
                   color: isSelected
                       ? Colors.white
                       : !isAvailable
-                          ? const Color(0xFFF59E0B)
-                          : const Color(0xFF1E293B),
+                          ? AppColors.warning
+                          : AppColors.textPrimary,
                 ),
               ),
               const SizedBox(height: 3),
@@ -5596,7 +5429,7 @@ class _TablePickerDialogState extends State<_TablePickerDialog> {
                 isAvailable ? 'Tersedia' : 'Terisi',
                 style: TextStyle(
                   fontSize: 12,
-                  color: isSelected ? Colors.white70 : Colors.grey[500],
+                  color: isSelected ? Colors.white70 : AppColors.textSecondary,
                 ),
               ),
             ],
@@ -5645,7 +5478,7 @@ class _MergePickerState extends State<_MergePicker> {
               padding: const EdgeInsets.fromLTRB(20, 18, 12, 8),
               child: Row(
                 children: [
-                  const Icon(Icons.merge_type, color: Color(0xFF0891B2)),
+                  const Icon(Icons.merge_type, color: AppColors.info),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text('Gabung ke Meja ${widget.targetTable}',
@@ -5654,7 +5487,7 @@ class _MergePickerState extends State<_MergePicker> {
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
+                    icon: const Icon(Icons.close, color: AppColors.textTertiary),
                   ),
                 ],
               ),
@@ -5663,13 +5496,13 @@ class _MergePickerState extends State<_MergePicker> {
             if (orders == null)
               const Padding(
                 padding: EdgeInsets.all(40),
-                child: CircularProgressIndicator(color: Color(0xFF0891B2)),
+                child: CircularProgressIndicator(color: AppColors.info),
               )
             else if (orders.isEmpty)
               const Padding(
                 padding: EdgeInsets.all(40),
                 child: Text('Tidak ada meja lain dengan pesanan aktif',
-                    style: TextStyle(color: Color(0xFF94A3B8))),
+                    style: TextStyle(color: AppColors.textTertiary)),
               )
             else
               Flexible(
@@ -5680,7 +5513,7 @@ class _MergePickerState extends State<_MergePicker> {
                   itemBuilder: (_, i) {
                     final o = orders[i];
                     return Material(
-                      color: Colors.white,
+                      color: AppColors.surface,
                       borderRadius: BorderRadius.circular(12),
                       child: InkWell(
                         borderRadius: BorderRadius.circular(12),
@@ -5690,7 +5523,7 @@ class _MergePickerState extends State<_MergePicker> {
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(12),
                             border:
-                                Border.all(color: const Color(0xFFE2E8F0)),
+                                Border.all(color: AppColors.border),
                           ),
                           child: Row(
                             children: [
@@ -5698,7 +5531,7 @@ class _MergePickerState extends State<_MergePicker> {
                                 width: 46,
                                 height: 46,
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFFCFFAFE),
+                                  color: AppColors.soft(AppColors.info, 0.14),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 alignment: Alignment.center,
@@ -5706,7 +5539,7 @@ class _MergePickerState extends State<_MergePicker> {
                                     style: const TextStyle(
                                         fontWeight: FontWeight.w800,
                                         fontSize: 15,
-                                        color: Color(0xFF0891B2))),
+                                        color: AppColors.info)),
                               ),
                               const SizedBox(width: 12),
                               Expanded(
@@ -5720,7 +5553,7 @@ class _MergePickerState extends State<_MergePicker> {
                                     Text('${o.basketSize} item',
                                         style: const TextStyle(
                                             fontSize: 12,
-                                            color: Color(0xFF94A3B8))),
+                                            color: AppColors.textTertiary)),
                                   ],
                                 ),
                               ),
@@ -5781,18 +5614,14 @@ class _MixedPaymentDialogState extends State<_MixedPaymentDialog> {
     final res = await _c.payPartial(amount: amount, method: method);
     if (res == null) {
       if (mounted && _c.state.errorMessage != null) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(_c.state.errorMessage!),
-            backgroundColor: Colors.red));
+        showAppSnack(context, _c.state.errorMessage!, isError: true);
       }
       return;
     }
     if (!mounted) return;
     if (res['payment_status'] == 'paid') {
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Pembayaran gabungan selesai — lunas'),
-          backgroundColor: Color(0xFF7C3AED)));
+      showAppSnack(context, 'Pembayaran gabungan selesai — lunas');
       return;
     }
     setState(() {
@@ -5826,7 +5655,7 @@ class _MixedPaymentDialogState extends State<_MixedPaymentDialog> {
             children: [
               Row(
                 children: [
-                  const Icon(Icons.payments_outlined, color: Color(0xFF7C3AED)),
+                  const Icon(Icons.payments_outlined, color: AppColors.moduleMeja),
                   const SizedBox(width: 10),
                   const Expanded(
                     child: Text('Gabung Pembayaran',
@@ -5835,7 +5664,7 @@ class _MixedPaymentDialogState extends State<_MixedPaymentDialog> {
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close, color: Color(0xFF94A3B8)),
+                    icon: const Icon(Icons.close, color: AppColors.textTertiary),
                   ),
                 ],
               ),
@@ -5843,17 +5672,17 @@ class _MixedPaymentDialogState extends State<_MixedPaymentDialog> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
+                  color: AppColors.surfaceAlt,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Column(
                   children: [
                     _row('Total', total, bold: true),
                     const SizedBox(height: 4),
-                    _row('Terbayar', paid, color: const Color(0xFF059669)),
+                    _row('Terbayar', paid, color: AppColors.moduleKasir),
                     const Divider(height: 16),
                     _row('Sisa', _remaining,
-                        bold: true, color: const Color(0xFFEF4444)),
+                        bold: true, color: AppColors.danger),
                   ],
                 ),
               ),
@@ -5900,23 +5729,12 @@ class _MixedPaymentDialogState extends State<_MixedPaymentDialog> {
                 ),
               ),
               const SizedBox(height: 14),
-              SizedBox(
-                height: 50,
-                child: FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF7C3AED)),
-                  onPressed: _c.state.isProcessing ? null : _addPayment,
-                  icon: _c.state.isProcessing
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white))
-                      : const Icon(Icons.add),
-                  label: Text(
-                      _remaining > 0 ? 'Tambah Pembayaran' : 'Lunas',
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
-                ),
+              AppButton(
+                label: _remaining > 0 ? 'Tambah Pembayaran' : 'Lunas',
+                icon: Icons.add_rounded,
+                accent: AppColors.moduleMeja,
+                loading: _c.state.isProcessing,
+                onPressed: _c.state.isProcessing ? null : _addPayment,
               ),
             ],
           ),
@@ -5932,13 +5750,13 @@ class _MixedPaymentDialogState extends State<_MixedPaymentDialog> {
         Text(label,
             style: TextStyle(
                 fontSize: 13,
-                color: const Color(0xFF475569),
+                color: AppColors.textSecondary,
                 fontWeight: bold ? FontWeight.bold : FontWeight.normal)),
         Text(CurrencyHelper.format(v),
             style: TextStyle(
                 fontSize: bold ? 16 : 13,
                 fontWeight: bold ? FontWeight.bold : FontWeight.w500,
-                color: color ?? const Color(0xFF1E293B))),
+                color: color ?? AppColors.textPrimary)),
       ],
     );
   }
@@ -5949,8 +5767,10 @@ class _MixedPaymentDialogState extends State<_MixedPaymentDialog> {
       onTap: () => setState(() => _method = value),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        constraints: const BoxConstraints(minHeight: 44),
+        alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFF7C3AED) : const Color(0xFFF1F5F9),
+          color: selected ? AppColors.moduleMeja : AppColors.surfaceMuted,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(
@@ -5958,13 +5778,13 @@ class _MixedPaymentDialogState extends State<_MixedPaymentDialog> {
           children: [
             Icon(icon,
                 size: 16,
-                color: selected ? Colors.white : const Color(0xFF64748B)),
+                color: selected ? Colors.white : AppColors.textSecondary),
             const SizedBox(width: 6),
             Text(label,
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: selected ? Colors.white : const Color(0xFF64748B),
+                  color: selected ? Colors.white : AppColors.textSecondary,
                 )),
           ],
         ),

@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../models/models.dart';
+import 'logo_service.dart';
 
 // ─── Data classes ─────────────────────────────────────────────────────────────
 
@@ -159,6 +160,10 @@ class ReceiptBuilder {
   final int paperWidth;
 
   const ReceiptBuilder({this.paperWidth = 32});
+
+  /// Lebar cetak dalam dot untuk logo: 80mm (≥44 kolom) = 576, selain itu 384.
+  int get _logoDotWidth =>
+      paperWidth >= 44 ? LogoService.dotsWidth80 : LogoService.dotsWidth58;
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -540,6 +545,10 @@ class ReceiptBuilder {
   void _addHeader(List<int> buf, ReceiptData data) {
     buf.addAll(_Esc.init());
     buf.addAll(_Esc.centerAlign());
+    // Logo struk (bila di-set) — di paling atas, dipusatkan. Dibaca dari cache
+    // lokal (offline). Hanya untuk struk pembayaran & tagihan.
+    final logo = LogoService.instance.escposRaster(_logoDotWidth);
+    if (logo != null) buf.addAll(logo);
     buf.addAll(_Esc.fontLarge());
     buf.addAll(_Esc.boldOn());
     buf.addAll(_Esc.line(data.outletName));

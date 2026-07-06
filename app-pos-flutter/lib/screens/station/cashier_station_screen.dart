@@ -6,7 +6,9 @@ import '../../models/models.dart';
 import '../../services/printer_service.dart';
 import '../../services/receipt_builder.dart';
 import '../../services/station_api_client.dart';
+import '../../theme/theme.dart';
 import '../../utils/currency.dart';
+import '../../widgets/ui/ui.dart';
 
 /// Kasir Station: terminal kasir di perangkat NON-utama (klien tipis). Operasi
 /// transaksi (bayar, diskon) dijalankan di DB Main POS lewat StationApiClient;
@@ -24,6 +26,9 @@ class CashierStationScreen extends StatefulWidget {
 
 class _CashierStationScreenState extends State<CashierStationScreen> {
   final _api = StationApiClient.instance;
+
+  static const _accent = AppColors.moduleKasir;
+
   bool _loading = true;
   String? _error;
   List<Map<String, dynamic>> _tables = [];
@@ -131,24 +136,15 @@ class _CashierStationScreenState extends State<CashierStationScreen> {
   Future<void> _finishWork({bool auto = false}) async {
     _idleTimer?.cancel();
     if (!auto) {
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('Selesai Kerja?'),
-          content: const Text(
-              'Cetak ringkasan kerja Anda lalu keluar ke layar login. '
-              'Shift laci kas tidak ditutup (di perangkat utama).'),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Batal')),
-            FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Selesai')),
-          ],
-        ),
+      final ok = await showAppConfirm(
+        context,
+        title: 'Selesai Kerja?',
+        message:
+            'Cetak ringkasan kerja Anda lalu keluar ke layar login. Shift laci kas tidak ditutup (di perangkat utama).',
+        confirmText: 'Selesai',
+        icon: Icons.logout_rounded,
       );
-      if (ok != true) {
+      if (!ok) {
         _resetIdle();
         return;
       }
@@ -183,12 +179,11 @@ class _CashierStationScreenState extends State<CashierStationScreen> {
     final orderId = order['id'] as String;
     final full = await _api.getOrderFull(orderId);
     if (!mounted || full['order'] == null) return;
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+    await showAppModal(
+      context,
+      title: 'Tagihan · Meja ${order['table_number']}',
+      icon: Icons.receipt_long_rounded,
+      accent: _accent,
       builder: (_) => _BillSheet(
         full: full,
         cashierName: _cashierName,
@@ -206,7 +201,7 @@ class _CashierStationScreenState extends State<CashierStationScreen> {
 
   void _snack(String m) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+    showAppSnack(context, m);
   }
 
   @override
@@ -221,150 +216,199 @@ class _CashierStationScreenState extends State<CashierStationScreen> {
     return Listener(
       onPointerDown: (_) => _resetIdle(),
       child: Scaffold(
-        backgroundColor: const Color(0xFFF1F5F9),
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF0F172A),
-          foregroundColor: Colors.white,
-          title: Row(
-            children: [
-              const Icon(Icons.point_of_sale, size: 20),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('Kasir Station',
-                        style: TextStyle(
-                            fontSize: 15, fontWeight: FontWeight.w700)),
-                    Text(_cashierName,
-                        style:
-                            const TextStyle(fontSize: 11, color: Colors.white60)),
-                  ],
-                ),
-              ),
-            ],
-          ),
+        appBar: AppPageHeader(
+          title: 'Kasir Station',
+          subtitle: _cashierName,
+          icon: Icons.point_of_sale_rounded,
+          accent: _accent,
+          showBack: false,
           actions: [
-            IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
-            TextButton.icon(
+            AppIconButton(
+              icon: Icons.refresh_rounded,
+              onPressed: _load,
+              tooltip: 'Muat ulang',
+            ),
+            const SizedBox(width: AppSpacing.xxs),
+            AppButton(
+              label: 'Selesai',
+              icon: Icons.logout_rounded,
+              variant: AppButtonVariant.neutral,
+              size: AppButtonSize.small,
+              expanded: false,
               onPressed: () => _finishWork(),
-              icon: const Icon(Icons.logout, color: Colors.white, size: 18),
-              label: const Text('Selesai',
-                  style: TextStyle(color: Colors.white)),
             ),
           ],
         ),
-        body: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : Column(
-                children: [
-                  // Status shift (read-only) — buka/tutup di perangkat utama.
-                  Container(
-                    width: double.infinity,
-                    color: hasShift
-                        ? const Color(0xFFDCFCE7)
-                        : const Color(0xFFFEF3C7),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 10),
-                    child: Row(
-                      children: [
-                        Icon(hasShift ? Icons.lock_open : Icons.lock_outline,
-                            size: 18,
-                            color: hasShift
-                                ? const Color(0xFF059669)
-                                : const Color(0xFFB45309)),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            hasShift
-                                ? 'Shift dibuka oleh ${_shift!['opened_by']}'
-                                : 'Shift belum dibuka di perangkat utama',
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w600, fontSize: 13),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (_error != null)
+        body: AppBackground(
+          child: _loading
+              ? const AppLoader(label: 'Memuat data...')
+              : Column(
+                  children: [
                     Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Text(_error!,
-                          style: const TextStyle(color: Color(0xFFDC2626))),
+                      padding: EdgeInsets.fromLTRB(context.pagePadX,
+                          AppSpacing.md, context.pagePadX, 0),
+                      child: _shiftBanner(hasShift),
                     ),
-                  Expanded(
-                    child: activeOrders.isEmpty
-                        ? const Center(
-                            child: Text('Belum ada tagihan aktif',
-                                style: TextStyle(color: Color(0xFF64748B))))
-                        : RefreshIndicator(
-                            onRefresh: _load,
-                            child: ListView.separated(
-                              padding: const EdgeInsets.all(16),
-                              itemCount: activeOrders.length,
-                              separatorBuilder: (_, __) =>
-                                  const SizedBox(height: 10),
-                              itemBuilder: (_, i) {
-                                final o = activeOrders[i];
-                                final partial = (o['payment_status']
-                                        as String?) ==
-                                    'partial';
-                                return Material(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(14),
-                                  child: ListTile(
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(14)),
-                                    leading: CircleAvatar(
-                                      backgroundColor: const Color(0xFF0F172A),
-                                      child: Text('${o['table_number']}',
-                                          style: const TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold)),
-                                    ),
-                                    title: Text(
-                                      'Meja ${o['table_number']} · ${o['basket_size'] ?? 0} item',
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w700),
-                                    ),
-                                    subtitle: Text(partial
-                                        ? 'Sebagian terbayar'
-                                        : '${o['pax'] ?? 1} pax'),
-                                    trailing: Text(
-                                      CurrencyHelper.format(
-                                          (o['total_amount'] as num?)
-                                                  ?.toDouble() ??
-                                              0),
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w800,
-                                          color: Color(0xFF059669)),
-                                    ),
-                                    onTap: hasShift
-                                        ? () => _openBill(o)
-                                        : () => _snack(
-                                            'Shift belum dibuka di perangkat utama'),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
+                    if (_error != null)
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(context.pagePadX,
+                            AppSpacing.sm, context.pagePadX, 0),
+                        child: _errorBanner(_error!),
+                      ),
+                    Expanded(child: _ordersList(activeOrders, hasShift)),
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
+
+  Widget _shiftBanner(bool hasShift) {
+    final color = hasShift ? AppColors.success : AppColors.warning;
+    return AppCard(
+      accent: color,
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      child: Row(
+        children: [
+          IconBadge(
+            icon: hasShift ? Icons.lock_open_rounded : Icons.lock_outline_rounded,
+            color: color,
+            size: 40,
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              hasShift
+                  ? 'Shift dibuka oleh ${_shift!['opened_by']}'
+                  : 'Shift belum dibuka di perangkat utama',
+              style: AppType.body,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          StatusPill(
+            label: hasShift ? 'Aktif' : 'Tutup',
+            color: color,
+            icon: hasShift ? Icons.check_circle_outline_rounded : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _errorBanner(String message) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: AppColors.dangerSoft,
+        borderRadius: AppRadius.rSm,
+        border: Border.all(color: AppColors.soft(AppColors.danger, 0.28)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline_rounded,
+              size: 18, color: AppColors.danger),
+          const SizedBox(width: AppSpacing.xs),
+          Expanded(
+            child: Text(message,
+                style: AppType.bodySm.copyWith(color: AppColors.danger)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _ordersList(List<Map<String, dynamic>> activeOrders, bool hasShift) {
+    if (activeOrders.isEmpty) {
+      return const EmptyState(
+        icon: Icons.receipt_long_rounded,
+        title: 'Belum ada tagihan aktif',
+        message: 'Tagihan meja yang belum lunas akan tampil di sini.',
+        accent: _accent,
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView.separated(
+        padding: EdgeInsets.fromLTRB(
+            context.pagePadX, AppSpacing.md, context.pagePadX, AppSpacing.lg),
+        itemCount: activeOrders.length,
+        separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
+        itemBuilder: (_, i) {
+          final o = activeOrders[i];
+          final partial = (o['payment_status'] as String?) == 'partial';
+          final color = partial ? AppColors.warning : _accent;
+          return AppCard(
+            onTap: hasShift
+                ? () => _openBill(o)
+                : () => _snack('Shift belum dibuka di perangkat utama'),
+            accent: color,
+            child: Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(colors: AppColors.gradientOf(color)),
+                    borderRadius: AppRadius.rSm,
+                    boxShadow: AppShadows.glow(color, strength: 0.28),
                   ),
-                ],
-              ),
+                  child: Text('${o['table_number']}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 18)),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Meja ${o['table_number']} · ${o['basket_size'] ?? 0} item',
+                        style: AppType.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      partial
+                          ? const StatusPill(
+                              label: 'Sebagian terbayar',
+                              color: AppColors.warning,
+                              icon: Icons.timelapse_rounded,
+                            )
+                          : Text('${o['pax'] ?? 1} pax',
+                              style: AppType.caption
+                                  .copyWith(color: AppColors.textTertiary)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                Text(
+                  CurrencyHelper.format(
+                      (o['total_amount'] as num?)?.toDouble() ?? 0),
+                  style: AppType.amount.copyWith(color: color),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
 }
 
-/// Bottom sheet tagihan + pembayaran (penuh / campur metode) + diskon.
+/// Konten tagihan + pembayaran (penuh / campur metode) + diskon.
 class _BillSheet extends StatefulWidget {
   final Map<String, dynamic> full;
   final String cashierName;
   final StationApiClient api;
-  final Future<void> Function(
-      Map<String, dynamic> latestFull, Map<String, dynamic> result, String method) onPaid;
+  final Future<void> Function(Map<String, dynamic> latestFull,
+      Map<String, dynamic> result, String method) onPaid;
   const _BillSheet(
       {required this.full,
       required this.cashierName,
@@ -376,6 +420,7 @@ class _BillSheet extends StatefulWidget {
 }
 
 class _BillSheetState extends State<_BillSheet> {
+  static const _accent = AppColors.moduleKasir;
   static const _methods = {
     'cash': 'Tunai',
     'qris': 'QRIS',
@@ -403,6 +448,12 @@ class _BillSheetState extends State<_BillSheet> {
     if (_paid > 0) _hasPartial = true;
   }
 
+  @override
+  void dispose() {
+    _amountCtrl.dispose();
+    super.dispose();
+  }
+
   void _recompute() {
     _remaining = (_total - _paid).clamp(0, double.infinity).toDouble();
     _amountCtrl.text = CurrencyHelper.formatInput(_remaining.round());
@@ -418,9 +469,14 @@ class _BillSheetState extends State<_BillSheet> {
   }
 
   Future<void> _discount() async {
-    final res = await showDialog<_DiscountInput>(
-      context: context,
-      builder: (_) => const _DiscountDialog(),
+    final res = await showAppModal<_DiscountInput>(
+      context,
+      title: 'Diskon',
+      icon: Icons.percent_rounded,
+      accent: _accent,
+      scrollable: false,
+      maxWidth: 440,
+      builder: (_) => const _DiscountForm(),
     );
     if (res == null) return;
     setState(() => _busy = true);
@@ -483,94 +539,116 @@ class _BillSheetState extends State<_BillSheet> {
     }
   }
 
-  void _err(String m) => ScaffoldMessenger.of(context)
-      .showSnackBar(SnackBar(content: Text(m)));
+  void _err(String m) => showAppSnack(context, m, isError: true);
   String _msg(Object e) => e.toString().replaceFirst('Exception: ', '');
 
   @override
   Widget build(BuildContext context) {
-    final bottom = MediaQuery.of(context).viewInsets.bottom;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(20, 16, 20, 16 + bottom),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                    color: const Color(0xFFCBD5E1),
-                    borderRadius: BorderRadius.circular(2))),
-          ),
-          const SizedBox(height: 16),
-          _row('Total', _total, bold: true),
-          const SizedBox(height: 4),
-          _row('Sisa', _remaining, color: const Color(0xFFDC2626), bold: true),
-          if (_log.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            ..._log.map((l) => Text('• $l',
-                style:
-                    const TextStyle(fontSize: 12, color: Color(0xFF64748B)))),
-          ],
-          const Divider(height: 24),
-          Wrap(
-            spacing: 8,
-            children: _methods.entries
-                .map((e) => ChoiceChip(
-                      label: Text(e.value),
-                      selected: _method == e.key,
-                      onSelected: (_) => setState(() => _method = e.key),
-                    ))
-                .toList(),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _amountCtrl,
-            keyboardType: TextInputType.number,
-            inputFormatters: [RupiahInputFormatter()],
-            decoration: const InputDecoration(
-              labelText: 'Jumlah bayar',
-              prefixText: 'Rp ',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        AppCard(
+          color: AppColors.surfaceAlt,
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Column(
             children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _busy ? null : _discount,
-                  icon: const Icon(Icons.percent, size: 18),
-                  label: const Text('Diskon'),
+              _row('Total', _total, bold: true),
+              const SizedBox(height: AppSpacing.xs),
+              _row('Sisa', _remaining, color: AppColors.danger, bold: true),
+              if (_log.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.xs),
+                const Divider(height: AppSpacing.md),
+                ..._log.map((l) => Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.check_circle_rounded,
+                              size: 14, color: AppColors.success),
+                          const SizedBox(width: AppSpacing.xs),
+                          Expanded(
+                            child: Text(l,
+                                style: AppType.caption
+                                    .copyWith(color: AppColors.textTertiary)),
+                          ),
+                        ],
+                      ),
+                    )),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        const SectionHeader('Metode Pembayaran'),
+        Wrap(
+          spacing: AppSpacing.xs,
+          runSpacing: AppSpacing.xs,
+          children: _methods.entries.map((e) {
+            final selected = _method == e.key;
+            return GestureDetector(
+              onTap: () => setState(() => _method = e.key),
+              child: AnimatedContainer(
+                duration: AppMotion.fast,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md, vertical: AppSpacing.xs),
+                decoration: BoxDecoration(
+                  // SECONDARY gold untuk metode terpilih (aksentuasi sekunder).
+                  color: selected ? AppColors.accentSoft : AppColors.surfaceMuted,
+                  borderRadius: AppRadius.rPill,
+                  border: Border.all(
+                      color: selected ? AppColors.accent : AppColors.border),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: SizedBox(
-                  height: 50,
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF059669)),
-                    onPressed: _busy ? null : _pay,
-                    child: _busy
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white))
-                        : const Text('Bayar',
-                            style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.w700)),
+                child: Text(
+                  e.value,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    color:
+                        selected ? AppColors.accentDark : AppColors.textSecondary,
                   ),
                 ),
               ),
-            ],
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        TextField(
+          controller: _amountCtrl,
+          keyboardType: TextInputType.number,
+          inputFormatters: [RupiahInputFormatter()],
+          style: AppType.title,
+          decoration: const InputDecoration(
+            labelText: 'Jumlah bayar',
+            prefixText: 'Rp ',
+            border: OutlineInputBorder(),
           ),
-        ],
-      ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        Row(
+          children: [
+            Expanded(
+              child: AppButton(
+                label: 'Diskon',
+                icon: Icons.percent_rounded,
+                variant: AppButtonVariant.tonal,
+                accent: AppColors.accent, // SECONDARY gold — aksi sekunder
+                onPressed: _busy ? null : _discount,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              flex: 2,
+              child: AppButton(
+                label: 'Bayar',
+                icon: Icons.payments_rounded,
+                accent: _accent,
+                loading: _busy,
+                onPressed: _busy ? null : _pay,
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -578,12 +656,10 @@ class _BillSheetState extends State<_BillSheet> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: const TextStyle(fontSize: 15)),
+        Text(label, style: AppType.body),
         Text(CurrencyHelper.format(value),
-            style: TextStyle(
-                fontSize: 18,
-                fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
-                color: color)),
+            style: (bold ? AppType.amount : AppType.title)
+                .copyWith(color: color ?? AppColors.textPrimary)),
       ],
     );
   }
@@ -596,66 +672,85 @@ class _DiscountInput {
   const _DiscountInput(this.type, this.value, this.note);
 }
 
-class _DiscountDialog extends StatefulWidget {
-  const _DiscountDialog();
+/// Form diskon (di dalam modal terpusat). Pop dengan [_DiscountInput] saat
+/// diterapkan, atau null saat batal.
+class _DiscountForm extends StatefulWidget {
+  const _DiscountForm();
   @override
-  State<_DiscountDialog> createState() => _DiscountDialogState();
+  State<_DiscountForm> createState() => _DiscountFormState();
 }
 
-class _DiscountDialogState extends State<_DiscountDialog> {
+class _DiscountFormState extends State<_DiscountForm> {
   String _type = 'percentage';
   final _valueCtrl = TextEditingController();
   final _noteCtrl = TextEditingController();
 
   @override
+  void dispose() {
+    _valueCtrl.dispose();
+    _noteCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Diskon'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'percentage', label: Text('Persen %')),
-              ButtonSegment(value: 'fixed', label: Text('Nominal Rp')),
-            ],
-            selected: {_type},
-            onSelectionChanged: (s) => setState(() => _type = s.first),
+    final isPercent = _type == 'percentage';
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SegmentedButton<String>(
+          segments: const [
+            ButtonSegment(value: 'percentage', label: Text('Persen %')),
+            ButtonSegment(value: 'fixed', label: Text('Nominal Rp')),
+          ],
+          selected: {_type},
+          onSelectionChanged: (s) => setState(() => _type = s.first),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        TextField(
+          controller: _valueCtrl,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(
+            labelText: isPercent ? 'Persentase' : 'Nominal',
+            prefixText: isPercent ? '' : 'Rp ',
+            suffixText: isPercent ? '%' : '',
+            border: const OutlineInputBorder(),
           ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _valueCtrl,
-            autofocus: true,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(
-              labelText: _type == 'percentage' ? 'Persentase' : 'Nominal',
-              prefixText: _type == 'percentage' ? '' : 'Rp ',
-              suffixText: _type == 'percentage' ? '%' : '',
-              border: const OutlineInputBorder(),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        TextField(
+          controller: _noteCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Catatan (mis. member)',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        Row(
+          children: [
+            Expanded(
+              child: AppButton.neutral(
+                'Batal',
+                onPressed: () => Navigator.pop(context),
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _noteCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Catatan (mis. member)',
-              border: OutlineInputBorder(),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: AppButton(
+                label: 'Terapkan',
+                accent: AppColors.moduleKasir,
+                onPressed: () {
+                  final v =
+                      double.tryParse(_valueCtrl.text.replaceAll('.', '')) ?? 0;
+                  if (v <= 0) return;
+                  Navigator.pop(
+                      context, _DiscountInput(_type, v, _noteCtrl.text.trim()));
+                },
+              ),
             ),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Batal')),
-        FilledButton(
-          onPressed: () {
-            final v = double.tryParse(_valueCtrl.text.replaceAll('.', '')) ?? 0;
-            if (v <= 0) return;
-            Navigator.pop(
-                context, _DiscountInput(_type, v, _noteCtrl.text.trim()));
-          },
-          child: const Text('Terapkan'),
+          ],
         ),
       ],
     );

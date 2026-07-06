@@ -244,6 +244,7 @@ class TransactionsController extends ChangeNotifier {
         cashierName: cashierName,
         outletName: o.name.isNotEmpty ? o.name : 'POS Resto',
         outletAddress: o.address,
+        outletPhone: o.phone,
       );
       final ps = PrinterService();
       final saved = await ps.getSavedPrinters();

@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../controllers/transactions_controller.dart';
 import '../../models/models.dart';
+import '../../theme/theme.dart';
 import '../../utils/currency.dart';
 import '../../widgets/pin_auth_dialog.dart';
+import '../../widgets/ui/ui.dart';
 
 class TransactionsScreen extends StatefulWidget {
   const TransactionsScreen({super.key});
@@ -15,6 +17,9 @@ class TransactionsScreen extends StatefulWidget {
 class _TransactionsScreenState extends State<TransactionsScreen> {
   late final TransactionsController _controller;
   final _scrollController = ScrollController();
+
+  /// Id transaksi terpilih (dipakai tampilan master-detail di tablet).
+  String? _selectedId;
 
   @override
   void initState() {
@@ -50,9 +55,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     if (errorMsg != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(errorMsg)),
-        );
+        showAppSnack(context, errorMsg, isError: true);
       });
     }
   }
@@ -66,84 +69,77 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     }
   }
 
+  void _onTapOrder(Order order) {
+    if (context.isTablet) {
+      setState(() => _selectedId = order.id);
+    } else {
+      _showOrderActions(order);
+    }
+  }
+
   // ── Aksi transaksi (void & bayar, ber-otoritas PIN) ────────────────────────
 
   void _showOrderActions(Order order) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+    showAppModal(
+      context,
+      title: 'Meja ${order.tableNumber}',
+      subtitle: _statusText(order),
+      icon: Icons.receipt_long_rounded,
+      accent: AppColors.moduleTransaksi,
+      scrollable: false,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text('Meja ${order.tableNumber}',
-                        style: const TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.w800)),
-                  ),
-                  Text(CurrencyHelper.format(order.totalAmount),
-                      style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF059669))),
-                ],
+              StatusPill(
+                label: _statusLabel(order),
+                color: _statusColor(order),
+                icon: _statusIcon(order),
               ),
-              const SizedBox(height: 4),
+              const Spacer(),
               Text(
-                order.isVoided
-                    ? 'VOID · ${order.voidedBy ?? '-'}'
-                        '${(order.voidReason?.isNotEmpty ?? false) ? ' · ${order.voidReason}' : ''}'
-                    : order.isPaid
-                        ? 'Lunas'
-                        : 'Belum lunas · sisa ${CurrencyHelper.format(order.remaining)}',
-                style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
-              ),
-              const SizedBox(height: 16),
-              if (order.isVoided)
-                const Text('Transaksi sudah di-void.',
-                    style: TextStyle(color: Color(0xFF94A3B8)))
-              else if (!order.isPaid)
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF059669)),
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _showPayDialog(order);
-                    },
-                    icon: const Icon(Icons.payments_outlined),
-                    label: const Text('Bayar',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                )
-              else
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFEF4444)),
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _showVoidDialog(order);
-                    },
-                    icon: const Icon(Icons.block_outlined),
-                    label: const Text('Void Transaksi',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
+                CurrencyHelper.format(order.totalAmount),
+                style: AppType.amount.copyWith(
+                  color: order.isVoided
+                      ? AppColors.textTertiary
+                      : AppColors.textPrimary,
+                  decoration:
+                      order.isVoided ? TextDecoration.lineThrough : null,
                 ),
+              ),
             ],
           ),
-        ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            '${order.basketSize} item · ${_formatDate(order.createdAt)}',
+            style: AppType.caption.copyWith(color: AppColors.textTertiary),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          if (order.isVoided)
+            const _VoidNote()
+          else if (!order.isPaid)
+            AppButton(
+              label: 'Bayar',
+              icon: Icons.payments_rounded,
+              variant: AppButtonVariant.success,
+              onPressed: () {
+                Navigator.pop(ctx);
+                _showPayDialog(order);
+              },
+            )
+          else
+            AppButton(
+              label: 'Void Transaksi',
+              icon: Icons.block_rounded,
+              variant: AppButtonVariant.danger,
+              onPressed: () {
+                Navigator.pop(ctx);
+                _showVoidDialog(order);
+              },
+            ),
+        ],
       ),
     );
   }
@@ -160,63 +156,95 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     final amountCtrl = TextEditingController(
         text: CurrencyHelper.formatInput(order.remaining.round()));
     final pinCtrl = TextEditingController();
-    final ok = await showDialog<bool>(
-      context: context,
+    final ok = await showAppModal<bool>(
+      context,
+      title: 'Bayar — Meja ${order.tableNumber}',
+      subtitle: 'Sisa tagihan ${CurrencyHelper.format(order.remaining)}',
+      icon: Icons.payments_rounded,
+      accent: AppColors.success,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text('Bayar — Meja ${order.tableNumber}'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Sisa tagihan: ${CurrencyHelper.format(order.remaining)}',
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                children: methods.entries
-                    .map((e) => ChoiceChip(
-                          label: Text(e.value),
-                          selected: method == e.key,
-                          onSelected: (_) => setS(() => method = e.key),
-                        ))
-                    .toList(),
+        builder: (ctx, setS) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Metode Pembayaran',
+                style: AppType.label.copyWith(color: AppColors.textSecondary)),
+            const SizedBox(height: AppSpacing.xs),
+            Wrap(
+              spacing: AppSpacing.xs,
+              runSpacing: AppSpacing.xs,
+              children: methods.entries.map((e) {
+                final sel = method == e.key;
+                return GestureDetector(
+                  onTap: () => setS(() => method = e.key),
+                  child: AnimatedContainer(
+                    duration: AppMotion.fast,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md, vertical: AppSpacing.xs),
+                    decoration: BoxDecoration(
+                      color: sel
+                          ? AppColors.soft(AppColors.success, 0.14)
+                          : AppColors.surfaceMuted,
+                      borderRadius: AppRadius.rPill,
+                      border: Border.all(
+                        color: sel
+                            ? AppColors.soft(AppColors.success, 0.4)
+                            : AppColors.border,
+                      ),
+                    ),
+                    child: Text(
+                      e.value,
+                      style: AppType.label.copyWith(
+                        color:
+                            sel ? AppColors.success : AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            TextField(
+              controller: amountCtrl,
+              keyboardType: TextInputType.number,
+              inputFormatters: [RupiahInputFormatter()],
+              style: AppType.title,
+              decoration: _fieldDecoration(
+                label: 'Jumlah bayar',
+                accent: AppColors.success,
+                prefixText: 'Rp ',
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: amountCtrl,
-                keyboardType: TextInputType.number,
-                inputFormatters: [RupiahInputFormatter()],
-                decoration: const InputDecoration(
-                  labelText: 'Jumlah bayar',
-                  prefixText: 'Rp ',
-                  border: OutlineInputBorder(),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            TextField(
+              controller: pinCtrl,
+              obscureText: true,
+              keyboardType: TextInputType.number,
+              decoration: _fieldDecoration(
+                label: 'PIN otorisasi (Manager/SVP)',
+                accent: AppColors.success,
+                prefixIcon: Icons.lock_outline_rounded,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            Row(
+              children: [
+                Expanded(
+                  child: AppButton.neutral(
+                    'Batal',
+                    onPressed: () => Navigator.pop(ctx, false),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: pinCtrl,
-                obscureText: true,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'PIN otorisasi (Manager/SVP)',
-                  prefixIcon: Icon(Icons.lock_outline),
-                  border: OutlineInputBorder(),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: AppButton(
+                    label: 'Bayar',
+                    icon: Icons.check_rounded,
+                    variant: AppButtonVariant.success,
+                    onPressed: () => Navigator.pop(ctx, true),
+                  ),
                 ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Batal')),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF059669)),
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Bayar'),
+              ],
             ),
           ],
         ),
@@ -232,12 +260,12 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     );
     if (!mounted || result == null) return; // error via snackbar _onStateChanged
     final change = (result['change'] as num?)?.toDouble() ?? 0;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(change > 0
+    showAppSnack(
+      context,
+      change > 0
           ? 'Lunas — kembalian ${CurrencyHelper.format(change)} · struk dicetak'
-          : 'Lunas — struk dicetak'),
-      backgroundColor: const Color(0xFF059669),
-    ));
+          : 'Lunas — struk dicetak',
+    );
   }
 
   /// Void transaksi lunas — wajib PIN Manager/SVP (atau PIN void bersama).
@@ -264,15 +292,9 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     );
     if (!mounted) return;
     if (res == 'ok') {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Transaksi di-void'),
-        backgroundColor: Color(0xFF059669),
-      ));
+      showAppSnack(context, 'Transaksi di-void');
     } else if (res == 'invalid_pin') {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('PIN salah / tidak berwenang'),
-        backgroundColor: Colors.red,
-      ));
+      showAppSnack(context, 'PIN salah / tidak berwenang', isError: true);
     } // 'error' → snackbar via _onStateChanged
   }
 
@@ -280,144 +302,182 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   Widget build(BuildContext context) {
     final state = _controller.state;
     final filtered = state.filteredOrders;
+    final isTablet = context.isTablet;
+
+    Order? selected;
+    if (isTablet && _selectedId != null) {
+      for (final o in state.orders) {
+        if (o.id == _selectedId) {
+          selected = o;
+          break;
+        }
+      }
+    }
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F2F7),
-      body: Column(
-        children: [
-          // ── Header ──
-          _buildHeader(state),
-
-          // ── Revenue Card ──
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-            child: _RevenueCard(state: state),
-          ),
-
-          // ── Filter Segmented Control ──
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: _FilterControl(
-              current: state.filter,
-              onChanged: _controller.setFilter,
-              counts: {
-                'all': state.orders.length,
-                'paid': state.paidCount,
-                'unpaid': state.unpaidCount,
-                'voided': state.voidedCount,
-              },
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          // ── List ──
-          Expanded(
-            child: state.isLoading && filtered.isEmpty
-                ? const Center(
-                    child: CircularProgressIndicator(
-                        color: Color(0xFF10B981)))
-                : filtered.isEmpty
-                    ? _EmptyState(
-                        onRefresh: () => _controller.loadOrders(reset: true))
-                    : RefreshIndicator(
-                        color: const Color(0xFF10B981),
-                        onRefresh: () => _controller.loadOrders(reset: true),
-                        child: ListView.separated(
-                          controller: _scrollController,
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                          itemCount:
-                              filtered.length + (state.isLoadingMore ? 1 : 0),
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(height: 8),
-                          itemBuilder: (context, index) {
-                            if (index == filtered.length) {
-                              return const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 16),
-                                child: Center(
-                                  child: SizedBox(
-                                    width: 24,
-                                    height: 24,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Color(0xFF10B981)),
-                                  ),
-                                ),
-                              );
-                            }
-                            final order = filtered[index];
-                            return _OrderCard(
-                              order: order,
-                              onTap: () => _showOrderActions(order),
-                            );
-                          },
+      body: AppBackground(
+        child: Column(
+          children: [
+            AppPageHeader(
+              title: 'Transaksi',
+              subtitle: 'Riwayat & laporan pendapatan',
+              icon: Icons.receipt_long_rounded,
+              accent: AppColors.moduleTransaksi,
+              actions: [
+                SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: state.isLoading
+                      ? const Center(
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2.4,
+                                color: AppColors.moduleTransaksi),
+                          ),
+                        )
+                      : AppIconButton(
+                          icon: Icons.refresh_rounded,
+                          onPressed: () =>
+                              _controller.loadOrders(reset: true),
+                          filled: true,
+                          color: AppColors.moduleTransaksi,
+                          tooltip: 'Muat ulang',
                         ),
-                      ),
-          ),
-        ],
+                ),
+              ],
+            ),
+            Expanded(
+              child: isTablet
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                            flex: 3, child: _buildMaster(state, filtered)),
+                        const VerticalDivider(
+                            width: 1, thickness: 1, color: AppColors.border),
+                        Expanded(
+                          flex: 2,
+                          child: _DetailPanel(
+                            order: selected,
+                            onPay: _showPayDialog,
+                            onVoid: _showVoidDialog,
+                          ),
+                        ),
+                      ],
+                    )
+                  : _buildMaster(state, filtered),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildHeader(TransactionsState state) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF059669), Color(0xFF10B981)],
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
+  Widget _buildMaster(TransactionsState state, List<Order> filtered) {
+    return Column(
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(
+              context.pagePadX, AppSpacing.md, context.pagePadX, 0),
+          child: _RevenueCard(state: state),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Color(0x20000000),
-            blurRadius: 12,
-            offset: Offset(0, 4),
+        Padding(
+          padding: EdgeInsets.fromLTRB(
+              context.pagePadX, AppSpacing.sm, context.pagePadX, 0),
+          child: _FilterControl(
+            current: state.filter,
+            onChanged: _controller.setFilter,
+            counts: {
+              'all': state.orders.length,
+              'paid': state.paidCount,
+              'unpaid': state.unpaidCount,
+              'voided': state.voidedCount,
+            },
           ),
-        ],
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Row(
-            children: [
-              _NavButton(
-                icon: Icons.arrow_back,
-                onTap: () => Navigator.pop(context),
-              ),
-              const SizedBox(width: 14),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Transaksi',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                          letterSpacing: -0.3,
-                        )),
-                    Text('Riwayat & laporan pendapatan',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFFA7F3D0),
-                        )),
-                  ],
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Expanded(child: _listView(state, filtered)),
+      ],
+    );
+  }
+
+  Widget _listView(TransactionsState state, List<Order> filtered) {
+    if (state.isLoading && filtered.isEmpty) {
+      return const AppLoader(label: 'Memuat transaksi…');
+    }
+    if (filtered.isEmpty) {
+      return EmptyState(
+        icon: Icons.receipt_long_rounded,
+        title: 'Tidak ada transaksi',
+        message: 'Transaksi akan muncul di sini.',
+        actionLabel: 'Muat Ulang',
+        onAction: () => _controller.loadOrders(reset: true),
+        accent: AppColors.moduleTransaksi,
+      );
+    }
+    final isTablet = context.isTablet;
+    return RefreshIndicator(
+      color: AppColors.moduleTransaksi,
+      onRefresh: () => _controller.loadOrders(reset: true),
+      child: ListView.separated(
+        controller: _scrollController,
+        padding: EdgeInsets.fromLTRB(
+            context.pagePadX, 0, context.pagePadX, context.pagePadY),
+        itemCount: filtered.length + (state.isLoadingMore ? 1 : 0),
+        separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.xs),
+        itemBuilder: (context, index) {
+          if (index == filtered.length) {
+            return const Padding(
+              padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
+              child: Center(
+                child: SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2.4, color: AppColors.moduleTransaksi),
                 ),
               ),
-              _NavButton(
-                icon: Icons.refresh,
-                onTap: state.isLoading
-                    ? null
-                    : () => _controller.loadOrders(reset: true),
-                isLoading: state.isLoading,
-              ),
-            ],
-          ),
-        ),
+            );
+          }
+          final order = filtered[index];
+          return _OrderCard(
+            order: order,
+            selected: isTablet && order.id == _selectedId,
+            onTap: () => _onTapOrder(order),
+          );
+        },
       ),
     );
   }
+}
+
+// ── Field decoration helper (input pada modal bayar) ──────────────────────────
+
+InputDecoration _fieldDecoration({
+  required String label,
+  required Color accent,
+  String? prefixText,
+  IconData? prefixIcon,
+}) {
+  OutlineInputBorder border(Color c, [double w = 1]) => OutlineInputBorder(
+        borderRadius: AppRadius.rMd,
+        borderSide: BorderSide(color: c, width: w),
+      );
+  return InputDecoration(
+    labelText: label,
+    prefixText: prefixText,
+    prefixIcon: prefixIcon != null
+        ? Icon(prefixIcon, color: AppColors.textTertiary, size: 20)
+        : null,
+    filled: true,
+    fillColor: AppColors.surfaceMuted,
+    labelStyle: AppType.body.copyWith(color: AppColors.textSecondary),
+    border: border(AppColors.border),
+    enabledBorder: border(AppColors.border),
+    focusedBorder: border(accent, 1.6),
+  );
 }
 
 // ── Revenue Card ──────────────────────────────────────────────────────────────
@@ -428,84 +488,68 @@ class _RevenueCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final paidColor = Color.lerp(AppColors.success, Colors.white, 0.5)!;
+    final unpaidColor = Color.lerp(AppColors.warning, Colors.white, 0.35)!;
+    final voidColor = Color.lerp(AppColors.danger, Colors.white, 0.5)!;
+
     return Container(
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF065F46), Color(0xFF059669)],
+        gradient: LinearGradient(
+          colors: AppColors.gradientOf(AppColors.moduleTransaksi),
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF059669).withValues(alpha: 0.3),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-        ],
+        borderRadius: AppRadius.rXl,
+        boxShadow: AppShadows.glow(AppColors.moduleTransaksi, strength: 0.3),
       ),
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(AppSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.all(AppSpacing.xs),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
+                  color: AppColors.soft(Colors.white, 0.18),
+                  borderRadius: AppRadius.rSm,
                 ),
-                child: const Icon(Icons.account_balance_wallet,
+                child: const Icon(Icons.account_balance_wallet_rounded,
                     color: Colors.white, size: 18),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: AppSpacing.xs),
               Text(
                 'Total Pendapatan',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.8),
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                ),
+                style: AppType.label
+                    .copyWith(color: AppColors.soft(Colors.white, 0.85)),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.sm),
           Text(
             CurrencyHelper.format(state.totalRevenue),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 32,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -1,
-            ),
+            style: AppType.amountLg.copyWith(color: Colors.white),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.md),
           Row(
             children: [
-              _miniStat('${state.paidCount}', 'Lunas',
-                  const Color(0xFF34D399)),
-              const SizedBox(width: 20),
-              _miniStat('${state.unpaidCount}', 'Belum',
-                  const Color(0xFFFBBF24)),
-              const SizedBox(width: 20),
-              _miniStat('${state.voidedCount}', 'Void',
-                  const Color(0xFFFCA5A5)),
+              _mini('${state.paidCount}', 'Lunas', paidColor),
+              const SizedBox(width: AppSpacing.lg),
+              _mini('${state.unpaidCount}', 'Belum', unpaidColor),
+              const SizedBox(width: AppSpacing.lg),
+              _mini('${state.voidedCount}', 'Void', voidColor),
               const Spacer(),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm, vertical: AppSpacing.xxs),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
+                  color: AppColors.soft(Colors.white, 0.18),
+                  borderRadius: AppRadius.rPill,
                 ),
                 child: Text(
                   '${state.orders.length}${state.hasMore ? '+' : ''} order',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: AppType.caption
+                      .copyWith(color: Colors.white, fontWeight: FontWeight.w700),
                 ),
               ),
             ],
@@ -515,21 +559,15 @@ class _RevenueCard extends StatelessWidget {
     );
   }
 
-  Widget _miniStat(String value, String label, Color color) {
+  Widget _mini(String value, String label, Color color) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Text(value,
-            style: TextStyle(
-              color: color,
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
-            )),
+        Text(value, style: AppType.h3.copyWith(color: color)),
         Text(label,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.6),
-              fontSize: 11,
-            )),
+            style: AppType.caption
+                .copyWith(color: AppColors.soft(Colors.white, 0.7))),
       ],
     );
   }
@@ -552,10 +590,11 @@ class _FilterControl extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFFE5E5EA),
-        borderRadius: BorderRadius.circular(12),
+        color: AppColors.surfaceMuted,
+        borderRadius: AppRadius.rMd,
+        border: Border.all(color: AppColors.border),
       ),
-      padding: const EdgeInsets.all(3),
+      padding: const EdgeInsets.all(AppSpacing.xxs),
       child: Row(
         children: [
           _seg('all', 'Semua'),
@@ -574,44 +613,33 @@ class _FilterControl extends StatelessWidget {
       child: GestureDetector(
         onTap: () => onChanged(value),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(vertical: 8),
+          duration: AppMotion.fast,
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
           decoration: BoxDecoration(
-            color: selected ? Colors.white : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.08),
-                      blurRadius: 4,
-                      offset: const Offset(0, 1),
-                    ),
-                  ]
-                : null,
+            // Segmen aktif ditandai SECONDARY gold (identitas hijau+emas).
+            color: selected ? AppColors.accentSoft : Colors.transparent,
+            borderRadius: AppRadius.rSm,
+            boxShadow: selected ? AppShadows.card : null,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
                 label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight:
-                      selected ? FontWeight.w700 : FontWeight.w500,
+                style: AppType.caption.copyWith(
                   color: selected
-                      ? const Color(0xFF059669)
-                      : const Color(0xFF8E8E93),
+                      ? AppColors.accentDark
+                      : AppColors.textTertiary,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
                 ),
               ),
               if (count > 0)
                 Text(
                   '$count',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
+                  style: AppType.overline.copyWith(
                     color: selected
-                        ? const Color(0xFF059669)
-                        : const Color(0xFFAEAEB2),
+                        ? AppColors.accentDark
+                        : AppColors.textTertiary,
                   ),
                 ),
             ],
@@ -626,183 +654,221 @@ class _FilterControl extends StatelessWidget {
 
 class _OrderCard extends StatelessWidget {
   final Order order;
+  final bool selected;
   final VoidCallback? onTap;
-  const _OrderCard({required this.order, this.onTap});
+  const _OrderCard({required this.order, this.selected = false, this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final color = order.isVoided
-        ? const Color(0xFFEF4444)
-        : order.isPaid
-            ? const Color(0xFF10B981)
-            : const Color(0xFFF59E0B);
+    final color = _statusColor(order);
 
-    final statusLabel = order.isVoided
-        ? 'VOID'
-        : order.paymentStatus == 'paid'
-            ? 'LUNAS'
-            : order.paymentStatus == 'partial'
-                ? 'SEBAGIAN'
-                : 'BELUM';
-
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            // Status indicator
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(
-                order.isVoided
-                    ? Icons.cancel_outlined
-                    : order.isPaid
-                        ? Icons.check_circle_outline
-                        : Icons.pending_outlined,
-                color: color,
-                size: 22,
-              ),
-            ),
-            const SizedBox(width: 14),
-
-            // Info
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text('Meja ${order.tableNumber}',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 15,
-                            color: Color(0xFF0F172A),
-                          )),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: color.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(5),
-                        ),
-                        child: Text(statusLabel,
-                            style: TextStyle(
-                              fontSize: 9,
-                              fontWeight: FontWeight.w700,
-                              color: color,
-                              letterSpacing: 0.3,
-                            )),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    '${order.basketSize} item · ${_formatDate(order.createdAt)}',
-                    style: const TextStyle(
-                        fontSize: 12, color: Color(0xFF8E8E93)),
-                  ),
-                ],
-              ),
-            ),
-
-            // Amount
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
+    return AppCard(
+      onTap: onTap,
+      accent: selected ? AppColors.moduleTransaksi : null,
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md, vertical: AppSpacing.sm + 2),
+      child: Row(
+        children: [
+          IconBadge(icon: _statusIcon(order), color: color, size: 46),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  CurrencyHelper.format(order.totalAmount),
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
-                    color: order.isVoided
-                        ? const Color(0xFFAEAEB2)
-                        : const Color(0xFF0F172A),
-                    decoration: order.isVoided
-                        ? TextDecoration.lineThrough
-                        : null,
-                  ),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text('Meja ${order.tableNumber}',
+                          style: AppType.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                    const SizedBox(width: AppSpacing.xs),
+                    StatusPill(label: _statusLabel(order), color: color),
+                  ],
                 ),
-                if (order.pax > 0)
-                  Text('${order.pax} pax',
-                      style: const TextStyle(
-                          fontSize: 11, color: Color(0xFFAEAEB2))),
+                const SizedBox(height: 3),
+                Text(
+                  '${order.basketSize} item · ${_formatDate(order.createdAt)}',
+                  style: AppType.caption
+                      .copyWith(color: AppColors.textTertiary),
+                ),
               ],
             ),
-          ],
-        ),
-        ),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                CurrencyHelper.format(order.totalAmount),
+                style: AppType.amount.copyWith(
+                  fontSize: 16,
+                  color: order.isVoided
+                      ? AppColors.textTertiary
+                      : AppColors.textPrimary,
+                  decoration:
+                      order.isVoided ? TextDecoration.lineThrough : null,
+                ),
+              ),
+              if (order.pax > 0)
+                Text('${order.pax} pax',
+                    style: AppType.caption
+                        .copyWith(color: AppColors.textTertiary)),
+            ],
+          ),
+        ],
       ),
     );
   }
-
-  String _formatDate(DateTime dt) {
-    final now = DateTime.now();
-    if (dt.year == now.year && dt.month == now.month && dt.day == now.day) {
-      return '${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
-    }
-    return '${dt.day}/${dt.month} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
-  }
 }
 
-// ── Empty State ───────────────────────────────────────────────────────────────
+// ── Detail Panel (master-detail di tablet) ────────────────────────────────────
 
-class _EmptyState extends StatelessWidget {
-  final VoidCallback onRefresh;
-  const _EmptyState({required this.onRefresh});
+class _DetailPanel extends StatelessWidget {
+  final Order? order;
+  final void Function(Order) onPay;
+  final void Function(Order) onVoid;
+
+  const _DetailPanel({
+    required this.order,
+    required this.onPay,
+    required this.onVoid,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Center(
+    final o = order;
+    if (o == null) {
+      return const EmptyState(
+        icon: Icons.touch_app_rounded,
+        title: 'Pilih transaksi',
+        message: 'Ketuk transaksi di daftar untuk melihat detail & aksinya.',
+        accent: AppColors.moduleTransaksi,
+      );
+    }
+
+    final color = _statusColor(o);
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(context.pagePadX, AppSpacing.md,
+          context.pagePadX, context.pagePadY),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              color: const Color(0xFFE5E5EA),
-              borderRadius: BorderRadius.circular(24),
+          AppCard(
+            accent: color,
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    IconBadge(icon: _statusIcon(o), color: color, size: 52),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Meja ${o.tableNumber}',
+                              style: AppType.h2,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis),
+                          if (o.customerName?.isNotEmpty ?? false) ...[
+                            const SizedBox(height: 2),
+                            Text(o.customerName!,
+                                style: AppType.caption,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis),
+                          ],
+                        ],
+                      ),
+                    ),
+                    StatusPill(
+                        label: _statusLabel(o),
+                        color: color,
+                        icon: _statusIcon(o)),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Text('Total',
+                    style: AppType.caption
+                        .copyWith(color: AppColors.textTertiary)),
+                const SizedBox(height: 2),
+                Text(
+                  CurrencyHelper.format(o.totalAmount),
+                  style: AppType.amountLg.copyWith(
+                    color: o.isVoided
+                        ? AppColors.textTertiary
+                        : AppColors.textPrimary,
+                    decoration:
+                        o.isVoided ? TextDecoration.lineThrough : null,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                const Divider(height: 1),
+                const SizedBox(height: AppSpacing.md),
+                _DetailRow(label: 'Item', value: '${o.basketSize}'),
+                if (o.pax > 0) _DetailRow(label: 'Pax', value: '${o.pax}'),
+                _DetailRow(label: 'Waktu', value: _formatDate(o.createdAt)),
+                if (!o.isPaid && !o.isVoided)
+                  _DetailRow(
+                    label: 'Sisa',
+                    value: CurrencyHelper.format(o.remaining),
+                    valueColor: AppColors.danger,
+                  ),
+                if (o.isVoided) ...[
+                  _DetailRow(label: 'Void oleh', value: o.voidedBy ?? '-'),
+                  if (o.voidReason?.isNotEmpty ?? false)
+                    _DetailRow(label: 'Alasan', value: o.voidReason!),
+                ],
+              ],
             ),
-            child: const Icon(Icons.receipt_long_outlined,
-                size: 40, color: Color(0xFFAEAEB2)),
           ),
-          const SizedBox(height: 16),
-          const Text('Tidak ada transaksi',
-              style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF3C3C43),
-              )),
-          const SizedBox(height: 6),
-          const Text('Transaksi akan muncul di sini',
-              style: TextStyle(fontSize: 14, color: Color(0xFF8E8E93))),
-          const SizedBox(height: 24),
-          GestureDetector(
-            onTap: onRefresh,
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              decoration: BoxDecoration(
-                color: const Color(0xFF10B981),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Text('Refresh',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  )),
+          const SizedBox(height: AppSpacing.md),
+          if (o.isVoided)
+            const _VoidNote()
+          else if (!o.isPaid)
+            AppButton(
+              label: 'Bayar',
+              icon: Icons.payments_rounded,
+              variant: AppButtonVariant.success,
+              onPressed: () => onPay(o),
+            )
+          else
+            AppButton(
+              label: 'Void Transaksi',
+              icon: Icons.block_rounded,
+              variant: AppButtonVariant.danger,
+              onPressed: () => onVoid(o),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DetailRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? valueColor;
+  const _DetailRow({required this.label, required this.value, this.valueColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label,
+              style: AppType.caption.copyWith(color: AppColors.textTertiary)),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: AppType.label
+                  .copyWith(color: valueColor ?? AppColors.textPrimary),
             ),
           ),
         ],
@@ -811,42 +877,71 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-// ── Shared Nav Button ─────────────────────────────────────────────────────────
+// ── Void note (info transaksi sudah di-void) ──────────────────────────────────
 
-class _NavButton extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback? onTap;
-  final bool isLoading;
-
-  const _NavButton({
-    required this.icon,
-    this.onTap,
-    this.isLoading = false,
-  });
+class _VoidNote extends StatelessWidget {
+  const _VoidNote();
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white.withValues(alpha: 0.15),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: SizedBox(
-          width: 42,
-          height: 42,
-          child: isLoading
-              ? const Center(
-                  child: SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white),
-                  ),
-                )
-              : Icon(icon, color: Colors.white, size: 20),
-        ),
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceMuted,
+        borderRadius: AppRadius.rMd,
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.info_outline_rounded,
+              size: 18, color: AppColors.textTertiary),
+          const SizedBox(width: AppSpacing.xs),
+          Expanded(
+            child: Text('Transaksi sudah di-void.', style: AppType.bodySm),
+          ),
+        ],
       ),
     );
   }
+}
+
+// ── Status helpers ────────────────────────────────────────────────────────────
+
+Color _statusColor(Order o) {
+  if (o.isVoided) return AppColors.textTertiary;
+  if (o.isPaid) return AppColors.success;
+  if (o.paymentStatus == 'partial') return AppColors.warning;
+  return AppColors.danger;
+}
+
+String _statusLabel(Order o) {
+  if (o.isVoided) return 'VOID';
+  if (o.paymentStatus == 'paid') return 'LUNAS';
+  if (o.paymentStatus == 'partial') return 'SEBAGIAN';
+  return 'BELUM';
+}
+
+IconData _statusIcon(Order o) {
+  if (o.isVoided) return Icons.cancel_rounded;
+  if (o.isPaid) return Icons.check_circle_rounded;
+  return Icons.pending_rounded;
+}
+
+String _statusText(Order o) {
+  if (o.isVoided) {
+    final by = o.voidedBy ?? '-';
+    final reason =
+        (o.voidReason?.isNotEmpty ?? false) ? ' · ${o.voidReason}' : '';
+    return 'VOID · $by$reason';
+  }
+  if (o.isPaid) return 'Lunas';
+  return 'Belum lunas · sisa ${CurrencyHelper.format(o.remaining)}';
+}
+
+String _formatDate(DateTime dt) {
+  final now = DateTime.now();
+  if (dt.year == now.year && dt.month == now.month && dt.day == now.day) {
+    return '${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
+  }
+  return '${dt.day}/${dt.month} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
 }

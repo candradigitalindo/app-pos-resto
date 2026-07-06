@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/station_api_client.dart';
+import '../../theme/theme.dart';
 
 /// Login PIN di perangkat Station. Memverifikasi ke Main POS lalu menyerahkan
 /// data user {id, full_name, username, role} ke [onLoggedIn]. Role menentukan
@@ -17,6 +18,11 @@ class _StationLoginScreenState extends State<StationLoginScreen> {
   String _pin = '';
   bool _busy = false;
   String? _error;
+
+  // Warna khusus konteks gelap login. SECONDARY gold untuk indikator PIN —
+  // hangat & mewah di atas forest gelap (tombol konfirmasi tetap hijau).
+  static const _accent = AppColors.accent;
+  static const _glassBorder = Color(0x1FFFFFFF);
 
   void _tap(String d) {
     if (_busy || _pin.length >= 8) return;
@@ -61,63 +67,156 @@ class _StationLoginScreenState extends State<StationLoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0F172A),
-      body: Center(
-        child: SingleChildScrollView(
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: AppColors.sidebarGradient,
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.xl, vertical: AppSpacing.lg),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildBranding(),
+                  const SizedBox(height: AppSpacing.xl),
+                  _buildLoginCard(),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBranding() {
+    return Column(
+      children: [
+        Container(
+          width: 72,
+          height: 72,
+          decoration: BoxDecoration(
+            color: AppColors.soft(Colors.white, 0.95),
+            borderRadius: AppRadius.rXl,
+            border: Border.all(color: AppColors.soft(Colors.white, 0.6)),
+            boxShadow: AppShadows.glow(AppColors.greenDark, strength: 0.4),
+          ),
+          child:
+              const Icon(Icons.point_of_sale_rounded, color: AppColors.green, size: 36),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        const Text(
+          'Login Station',
+          style: TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+            letterSpacing: -0.5,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Peran menentukan tampilan',
+          style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.6)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLoginCard() {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 400),
+      child: ClipRRect(
+        borderRadius: AppRadius.rXxl,
+        child: Container(
+          padding: const EdgeInsets.all(AppSpacing.xl),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.08),
+            borderRadius: AppRadius.rXxl,
+            border: Border.all(color: _glassBorder),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 40,
+                offset: const Offset(0, 16),
+              ),
+            ],
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.point_of_sale,
-                  size: 56, color: Color(0xFF10B981)),
-              const SizedBox(height: 12),
-              const Text('Login Station',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800)),
+              const Text(
+                'Masukkan PIN',
+                style: TextStyle(
+                    fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white),
+              ),
               const SizedBox(height: 4),
-              const Text('Masukkan PIN — peran menentukan tampilan',
-                  style: TextStyle(color: Colors.white54, fontSize: 13)),
-              const SizedBox(height: 24),
-              // PIN dots
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(
-                  _pin.isEmpty ? 4 : _pin.length,
-                  (i) => Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 6),
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: i < _pin.length
-                          ? const Color(0xFF10B981)
-                          : Colors.white24,
-                    ),
-                  ),
+              Text(
+                'Verifikasi PIN ke Main POS',
+                style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.5)),
+              ),
+              const SizedBox(height: AppSpacing.xl),
+              _buildPinDots(),
+              const SizedBox(height: AppSpacing.md),
+              SizedBox(
+                height: 24,
+                child: Center(
+                  child: _error != null
+                      ? Text(
+                          _error!,
+                          style: const TextStyle(
+                            color: Color(0xFFFCA5A5),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        )
+                      : (_busy
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2.4, color: _accent),
+                            )
+                          : null),
                 ),
               ),
-              const SizedBox(height: 16),
-              SizedBox(
-                height: 22,
-                child: _error != null
-                    ? Text(_error!,
-                        style: const TextStyle(
-                            color: Color(0xFFF87171), fontSize: 13))
-                    : (_busy
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Color(0xFF10B981)))
-                        : null),
-              ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.sm),
               _PinPad(onTap: _tap, onDelete: _del, onSubmit: _submit),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildPinDots() {
+    final count = _pin.isEmpty ? 4 : _pin.length;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(count, (index) {
+        final filled = index < _pin.length;
+        return AnimatedContainer(
+          duration: AppMotion.fast,
+          margin: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
+          width: filled ? 18 : 15,
+          height: filled ? 18 : 15,
+          decoration: BoxDecoration(
+            color: filled ? _accent : Colors.white.withValues(alpha: 0.12),
+            shape: BoxShape.circle,
+            border:
+                filled ? null : Border.all(color: Colors.white.withValues(alpha: 0.25)),
+            boxShadow: filled
+                ? [BoxShadow(color: _accent.withValues(alpha: 0.6), blurRadius: 12)]
+                : null,
+          ),
+        );
+      }),
     );
   }
 }
@@ -131,33 +230,6 @@ class _PinPad extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget key(String label, {VoidCallback? onPressed, IconData? icon}) {
-      return Padding(
-        padding: const EdgeInsets.all(6),
-        child: SizedBox(
-          width: 76,
-          height: 64,
-          child: Material(
-            color: const Color(0xFF1E293B),
-            borderRadius: BorderRadius.circular(14),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: onPressed ?? () => onTap(label),
-              child: Center(
-                child: icon != null
-                    ? Icon(icon, color: Colors.white, size: 24)
-                    : Text(label,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 24,
-                            fontWeight: FontWeight.w600)),
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
     return Column(
       children: [
         for (final row in const [
@@ -165,19 +237,103 @@ class _PinPad extends StatelessWidget {
           ['4', '5', '6'],
           ['7', '8', '9'],
         ])
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [for (final d in row) key(d)],
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+            child: Row(
+              children: [
+                for (final d in row)
+                  Expanded(
+                    child: _KeyButton(
+                      onTap: () => onTap(d),
+                      child: Text(
+                        d,
+                        style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         Row(
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            key('', icon: Icons.backspace_outlined, onPressed: onDelete),
-            key('0'),
-            key('', icon: Icons.check, onPressed: onSubmit),
+            Expanded(
+              child: _KeyButton(
+                onTap: onDelete,
+                subtle: true,
+                child: Icon(Icons.backspace_rounded,
+                    color: AppColors.soft(Colors.white, 0.6), size: 24),
+              ),
+            ),
+            Expanded(
+              child: _KeyButton(
+                onTap: () => onTap('0'),
+                child: const Text(
+                  '0',
+                  style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white),
+                ),
+              ),
+            ),
+            Expanded(
+              child: _KeyButton(
+                onTap: onSubmit,
+                accent: true,
+                child: const Icon(Icons.check_rounded,
+                    color: AppColors.green, size: 26),
+              ),
+            ),
           ],
         ),
       ],
+    );
+  }
+}
+
+class _KeyButton extends StatelessWidget {
+  final Widget child;
+  final VoidCallback onTap;
+  final bool subtle;
+  final bool accent;
+  const _KeyButton({
+    required this.child,
+    required this.onTap,
+    this.subtle = false,
+    this.accent = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final height = context.isPhone ? 54.0 : 60.0;
+    return Padding(
+      padding: const EdgeInsets.all(AppSpacing.xxs),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: AppRadius.rMd,
+        child: InkWell(
+          borderRadius: AppRadius.rMd,
+          onTap: onTap,
+          splashColor: Colors.white.withValues(alpha: 0.25),
+          child: Container(
+            height: height,
+            decoration: BoxDecoration(
+              // Tombol konfirmasi = putih solid (aksi utama) di atas latar hijau.
+              color: accent
+                  ? AppColors.soft(Colors.white, 0.95)
+                  : Colors.white.withValues(alpha: subtle ? 0.04 : 0.08),
+              borderRadius: AppRadius.rMd,
+              border: accent
+                  ? null
+                  : Border.all(color: Colors.white.withValues(alpha: 0.12)),
+            ),
+            child: Center(child: child),
+          ),
+        ),
+      ),
     );
   }
 }

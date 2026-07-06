@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../app.dart';
 import '../../controllers/settings_controller.dart';
@@ -8,6 +10,9 @@ import '../../models/models.dart';
 import '../../repositories/order_repository.dart';
 import '../../services/cloud_sync_service.dart';
 import '../../services/device_role_service.dart';
+import '../../services/logo_service.dart';
+import '../../theme/theme.dart';
+import '../../widgets/ui/ui.dart';
 import 'print_queue_screen.dart';
 import 'user_management_screen.dart';
 import 'printer_settings_screen.dart';
@@ -25,6 +30,8 @@ class _SettingsScreenState extends State<SettingsScreen>
   late final SettingsController _controller;
   late final TabController _tabController;
   final _orderRepo = OrderRepository();
+
+  static const _accent = AppColors.modulePengaturan;
 
   // Outlet
   final _nameCtrl = TextEditingController();
@@ -45,16 +52,20 @@ class _SettingsScreenState extends State<SettingsScreen>
   DateTime? _lastSyncAt;
   Timer? _lastSyncRefresh;
 
+  // Logo struk (disimpan lokal via LogoService)
+  Uint8List? _logoPreview = LogoService.instance.previewBytes;
+  bool _logoBusy = false;
+
   // Additional charges
   List<AdditionalCharge> _charges = [];
   bool _loadingCharges = false;
 
   static const _tabs = [
-    Tab(icon: Icon(Icons.store_outlined), text: 'Outlet'),
-    Tab(icon: Icon(Icons.receipt_outlined), text: 'Biaya'),
-    Tab(icon: Icon(Icons.cloud_outlined), text: 'Cloud'),
-    Tab(icon: Icon(Icons.storage_outlined), text: 'Data'),
-    Tab(icon: Icon(Icons.settings_outlined), text: 'Aplikasi'),
+    Tab(icon: Icon(Icons.store_rounded), text: 'Outlet'),
+    Tab(icon: Icon(Icons.receipt_rounded), text: 'Biaya'),
+    Tab(icon: Icon(Icons.cloud_rounded), text: 'Cloud'),
+    Tab(icon: Icon(Icons.storage_rounded), text: 'Data'),
+    Tab(icon: Icon(Icons.tune_rounded), text: 'Aplikasi'),
   ];
 
   @override
@@ -109,18 +120,11 @@ class _SettingsScreenState extends State<SettingsScreen>
     final msg =
         _controller.state.successMessage ?? _controller.state.errorMessage;
     if (msg != null) {
+      final isSuccess = _controller.state.successMessage != null;
       _controller.clearMessages();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(msg),
-          backgroundColor: _controller.state.successMessage != null
-              ? const Color(0xFF059669)
-              : Colors.red,
-          behavior: SnackBarBehavior.floating,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ));
+        showAppSnack(context, msg, isError: !isSuccess);
       });
     }
   }
@@ -157,86 +161,264 @@ class _SettingsScreenState extends State<SettingsScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF059669),
-        foregroundColor: Colors.white,
-        elevation: 0,
-        title: const Text('Pengaturan',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
-        ),
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: _tabs,
-          indicatorColor: Colors.white,
-          indicatorWeight: 3,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white.withValues(alpha: 0.6),
-          labelStyle:
-              const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-          unselectedLabelStyle: const TextStyle(fontSize: 11),
+      body: AppBackground(
+        child: Column(
+          children: [
+            const AppPageHeader(
+              title: 'Pengaturan',
+              subtitle: 'Konfigurasi outlet & aplikasi',
+              icon: Icons.settings_rounded,
+              accent: _accent,
+            ),
+            Container(
+              decoration: const BoxDecoration(
+                color: AppColors.surface,
+                border: Border(bottom: BorderSide(color: AppColors.border)),
+              ),
+              child: TabBar(
+                controller: _tabController,
+                tabs: _tabs,
+                labelColor: _accent,
+                unselectedLabelColor: AppColors.textTertiary,
+                indicatorColor: _accent,
+                indicatorSize: TabBarIndicatorSize.label,
+                labelStyle: AppType.caption.copyWith(fontWeight: FontWeight.w700),
+                unselectedLabelStyle: AppType.caption,
+              ),
+            ),
+            Expanded(
+              child: _controller.state.isLoading
+                  ? const AppLoader(label: 'Memuat pengaturan...')
+                  : TabBarView(
+                      controller: _tabController,
+                      children: [
+                        _tabOutlet(),
+                        _tabBiaya(),
+                        _tabCloud(),
+                        _tabData(),
+                        _tabAplikasi(),
+                      ],
+                    ),
+            ),
+          ],
         ),
       ),
-      body: _controller.state.isLoading
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF059669)))
-          : TabBarView(
-              controller: _tabController,
-              children: [
-                _tabOutlet(),
-                _tabBiaya(),
-                _tabCloud(),
-                _tabData(),
-                _tabAplikasi(),
-              ],
-            ),
     );
   }
 
   // ── Tab: Outlet ───────────────────────────────────────────────────────────
 
-  Widget _tabOutlet() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
+  Future<void> _pickLogo() async {
+    if (_logoBusy) return;
+    try {
+      final xfile = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1200,
+      );
+      if (xfile == null) return;
+      setState(() => _logoBusy = true);
+      final bytes = await xfile.readAsBytes();
+      final err = await LogoService.instance.saveFromBytes(bytes);
+      if (!mounted) return;
+      setState(() {
+        _logoBusy = false;
+        _logoPreview = LogoService.instance.previewBytes;
+      });
+      showAppSnack(context, err ?? 'Logo struk tersimpan.', isError: err != null);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _logoBusy = false);
+      showAppSnack(context, 'Gagal memilih gambar: $e', isError: true);
+    }
+  }
+
+  Future<void> _removeLogo() async {
+    final ok = await showAppConfirm(
+      context,
+      title: 'Hapus Logo Struk?',
+      message: 'Logo akan dihapus dari struk pembayaran & tagihan.',
+      confirmText: 'Hapus',
+      icon: Icons.delete_rounded,
+      destructive: true,
+    );
+    if (!ok) return;
+    await LogoService.instance.remove();
+    if (!mounted) return;
+    setState(() => _logoPreview = null);
+    showAppSnack(context, 'Logo struk dihapus.');
+  }
+
+  Widget _logoCard() {
+    final has = _logoPreview != null;
+    return AppCard(
+      padding: const EdgeInsets.all(AppSpacing.md),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _card([
-            _field(_nameCtrl, 'Nama Outlet', Icons.store_outlined),
-            _div(),
-            _field(_codeCtrl, 'Kode Outlet', Icons.tag_outlined),
-            _div(),
-            _field(_addressCtrl, 'Alamat', Icons.location_on_outlined,
-                maxLines: 2),
-            _div(),
-            _field(_phoneCtrl, 'Telepon', Icons.phone_outlined,
-                keyboardType: TextInputType.phone),
-            _div(),
-            _field(_socialCtrl, 'Media Sosial', Icons.alternate_email),
-            _div(),
-            _field(_footerCtrl, 'Catatan Struk', Icons.receipt_outlined,
-                maxLines: 2),
-            _div(),
-            _field(_targetSpendCtrl, 'Target Spend / Pax',
-                Icons.people_outline,
-                keyboardType: TextInputType.number, prefix: 'Rp '),
-          ]),
-          const SizedBox(height: 16),
-          _saveBtn('Simpan Profil', _controller.state.isSaving, () {
-            _controller.saveOutlet(_controller.state.outletInfo.copyWith(
-              name: _nameCtrl.text.trim(),
-              code: _codeCtrl.text.trim(),
-              address: _addressCtrl.text.trim(),
-              phone: _phoneCtrl.text.trim(),
-              socialMedia: _socialCtrl.text.trim(),
-              receiptFooter: _footerCtrl.text.trim(),
-              targetSpendPerPax:
-                  int.tryParse(_targetSpendCtrl.text) ?? 0,
-            ));
-          }),
+          Row(
+            children: [
+              const IconBadge(
+                  icon: Icons.image_rounded, color: AppColors.accent, size: 40),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Logo Struk', style: AppType.title),
+                    Text('Tampil di atas struk pembayaran & tagihan',
+                        style: AppType.caption),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          // Pratinjau (latar putih seperti kertas struk)
+          Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(minHeight: 96, maxHeight: 170),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: AppRadius.rMd,
+              border: Border.all(color: AppColors.border),
+            ),
+            alignment: Alignment.center,
+            padding: const EdgeInsets.all(AppSpacing.sm),
+            child: has
+                ? Image.memory(_logoPreview!, fit: BoxFit.contain)
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.add_photo_alternate_rounded,
+                          size: 34, color: AppColors.textTertiary),
+                      const SizedBox(height: 6),
+                      Text('Belum ada logo',
+                          style: AppType.caption
+                              .copyWith(color: AppColors.textTertiary)),
+                    ],
+                  ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          // Aturan ukuran
+          Container(
+            padding: const EdgeInsets.all(AppSpacing.sm),
+            decoration: BoxDecoration(
+              color: AppColors.infoSoft,
+              borderRadius: AppRadius.rSm,
+              border: Border.all(color: AppColors.soft(AppColors.info, 0.25)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.info_outline_rounded,
+                    size: 16, color: AppColors.info),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(
+                  child: Text(
+                    'Gunakan gambar hitam-putih kontras tinggi (dicetak monokrom). '
+                    'Lebar ideal 384px untuk 58mm / 576px untuk 80mm, tinggi maks ±200px. '
+                    'Ukuran & posisi diatur otomatis (dipusatkan, tak boros kertas).',
+                    style: AppType.caption
+                        .copyWith(color: AppColors.textSecondary),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Row(
+            children: [
+              Expanded(
+                child: AppButton(
+                  label: has ? 'Ganti Logo' : 'Unggah Logo',
+                  icon: Icons.upload_rounded,
+                  onPressed: _logoBusy ? null : _pickLogo,
+                  loading: _logoBusy,
+                  variant: AppButtonVariant.tonal,
+                  accent: AppColors.accent,
+                ),
+              ),
+              if (has) ...[
+                const SizedBox(width: AppSpacing.sm),
+                AppButton(
+                  label: 'Hapus',
+                  icon: Icons.delete_outline_rounded,
+                  onPressed: _logoBusy ? null : _removeLogo,
+                  variant: AppButtonVariant.danger,
+                  expanded: false,
+                ),
+              ],
+            ],
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _tabOutlet() {
+    // Kolom DATA outlet (form + tombol simpan).
+    final dataCol = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _group([
+          _field(_nameCtrl, 'Nama Outlet', Icons.store_rounded),
+          _div(),
+          _field(_codeCtrl, 'Kode Outlet', Icons.tag_rounded),
+          _div(),
+          _field(_addressCtrl, 'Alamat', Icons.location_on_rounded,
+              maxLines: 2),
+          _div(),
+          _field(_phoneCtrl, 'Telepon', Icons.phone_rounded,
+              keyboardType: TextInputType.phone),
+          _div(),
+          _field(_socialCtrl, 'Media Sosial', Icons.alternate_email_rounded),
+          _div(),
+          _field(_footerCtrl, 'Catatan Struk', Icons.receipt_rounded,
+              maxLines: 2),
+          _div(),
+          _field(_targetSpendCtrl, 'Target Spend / Pax', Icons.people_rounded,
+              keyboardType: TextInputType.number, prefix: 'Rp '),
+        ]),
+        const SizedBox(height: AppSpacing.lg),
+        _saveBtn('Simpan Profil', _controller.state.isSaving, () {
+          _controller.saveOutlet(_controller.state.outletInfo.copyWith(
+            name: _nameCtrl.text.trim(),
+            code: _codeCtrl.text.trim(),
+            address: _addressCtrl.text.trim(),
+            phone: _phoneCtrl.text.trim(),
+            socialMedia: _socialCtrl.text.trim(),
+            receiptFooter: _footerCtrl.text.trim(),
+            targetSpendPerPax: int.tryParse(_targetSpendCtrl.text) ?? 0,
+          ));
+        }),
+      ],
+    );
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      child: LayoutBuilder(
+        builder: (context, c) {
+          // 2 kolom (Data | Logo) di layar lebar; menumpuk 1 kolom bila sempit.
+          if (c.maxWidth >= 720) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(flex: 3, child: dataCol),
+                const SizedBox(width: AppSpacing.lg),
+                Expanded(flex: 2, child: _logoCard()),
+              ],
+            );
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              dataCol,
+              const SizedBox(height: AppSpacing.lg),
+              _logoCard(),
+            ],
+          );
+        },
       ),
     );
   }
@@ -246,56 +428,50 @@ class _SettingsScreenState extends State<SettingsScreen>
   Widget _tabBiaya() {
     return Column(
       children: [
-        Container(
-          color: Colors.white,
-          padding:
-              const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.xs),
           child: Row(
             children: [
-              const Text('Biaya Tambahan (Pajak, Service, dll)',
-                  style: TextStyle(
-                      fontSize: 13, color: Color(0xFF64748B))),
-              const Spacer(),
-              FilledButton.icon(
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF059669),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 8),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Biaya Tambahan', style: TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary)),
+                    Text('Pajak, Service Charge, dll',
+                        style: TextStyle(fontSize: 12, color: AppColors.textTertiary)),
+                  ],
                 ),
+              ),
+              AppButton(
+                label: 'Tambah',
+                icon: Icons.add_rounded,
+                size: AppButtonSize.small,
+                expanded: false,
+                accent: _accent,
                 onPressed: () => _showChargeDialog(),
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('Tambah', style: TextStyle(fontSize: 13)),
               ),
             ],
           ),
         ),
-        const Divider(height: 0),
         Expanded(
           child: _loadingCharges
-              ? const Center(
-                  child: CircularProgressIndicator(
-                      color: Color(0xFF059669)))
+              ? const AppLoader()
               : _charges.isEmpty
-                  ? const Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.receipt_long_outlined,
-                              size: 48, color: Color(0xFFCBD5E1)),
-                          SizedBox(height: 8),
-                          Text('Belum ada biaya tambahan',
-                              style: TextStyle(
-                                  color: Color(0xFF94A3B8))),
-                        ],
-                      ),
+                  ? EmptyState(
+                      icon: Icons.receipt_long_rounded,
+                      title: 'Belum ada biaya tambahan',
+                      message: 'Tambahkan pajak, service charge, atau biaya lain.',
+                      actionLabel: 'Tambah Biaya',
+                      onAction: () => _showChargeDialog(),
+                      accent: _accent,
                     )
                   : ListView.separated(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(AppSpacing.md),
                       itemCount: _charges.length,
-                      separatorBuilder: (_, __) =>
-                          const SizedBox(height: 8),
+                      separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
                       itemBuilder: (_, i) => _chargeCard(_charges[i]),
                     ),
         ),
@@ -308,37 +484,28 @@ class _SettingsScreenState extends State<SettingsScreen>
   Widget _tabCloud() {
     final apiKey = _apiKeyCtrl.text.trim();
     final isConfigured = apiKey.isNotEmpty;
+    final statusColor = isConfigured ? AppColors.success : AppColors.warning;
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(AppSpacing.lg),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: isConfigured
-                  ? const Color(0xFFD1FAE5)
-                  : const Color(0xFFFEF3C7),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: isConfigured
-                    ? const Color(0xFF059669)
-                    : const Color(0xFFF59E0B),
-              ),
-            ),
+          AppCard(
+            color: AppColors.soft(statusColor, 0.10),
+            border: Border.all(color: AppColors.soft(statusColor, 0.32)),
+            shadow: const [],
+            padding: const EdgeInsets.all(AppSpacing.md),
             child: Row(
               children: [
-                Icon(
-                  isConfigured
-                      ? Icons.cloud_done_outlined
-                      : Icons.cloud_off_outlined,
-                  color: isConfigured
-                      ? const Color(0xFF059669)
-                      : const Color(0xFFF59E0B),
-                  size: 20,
+                IconBadge(
+                  icon: isConfigured
+                      ? Icons.cloud_done_rounded
+                      : Icons.cloud_off_rounded,
+                  color: statusColor,
+                  size: 44,
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -347,50 +514,46 @@ class _SettingsScreenState extends State<SettingsScreen>
                         isConfigured
                             ? 'Cloud terkonfigurasi'
                             : 'Cloud belum dikonfigurasi — isi API Key',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: isConfigured
-                              ? const Color(0xFF065F46)
-                              : const Color(0xFF92400E),
-                        ),
+                        style: AppType.body.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary),
                       ),
                       if (isConfigured) ...[
                         const SizedBox(height: 2),
-                        Text(
-                          'Sync terakhir: ${_formatLastSync(_lastSyncAt)}',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Color(0xFF047857),
-                          ),
-                        ),
+                        Text('Sync terakhir: ${_formatLastSync(_lastSyncAt)}',
+                            style: AppType.caption),
                       ],
                     ],
                   ),
                 ),
+                StatusPill(
+                  label: isConfigured ? 'Aktif' : 'Perlu diisi',
+                  color: statusColor,
+                ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
-          _card([
+          const SizedBox(height: AppSpacing.md),
+          _group([
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md, vertical: AppSpacing.sm),
               child: Row(
                 children: [
-                  const Icon(Icons.cloud_outlined,
-                      color: Color(0xFF94A3B8), size: 20),
-                  const SizedBox(width: 14),
+                  const IconBadge(
+                      icon: Icons.cloud_rounded, color: _accent, size: 40),
+                  const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('URL Server Cloud',
-                            style: TextStyle(
-                                fontSize: 12, color: Color(0xFF94A3B8))),
+                        Text('URL Server Cloud',
+                            style: AppType.caption.copyWith(
+                                color: AppColors.textTertiary)),
                         const SizedBox(height: 2),
                         Text(
                           _apiUrlCtrl.text.isEmpty ? '-' : _apiUrlCtrl.text,
-                          style: const TextStyle(fontSize: 14),
+                          style: AppType.body,
                         ),
                       ],
                     ),
@@ -399,12 +562,12 @@ class _SettingsScreenState extends State<SettingsScreen>
               ),
             ),
             _div(),
-            _field(_apiKeyCtrl, 'API Key', Icons.vpn_key_outlined),
+            _field(_apiKeyCtrl, 'API Key', Icons.vpn_key_rounded),
             _div(),
             _switchRow(
               'Aktifkan Sync',
               'Sinkronisasi otomatis ke cloud',
-              Icons.sync,
+              Icons.sync_rounded,
               _syncEnabled,
               (v) => setState(() => _syncEnabled = v),
             ),
@@ -412,7 +575,7 @@ class _SettingsScreenState extends State<SettingsScreen>
             _dropdownRow<int>(
               'Interval Sync',
               'Menit antar sinkronisasi',
-              Icons.timer_outlined,
+              Icons.timer_rounded,
               _syncInterval,
               [1, 3, 5, 10, 15, 30],
               (v) => setState(() => _syncInterval = v ?? 5),
@@ -422,22 +585,22 @@ class _SettingsScreenState extends State<SettingsScreen>
               },
             ),
           ]),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.md),
           _saveBtn(
             _testingConnection ? 'Menyimpan & menyambungkan...' : 'Simpan & Sambungkan',
             _controller.state.isSaving || _testingConnection,
             _saveAndConnect,
           ),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              icon: const Icon(Icons.sync_outlined),
-              label: const Text('Status Sinkronisasi'),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SyncStatusScreen()),
-              ),
+          const SizedBox(height: AppSpacing.sm),
+          // Aksi sekunder (bukan CTA utama) → aksen GOLD tonal.
+          AppButton(
+            label: 'Status Sinkronisasi',
+            icon: Icons.sync_rounded,
+            variant: AppButtonVariant.tonal,
+            accent: AppColors.accent,
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SyncStatusScreen()),
             ),
           ),
         ],
@@ -472,17 +635,16 @@ class _SettingsScreenState extends State<SettingsScreen>
       await _refreshLastSync();
       if (!mounted) return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(ok
+    showAppSnack(
+      context,
+      ok
           ? 'Terhubung! ${result['outlet_name']} — '
               '${result['products']} produk, ${result['categories']} kategori '
               'dari cloud (hapus lokal: ${result['deleted_products'] ?? 0} produk, '
               '${result['deleted_categories'] ?? 0} kategori)'
-          : 'Tersimpan, tapi koneksi gagal: ${result['error']}'),
-      backgroundColor: ok ? const Color(0xFF059669) : Colors.red,
-      behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-    ));
+          : 'Tersimpan, tapi koneksi gagal: ${result['error']}',
+      isError: !ok,
+    );
   }
 
   // ── Tab: Data ─────────────────────────────────────────────────────────────
@@ -490,14 +652,15 @@ class _SettingsScreenState extends State<SettingsScreen>
   Widget _tabData() {
     final retentionDays = _controller.state.outletInfo.retentionDays;
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(AppSpacing.lg),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _card([
+          _group([
             _dropdownRow<int>(
               'Retensi Data',
               '0 = simpan selamanya',
-              Icons.history,
+              Icons.history_rounded,
               retentionDays,
               [0, 30, 60, 90, 180, 365],
               (v) => _controller.saveRetention(v ?? 0),
@@ -507,28 +670,29 @@ class _SettingsScreenState extends State<SettingsScreen>
               },
             ),
           ]),
-          const SizedBox(height: 12),
-          _card([
+          const SizedBox(height: AppSpacing.sm),
+          _group([
             _settingRow(
-              Icons.download_outlined,
+              Icons.download_rounded,
               'Seed Data Contoh',
               'Isi produk & meja sample untuk uji coba',
+              accent: AppColors.brand, // seragam hijau (bukan biru)
               onTap: () => _controller.seedData(),
             ),
             _div(),
             _settingRow(
-              Icons.cloud_download_outlined,
+              Icons.cloud_download_rounded,
               'Pulihkan dari Cloud',
               'Tarik shift terbuka & order belum dibayar dari cloud',
+              accent: AppColors.moduleKasir,
               onTap: _restoreFromCloud,
             ),
             _div(),
             _settingRow(
-              Icons.delete_forever_outlined,
+              Icons.delete_forever_rounded,
               'Reset Database',
               'Hapus semua data transaksi di perangkat ini (cloud tetap)',
-              iconColor: Colors.red,
-              textColor: Colors.red,
+              danger: true,
               onTap: _showResetDialog,
             ),
           ]),
@@ -541,12 +705,13 @@ class _SettingsScreenState extends State<SettingsScreen>
 
   Widget _tabAplikasi() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: _card([
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      child: _group([
         _settingRow(
-          Icons.print_outlined,
+          Icons.print_rounded,
           'Pengaturan Printer',
           'Konfigurasi printer Bluetooth & LAN',
+          accent: AppColors.brand, // seragam hijau (bukan biru)
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(
@@ -555,9 +720,10 @@ class _SettingsScreenState extends State<SettingsScreen>
         ),
         _div(),
         _settingRow(
-          Icons.receipt_long_outlined,
+          Icons.print_rounded,
           'Antrian Cetak Dapur/Bar',
           'Pantau status cetak & cetak ulang yang gagal',
+          accent: AppColors.moduleWaiter,
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => const PrintQueueScreen()),
@@ -565,9 +731,10 @@ class _SettingsScreenState extends State<SettingsScreen>
         ),
         _div(),
         _settingRow(
-          Icons.manage_accounts_outlined,
+          Icons.group_rounded,
           'Manajemen User',
           'Kelola akun kasir, waiter, manager, admin',
+          accent: AppColors.moduleProduk,
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => const UserManagementScreen()),
@@ -575,14 +742,15 @@ class _SettingsScreenState extends State<SettingsScreen>
         ),
         _div(),
         _settingRow(
-          Icons.devices_other_outlined,
+          Icons.devices_other_rounded,
           'Peran Perangkat',
           'Saat ini: Kasir Utama (Main POS)',
+          accent: AppColors.moduleMeja,
           onTap: _changeDeviceRole,
         ),
         _div(),
         _settingRow(
-          Icons.info_outline,
+          Icons.info_rounded,
           'Versi Aplikasi',
           'POS Resto v1.2.0  (build 3)',
         ),
@@ -591,24 +759,16 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   Future<void> _changeDeviceRole() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Ganti Peran Perangkat?'),
-        content: const Text(
-            'Perangkat akan kembali ke layar pemilihan peran. Gunakan ini bila '
-            'ingin menjadikan perangkat ini sebagai Station pelayan.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Batal')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Lanjut')),
-        ],
-      ),
+    final ok = await showAppConfirm(
+      context,
+      title: 'Ganti Peran Perangkat?',
+      message:
+          'Perangkat akan kembali ke layar pemilihan peran. Gunakan ini bila '
+          'ingin menjadikan perangkat ini sebagai Station pelayan.',
+      confirmText: 'Lanjut',
+      icon: Icons.devices_other_rounded,
     );
-    if (ok != true || !mounted) return;
+    if (!ok || !mounted) return;
     await DeviceRoleService.instance.clear();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
@@ -624,56 +784,54 @@ class _SettingsScreenState extends State<SettingsScreen>
     final valueStr = charge.chargeType == 'percentage'
         ? '${charge.value.toStringAsFixed(charge.value % 1 == 0 ? 0 : 1)}%'
         : 'Rp ${charge.value.toStringAsFixed(0)}';
+    final accent = isActive ? AppColors.success : AppColors.textTertiary;
+    final typeLabel = charge.chargeType == 'percentage' ? 'Persentase' : 'Tetap';
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-            color: isActive
-                ? const Color(0xFF10B981).withValues(alpha: 0.3)
-                : const Color(0xFFE2E8F0)),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withValues(alpha: 0.03),
-              blurRadius: 4,
-              offset: const Offset(0, 2))
-        ],
-      ),
-      child: ListTile(
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        leading: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: isActive
-                ? const Color(0xFFD1FAE5)
-                : const Color(0xFFF1F5F9),
-            borderRadius: BorderRadius.circular(8),
+    return AppCard(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+      accent: isActive ? AppColors.success : null,
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.sm, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppColors.soft(accent, 0.12),
+              borderRadius: AppRadius.rXs,
+            ),
+            child: Text(valueStr,
+                style: TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w800, color: accent)),
           ),
-          child: Text(valueStr,
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: isActive
-                      ? const Color(0xFF059669)
-                      : const Color(0xFF94A3B8))),
-        ),
-        title: Text(charge.name,
-            style: const TextStyle(
-                fontWeight: FontWeight.w600, fontSize: 14)),
-        subtitle: Text(
-            '${charge.chargeType == 'percentage' ? 'Persentase' : 'Tetap'} • ${isActive ? 'Aktif' : 'Nonaktif'}',
-            style: TextStyle(
-                fontSize: 12,
-                color: isActive
-                    ? const Color(0xFF059669)
-                    : const Color(0xFF94A3B8))),
-        trailing: IconButton(
-          icon: const Icon(Icons.edit_outlined,
-              size: 20, color: Color(0xFF94A3B8)),
-          onPressed: () => _showChargeDialog(existing: charge),
-        ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(charge.name, style: AppType.title, maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Text(typeLabel, style: AppType.caption),
+                    const SizedBox(width: AppSpacing.xs),
+                    StatusPill(
+                      label: isActive ? 'Aktif' : 'Nonaktif',
+                      color: isActive ? AppColors.success : AppColors.textTertiary,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          AppIconButton(
+            icon: Icons.edit_rounded,
+            color: _accent,
+            tooltip: 'Edit',
+            onPressed: () => _showChargeDialog(existing: charge),
+          ),
+        ],
       ),
     );
   }
@@ -685,102 +843,97 @@ class _SettingsScreenState extends State<SettingsScreen>
     String type = existing?.chargeType ?? 'percentage';
     bool isActive = existing == null || existing.isActive == 1;
 
-    showDialog(
-      context: context,
+    showAppModal(
+      context,
+      title: existing == null ? 'Tambah Biaya Tambahan' : 'Edit Biaya Tambahan',
+      icon: Icons.receipt_rounded,
+      accent: _accent,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16)),
-          title: Text(existing == null
-              ? 'Tambah Biaya Tambahan'
-              : 'Edit Biaya Tambahan'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Nama (cth: PPN, Service Charge)',
-                  border: OutlineInputBorder(),
-                ),
+        builder: (ctx, setS) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Nama (cth: PPN, Service Charge)',
               ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: valueCtrl,
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(
-                        labelText: 'Nilai',
-                        suffixText:
-                            type == 'percentage' ? '%' : 'Rp',
-                        border: const OutlineInputBorder(),
-                      ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: valueCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'Nilai',
+                      suffixText: type == 'percentage' ? '%' : 'Rp',
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  DropdownButton<String>(
-                    value: type,
-                    items: const [
-                      DropdownMenuItem(
-                          value: 'percentage', child: Text('  %  ')),
-                      DropdownMenuItem(
-                          value: 'fixed', child: Text('  Rp  ')),
-                    ],
-                    onChanged: (v) =>
-                        setS(() => type = v ?? 'percentage'),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                DropdownButton<String>(
+                  value: type,
+                  items: const [
+                    DropdownMenuItem(
+                        value: 'percentage', child: Text('  %  ')),
+                    DropdownMenuItem(
+                        value: 'fixed', child: Text('  Rp  ')),
+                  ],
+                  onChanged: (v) => setS(() => type = v ?? 'percentage'),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            SwitchListTile(
+              value: isActive,
+              title: const Text('Aktif'),
+              onChanged: (v) => setS(() => isActive = v),
+              contentPadding: EdgeInsets.zero,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Row(
+              children: [
+                Expanded(
+                  child: AppButton.neutral('Batal',
+                      onPressed: () => Navigator.pop(ctx)),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: AppButton(
+                    label: 'Simpan',
+                    accent: _accent,
+                    onPressed: () async {
+                      final name = nameCtrl.text.trim();
+                      final value = double.tryParse(valueCtrl.text) ?? 0;
+                      if (name.isEmpty) return;
+                      Navigator.pop(ctx);
+                      try {
+                        if (existing == null) {
+                          await _orderRepo.createAdditionalCharge(
+                              name: name,
+                              chargeType: type,
+                              value: value,
+                              isActive: isActive);
+                        } else {
+                          await _orderRepo.updateAdditionalCharge(
+                              id: existing.id!,
+                              name: name,
+                              chargeType: type,
+                              value: value,
+                              isActive: isActive);
+                        }
+                        _loadCharges();
+                      } catch (e) {
+                        if (mounted) {
+                          showAppSnack(context, 'Error: $e', isError: true);
+                        }
+                      }
+                    },
                   ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              SwitchListTile(
-                value: isActive,
-                title: const Text('Aktif'),
-                onChanged: (v) => setS(() => isActive = v),
-                activeThumbColor: const Color(0xFF059669),
-                activeTrackColor:
-                    const Color(0xFF059669).withValues(alpha: 0.4),
-                contentPadding: EdgeInsets.zero,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Batal')),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF059669)),
-              onPressed: () async {
-                final name = nameCtrl.text.trim();
-                final value = double.tryParse(valueCtrl.text) ?? 0;
-                if (name.isEmpty) return;
-                Navigator.pop(ctx);
-                try {
-                  if (existing == null) {
-                    await _orderRepo.createAdditionalCharge(
-                        name: name,
-                        chargeType: type,
-                        value: value,
-                        isActive: isActive);
-                  } else {
-                    await _orderRepo.updateAdditionalCharge(
-                        id: existing.id!,
-                        name: name,
-                        chargeType: type,
-                        value: value,
-                        isActive: isActive);
-                  }
-                  _loadCharges();
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Error: $e')));
-                  }
-                }
-              },
-              child: const Text('Simpan'),
+                ),
+              ],
             ),
           ],
         ),
@@ -800,67 +953,42 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   Future<void> _restoreFromCloud() async {
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
-      const SnackBar(content: Text('Memulihkan data dari cloud...')),
-    );
+    showAppSnack(context, 'Memulihkan data dari cloud...');
     final r = await CloudSyncService.instance.restoreFromCloud();
     if (!mounted) return;
+    final hasError = r['unconfigured'] == true || r['error'] != null;
     final msg = r['unconfigured'] == true
         ? 'Cloud belum dikonfigurasi.'
         : r['error'] != null
             ? 'Gagal memulihkan: ${r['error']}'
             : 'Dipulihkan: ${r['orders'] ?? 0} order, '
                 '${r['shifts'] ?? 0} shift, ${r['movements'] ?? 0} kas.';
-    messenger.showSnackBar(SnackBar(content: Text(msg)));
+    showAppSnack(context, msg, isError: hasError);
   }
 
-  void _showResetDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16)),
-        title: const Text('Reset Database?'),
-        content: const Text(
-            'Semua data transaksi akan dihapus permanen dan tidak dapat dikembalikan.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Batal')),
-          FilledButton(
-            style:
-                FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await _performReset();
-            },
-            child: const Text('Reset'),
-          ),
-        ],
-      ),
+  Future<void> _showResetDialog() async {
+    final ok = await showAppConfirm(
+      context,
+      title: 'Reset Database?',
+      message:
+          'Semua data transaksi akan dihapus permanen dan tidak dapat dikembalikan.',
+      confirmText: 'Reset',
+      icon: Icons.delete_forever_rounded,
+      destructive: true,
     );
+    if (ok) await _performReset();
   }
 
   // ── Widget helpers ────────────────────────────────────────────────────────
 
-  Widget _card(List<Widget> children) => Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
-                blurRadius: 6,
-                offset: const Offset(0, 2))
-          ],
-        ),
+  Widget _group(List<Widget> children) => AppCard(
+        padding: EdgeInsets.zero,
         child: Column(children: children),
       );
 
   Widget _div() => const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 16),
-        child: Divider(height: 0, color: Color(0xFFF1F5F9)),
+        padding: EdgeInsets.only(left: 68, right: AppSpacing.md),
+        child: Divider(height: 1, color: AppColors.border),
       );
 
   Widget _field(TextEditingController ctrl, String label, IconData icon,
@@ -869,31 +997,36 @@ class _SettingsScreenState extends State<SettingsScreen>
       bool obscure = false,
       String? prefix}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md, vertical: AppSpacing.sm),
       child: Row(
         crossAxisAlignment: maxLines > 1
             ? CrossAxisAlignment.start
             : CrossAxisAlignment.center,
         children: [
           Padding(
-            padding: EdgeInsets.only(top: maxLines > 1 ? 2 : 0),
-            child:
-                Icon(icon, color: const Color(0xFF94A3B8), size: 20),
+            padding: EdgeInsets.only(top: maxLines > 1 ? 6 : 0),
+            child: IconBadge(icon: icon, color: _accent, size: 40),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: TextField(
               controller: ctrl,
               maxLines: maxLines,
               keyboardType: keyboardType,
               obscureText: obscure,
-              style: const TextStyle(fontSize: 14),
+              style: AppType.body,
               decoration: InputDecoration(
                 labelText: label,
                 prefixText: prefix,
-                labelStyle: const TextStyle(
-                    fontSize: 13, color: Color(0xFF94A3B8)),
+                labelStyle:
+                    AppType.caption.copyWith(color: AppColors.textTertiary),
+                floatingLabelStyle:
+                    AppType.caption.copyWith(color: _accent),
+                filled: false,
                 border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
                 isDense: true,
                 contentPadding: EdgeInsets.zero,
               ),
@@ -907,31 +1040,22 @@ class _SettingsScreenState extends State<SettingsScreen>
   Widget _switchRow(String title, String subtitle, IconData icon, bool value,
       ValueChanged<bool> onChanged) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md, vertical: AppSpacing.xs),
       child: Row(
         children: [
-          Icon(icon, color: const Color(0xFF94A3B8), size: 20),
-          const SizedBox(width: 14),
+          IconBadge(icon: icon, color: _accent, size: 40),
+          const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w500, fontSize: 14)),
-                Text(subtitle,
-                    style: const TextStyle(
-                        fontSize: 12, color: Color(0xFF94A3B8))),
+                Text(title, style: AppType.title),
+                Text(subtitle, style: AppType.caption),
               ],
             ),
           ),
-          Switch(
-            value: value,
-            onChanged: onChanged,
-            activeThumbColor: const Color(0xFF059669),
-            activeTrackColor:
-                const Color(0xFF059669).withValues(alpha: 0.4),
-          ),
+          Switch(value: value, onChanged: onChanged),
         ],
       ),
     );
@@ -941,27 +1065,25 @@ class _SettingsScreenState extends State<SettingsScreen>
       T value, List<T> options, ValueChanged<T?> onChanged,
       {Map<T, String>? labelMap}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md, vertical: AppSpacing.sm),
       child: Row(
         children: [
-          Icon(icon, color: const Color(0xFF94A3B8), size: 20),
-          const SizedBox(width: 14),
+          IconBadge(icon: icon, color: _accent, size: 40),
+          const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w500, fontSize: 14)),
-                Text(subtitle,
-                    style: const TextStyle(
-                        fontSize: 12, color: Color(0xFF94A3B8))),
+                Text(title, style: AppType.title),
+                Text(subtitle, style: AppType.caption),
               ],
             ),
           ),
           DropdownButton<T>(
             value: value,
             underline: const SizedBox(),
+            style: AppType.label.copyWith(color: AppColors.textPrimary),
             items: options
                 .map((v) => DropdownMenuItem(
                     value: v,
@@ -975,61 +1097,44 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   Widget _settingRow(IconData icon, String title, String subtitle,
-      {Color? iconColor, Color? textColor, VoidCallback? onTap}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            Icon(icon,
-                color: iconColor ?? const Color(0xFF64748B), size: 22),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      style: TextStyle(
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14,
-                          color: textColor)),
-                  Text(subtitle,
-                      style: const TextStyle(
-                          fontSize: 12, color: Color(0xFF94A3B8))),
-                ],
+      {Color? accent, bool danger = false, VoidCallback? onTap}) {
+    final c = danger ? AppColors.danger : (accent ?? _accent);
+    final titleColor = danger ? AppColors.danger : AppColors.textPrimary;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+          child: Row(
+            children: [
+              IconBadge(icon: icon, color: c, size: 44),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: AppType.title.copyWith(color: titleColor)),
+                    Text(subtitle, style: AppType.caption),
+                  ],
+                ),
               ),
-            ),
-            if (onTap != null)
-              const Icon(Icons.chevron_right,
-                  size: 18, color: Color(0xFFCBD5E1)),
-          ],
+              if (onTap != null)
+                const Icon(Icons.chevron_right_rounded,
+                    size: 22, color: AppColors.textTertiary),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _saveBtn(String label, bool isLoading, VoidCallback onTap) =>
-      SizedBox(
-        width: double.infinity,
-        child: FilledButton(
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFF059669),
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12)),
-            padding: const EdgeInsets.symmetric(vertical: 14),
-          ),
-          onPressed: isLoading ? null : onTap,
-          child: isLoading
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
-              : Text(label,
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
-        ),
+  Widget _saveBtn(String label, bool isLoading, VoidCallback onTap) => AppButton(
+        label: label,
+        accent: _accent,
+        loading: isLoading,
+        onPressed: onTap,
       );
 }

@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../controllers/waiter_controller.dart';
 import '../../models/models.dart';
+import '../../theme/theme.dart';
 import '../../utils/currency.dart';
 import '../../widgets/menu_avatar.dart';
 import '../../widgets/pax_input_dialog.dart';
+import '../../widgets/ui/ui.dart';
 
 class WaiterScreen extends StatefulWidget {
   const WaiterScreen({super.key});
@@ -67,13 +69,8 @@ class _WaiterScreenState extends State<WaiterScreen> {
   }
 
   void _showSnack(String msg, {bool isError = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
-      backgroundColor:
-          isError ? const Color(0xFFEF4444) : const Color(0xFF10B981),
-      behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-    ));
+    if (!mounted) return;
+    showAppSnack(context, msg, isError: isError);
   }
 
   List<RestaurantTable> get _filteredTables {
@@ -94,30 +91,46 @@ class _WaiterScreenState extends State<WaiterScreen> {
 
   void _showNoteDialog(String productId, String? current) {
     final ctrl = TextEditingController(text: current ?? '');
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Catatan Item'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          maxLength: 80,
-          decoration: const InputDecoration(
-            hintText: 'Contoh: es sedikit, lebih pedas...',
-            border: OutlineInputBorder(),
+    showAppModal<void>(
+      context,
+      title: 'Catatan Item',
+      subtitle: 'Instruksi khusus untuk dapur',
+      icon: Icons.edit_note_rounded,
+      accent: AppColors.moduleWaiter,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: ctrl,
+            autofocus: true,
+            maxLength: 80,
+            decoration: const InputDecoration(
+              hintText: 'Contoh: es sedikit, lebih pedas...',
+              border: OutlineInputBorder(),
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Batal'),
-          ),
-          TextButton(
-            onPressed: () {
-              _controller.updateCartNote(productId, ctrl.text.trim());
-              Navigator.pop(ctx);
-            },
-            child: const Text('Simpan'),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              Expanded(
+                child: AppButton.neutral(
+                  'Batal',
+                  onPressed: () => Navigator.pop(ctx),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: AppButton(
+                  label: 'Simpan',
+                  accent: AppColors.moduleWaiter,
+                  onPressed: () {
+                    _controller.updateCartNote(productId, ctrl.text.trim());
+                    Navigator.pop(ctx);
+                  },
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -150,20 +163,19 @@ class _WaiterScreenState extends State<WaiterScreen> {
     final state = _controller.state;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F2F7),
-      body: Column(
-        children: [
-          _buildHeader(state),
-          Expanded(
-            child: state.isLoading &&
-                    state.viewMode == 'tables' &&
-                    state.tables.isEmpty
-                ? const Center(
-                    child: CircularProgressIndicator(
-                        color: Color(0xFF10B981)))
-                : _buildBody(state),
-          ),
-        ],
+      body: AppBackground(
+        child: Column(
+          children: [
+            _buildHeader(state),
+            Expanded(
+              child: state.isLoading &&
+                      state.viewMode == 'tables' &&
+                      state.tables.isEmpty
+                  ? const AppLoader(label: 'Memuat meja...')
+                  : _buildBody(state),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -173,187 +185,119 @@ class _WaiterScreenState extends State<WaiterScreen> {
   Widget _buildHeader(WaiterState state) {
     final inTableView = state.viewMode == 'tables';
 
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF059669), Color(0xFF10B981)],
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Color(0x20000000),
-            blurRadius: 12,
-            offset: Offset(0, 4),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 14),
-              child: Row(
-                children: [
-                  // Back button
-                  Material(
-                    color: Colors.white.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(12),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: inTableView
-                          ? () => Navigator.pop(context)
-                          : _controller.goBackToTables,
-                      child: const SizedBox(
-                        width: 42,
-                        height: 42,
-                        child: Icon(Icons.arrow_back,
-                            color: Colors.white, size: 20),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 14),
+    final title = inTableView
+        ? 'Waiter'
+        : state.viewMode == 'order'
+            ? 'Order — Meja ${state.selectedTable?.tableNumber ?? ''}'
+            : 'Detail — Meja ${state.selectedTable?.tableNumber ?? ''}';
+    final subtitle = inTableView
+        ? 'Layanan Pesanan'
+        : state.viewMode == 'order'
+            ? 'Pilih menu untuk dipesan'
+            : 'Detail pesanan aktif';
 
-                  // Title
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          inTableView
-                              ? 'Waiter'
-                              : state.viewMode == 'order'
-                                  ? 'Order — Meja ${state.selectedTable?.tableNumber ?? ''}'
-                                  : 'Detail — Meja ${state.selectedTable?.tableNumber ?? ''}',
-                          style: const TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                            letterSpacing: -0.3,
-                          ),
-                        ),
-                        Text(
-                          inTableView
-                              ? 'Layanan Pesanan'
-                              : state.viewMode == 'order'
-                                  ? 'Pilih menu untuk dipesan'
-                                  : 'Detail pesanan aktif',
-                          style: const TextStyle(
-                              fontSize: 12, color: Color(0xFFA7F3D0)),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // Stats (table view only)
-                  if (inTableView) ...[
-                    _headerStat('${state.availableCount}', 'Tersedia',
-                        const Color(0xFF34D399)),
-                    const SizedBox(width: 16),
-                    _headerStat('${state.occupiedCount}', 'Terisi',
-                        const Color(0xFFFBBF24)),
-                    const SizedBox(width: 12),
-                  ],
-
-                  // Cart badge (order view)
-                  if (state.viewMode == 'order' && state.cartItemCount > 0)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text('${state.cartItemCount} item',
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 13)),
-                    ),
-
-                  const SizedBox(width: 8),
-
-                  // Refresh
-                  Material(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: inTableView
-                          ? () => _controller.loadTables()
-                          : _controller.goBackToTables,
+    return Column(
+      children: [
+        AppPageHeader(
+          title: title,
+          subtitle: subtitle,
+          icon: Icons.room_service_rounded,
+          accent: AppColors.moduleWaiter,
+          onBack: inTableView
+              ? () => Navigator.pop(context)
+              : _controller.goBackToTables,
+          actions: [
+            if (inTableView) ...[
+              StatusPill(
+                label: '${state.availableCount} Tersedia',
+                color: AppColors.success,
+                icon: Icons.event_available_rounded,
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              StatusPill(
+                label: '${state.occupiedCount} Terisi',
+                color: AppColors.warning,
+                icon: Icons.chair_rounded,
+              ),
+              const SizedBox(width: AppSpacing.xs),
+            ],
+            if (state.viewMode == 'order' && state.cartItemCount > 0) ...[
+              StatusPill(
+                label: '${state.cartItemCount} item',
+                color: AppColors.moduleWaiter,
+                solid: true,
+                icon: Icons.shopping_bag_rounded,
+              ),
+              const SizedBox(width: AppSpacing.xs),
+            ],
+            state.isLoading
+                ? const SizedBox(
+                    width: 42,
+                    height: 42,
+                    child: Center(
                       child: SizedBox(
-                        width: 42,
-                        height: 42,
-                        child: state.isLoading
-                            ? const Center(
-                                child: SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Color(0xFF059669)),
-                                ),
-                              )
-                            : Icon(
-                                inTableView
-                                    ? Icons.refresh
-                                    : Icons.table_restaurant_outlined,
-                                color: const Color(0xFF059669),
-                                size: 20),
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       ),
                     ),
+                  )
+                : AppIconButton(
+                    icon: inTableView
+                        ? Icons.refresh_rounded
+                        : Icons.table_restaurant_rounded,
+                    onPressed: inTableView
+                        ? () => _controller.loadTables()
+                        : _controller.goBackToTables,
+                    color: AppColors.moduleWaiter,
+                    filled: true,
+                    size: 44,
+                    tooltip: inTableView ? 'Muat ulang' : 'Kembali ke meja',
                   ),
-                ],
-              ),
-            ),
-
-            // Search + filter (table view only)
-            if (inTableView)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: TextField(
-                          onChanged: (v) =>
-                              setState(() => _searchQuery = v),
-                          style: const TextStyle(
-                              color: Colors.white, fontSize: 13),
-                          decoration: InputDecoration(
-                            hintText: 'Cari meja...',
-                            hintStyle: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.5),
-                                fontSize: 13),
-                            prefixIcon: Icon(Icons.search,
-                                color: Colors.white.withValues(alpha: 0.6),
-                                size: 16),
-                            border: InputBorder.none,
-                            contentPadding:
-                                const EdgeInsets.symmetric(vertical: 8),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    _filterPill('Semua', 'all'),
-                    const SizedBox(width: 5),
-                    _filterPill('Tersedia', 'available'),
-                    const SizedBox(width: 5),
-                    _filterPill('Terisi', 'occupied'),
-                  ],
-                ),
-              ),
           ],
         ),
+        if (inTableView) _buildTableSearchBar(),
+      ],
+    );
+  }
+
+  Widget _buildTableSearchBar() {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+          context.pagePadX, AppSpacing.sm, context.pagePadX, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: AppRadius.rMd,
+                border: Border.all(color: AppColors.border),
+              ),
+              child: TextField(
+                onChanged: (v) => setState(() => _searchQuery = v),
+                style: AppType.body,
+                decoration: InputDecoration(
+                  hintText: 'Cari meja...',
+                  hintStyle:
+                      AppType.body.copyWith(color: AppColors.textTertiary),
+                  prefixIcon: const Icon(Icons.search_rounded,
+                      color: AppColors.textTertiary, size: 20),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                      vertical: 12, horizontal: AppSpacing.xs),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          _filterPill('Semua', 'all'),
+          const SizedBox(width: AppSpacing.xxs),
+          _filterPill('Tersedia', 'available'),
+          const SizedBox(width: AppSpacing.xxs),
+          _filterPill('Terisi', 'occupied'),
+        ],
       ),
     );
   }
@@ -377,56 +321,34 @@ class _WaiterScreenState extends State<WaiterScreen> {
     final filtered = _filteredTables;
 
     if (filtered.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                color: const Color(0xFFE5E5EA),
-                borderRadius: BorderRadius.circular(22),
-              ),
-              child: const Icon(Icons.table_restaurant_outlined,
-                  size: 36, color: Color(0xFFAEAEB2)),
-            ),
-            const SizedBox(height: 14),
-            const Text('Tidak ada meja',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF3C3C43),
-                )),
-          ],
-        ),
+      return const EmptyState(
+        icon: Icons.table_restaurant_outlined,
+        title: 'Tidak ada meja',
+        message: 'Belum ada meja yang cocok dengan pencarian.',
+        accent: AppColors.moduleWaiter,
       );
     }
 
     return RefreshIndicator(
-      color: const Color(0xFF10B981),
+      color: AppColors.moduleWaiter,
       onRefresh: _controller.loadTables,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final cols = constraints.maxWidth < 600 ? 3 : 5;
-          return GridView.builder(
-            padding: const EdgeInsets.all(16),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: cols,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              childAspectRatio: 0.95,
-            ),
-            itemCount: filtered.length,
-            itemBuilder: (context, index) {
-              final table = filtered[index];
-              final order = state.tableOrders[table.tableNumber];
-              return _WaiterTableCard(
-                table: table,
-                order: order,
-                onTap: () => _selectTable(table),
-              );
-            },
+      child: GridView.builder(
+        padding: EdgeInsets.all(context.pagePadX),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: context.responsive(
+              compact: 3, medium: 4, expanded: 5, large: 6),
+          mainAxisSpacing: AppSpacing.sm,
+          crossAxisSpacing: AppSpacing.sm,
+          childAspectRatio: 0.95,
+        ),
+        itemCount: filtered.length,
+        itemBuilder: (context, index) {
+          final table = filtered[index];
+          final order = state.tableOrders[table.tableNumber];
+          return _WaiterTableCard(
+            table: table,
+            order: order,
+            onTap: () => _selectTable(table),
           );
         },
       ),
@@ -437,8 +359,7 @@ class _WaiterScreenState extends State<WaiterScreen> {
 
   Widget _buildOrderView(WaiterState state) {
     if (state.isLoading) {
-      return const Center(
-          child: CircularProgressIndicator(color: Color(0xFF10B981)));
+      return const AppLoader(label: 'Memuat menu...');
     }
 
     return LayoutBuilder(
@@ -446,11 +367,16 @@ class _WaiterScreenState extends State<WaiterScreen> {
         final isPhone = constraints.maxWidth < 600;
         if (isPhone) return _buildPhoneOrderView(state);
 
+        // Lebar kolom pesanan disamakan dengan Kasir: proporsional 30% layar,
+        // dibatasi 300–440px (sebelumnya tetap 320px → terasa sempit).
+        final cartWidth =
+            (constraints.maxWidth * 0.30).clamp(300.0, 440.0);
         return Row(
           children: [
-            Expanded(child: _buildOrderProductPanel(state, crossAxisCount: 4)),
+            Expanded(child: _buildOrderProductPanel(state)),
             _CartPanel(
               state: state,
+              width: cartWidth,
               onAdd: (p) => _controller.addToCart(p),
               onRemove: (id) => _controller.removeFromCart(id),
               onEditNote: (id, current) => _showNoteDialog(id, current),
@@ -465,92 +391,118 @@ class _WaiterScreenState extends State<WaiterScreen> {
   Widget _buildPhoneOrderView(WaiterState state) {
     return Column(
       children: [
-        Expanded(child: _buildOrderProductPanel(state, crossAxisCount: 2)),
+        Expanded(child: _buildOrderProductPanel(state)),
         if (state.cart.isNotEmpty) _buildWaiterCartBar(state),
       ],
     );
   }
 
-  Widget _buildOrderProductPanel(WaiterState state, {required int crossAxisCount}) {
+  Widget _buildOrderProductPanel(WaiterState state) {
     return Column(
       children: [
+        // Toolbar: pencarian menu
         Container(
-          color: Colors.white,
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-          child: SizedBox(
-            height: 40,
-            child: TextField(
-              controller: _menuSearchCtrl,
-              onChanged: (v) => _controller.searchProducts(v),
-              style: const TextStyle(fontSize: 13),
-              decoration: InputDecoration(
-                hintText: 'Cari menu...',
-                hintStyle:
-                    const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
-                prefixIcon: const Icon(Icons.search,
-                    color: Color(0xFF94A3B8), size: 18),
-                suffixIcon: _menuSearchCtrl.text.isEmpty
-                    ? null
-                    : IconButton(
-                        icon: const Icon(Icons.close,
-                            color: Color(0xFF94A3B8), size: 18),
-                        onPressed: () {
-                          _menuSearchCtrl.clear();
-                          _controller.searchProducts('');
-                          setState(() {});
-                        },
-                      ),
-                filled: true,
-                fillColor: const Color(0xFFF2F2F7),
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none,
-                ),
+          color: AppColors.surface,
+          padding: EdgeInsets.fromLTRB(
+              context.pagePadX, AppSpacing.sm, context.pagePadX, AppSpacing.xs),
+          child: TextField(
+            controller: _menuSearchCtrl,
+            onChanged: (v) => _controller.searchProducts(v),
+            style: AppType.body,
+            decoration: InputDecoration(
+              hintText: 'Cari menu...',
+              hintStyle: AppType.body.copyWith(color: AppColors.textTertiary),
+              prefixIcon: const Icon(Icons.search_rounded,
+                  color: AppColors.textTertiary, size: 20),
+              suffixIcon: _menuSearchCtrl.text.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.close_rounded,
+                          color: AppColors.textTertiary, size: 20),
+                      onPressed: () {
+                        _menuSearchCtrl.clear();
+                        _controller.searchProducts('');
+                        setState(() {});
+                      },
+                    ),
+              filled: true,
+              fillColor: AppColors.surfaceMuted,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              border: const OutlineInputBorder(
+                borderRadius: AppRadius.rMd,
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: const OutlineInputBorder(
+                borderRadius: AppRadius.rMd,
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: const OutlineInputBorder(
+                borderRadius: AppRadius.rMd,
+                borderSide:
+                    BorderSide(color: AppColors.moduleWaiter, width: 1.5),
               ),
             ),
           ),
         ),
+        // Toolbar: kategori
         Container(
-          height: 46,
-          color: Colors.white,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
-            children: [
-              _catChip('Semua', state.selectedCategory == null,
-                  () => _selectCategory(null)),
-              ...state.categories.map((cat) => _catChip(
-                    cat.name,
-                    state.selectedCategory?.id == cat.id,
-                    () => _selectCategory(cat),
-                  )),
-            ],
+          color: AppColors.surface,
+          padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+          child: SizedBox(
+            height: 44,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.symmetric(horizontal: context.pagePadX),
+              child: Row(
+                children: [
+                  _catChip('Semua', state.selectedCategory == null,
+                      () => _selectCategory(null)),
+                  ...state.categories.map((cat) => _catChip(
+                        cat.name,
+                        state.selectedCategory?.id == cat.id,
+                        () => _selectCategory(cat),
+                      )),
+                ],
+              ),
+            ),
           ),
         ),
         Expanded(
           child: state.products.isEmpty
-              ? Center(
-                  child: Text('Tidak ada produk',
-                      style: TextStyle(color: Colors.grey[400], fontSize: 16)))
-              : GridView.builder(
-                  padding: const EdgeInsets.all(14),
-                  gridDelegate:
-                      const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 150,
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                    childAspectRatio: 0.85,
-                  ),
-                  itemCount: state.products.length,
-                  itemBuilder: (context, index) {
-                    final product = state.products[index];
-                    final inCart = state.cart[product.id] ?? 0;
-                    return _WaiterProductTile(
-                      product: product,
-                      inCart: inCart,
-                      onTap: () => _controller.addToCart(product),
+              ? const EmptyState(
+                  icon: Icons.restaurant_menu_rounded,
+                  title: 'Tidak ada produk',
+                  message: 'Coba kategori atau kata kunci lain.',
+                  accent: AppColors.moduleWaiter,
+                )
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final cols = context
+                        .gridColumns(
+                          minTileWidth: 150,
+                          gap: AppSpacing.sm,
+                          maxWidth: constraints.maxWidth,
+                        )
+                        .clamp(2, 6);
+                    return GridView.builder(
+                      padding: EdgeInsets.all(context.pagePadX),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: cols,
+                        mainAxisSpacing: AppSpacing.sm,
+                        crossAxisSpacing: AppSpacing.sm,
+                        childAspectRatio: 0.82,
+                      ),
+                      itemCount: state.products.length,
+                      itemBuilder: (context, index) {
+                        final product = state.products[index];
+                        final inCart = state.cart[product.id] ?? 0;
+                        return _WaiterProductTile(
+                          product: product,
+                          inCart: inCart,
+                          onTap: () => _controller.addToCart(product),
+                        );
+                      },
                     );
                   },
                 ),
@@ -563,69 +515,52 @@ class _WaiterScreenState extends State<WaiterScreen> {
     return SafeArea(
       top: false,
       child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: const Border(top: BorderSide(color: Color(0xFFE5E5EA))),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
-              blurRadius: 8,
-              offset: const Offset(0, -2),
-            ),
-          ],
+        decoration: const BoxDecoration(
+          color: AppColors.surface,
+          border: Border(top: BorderSide(color: AppColors.border)),
+          boxShadow: AppShadows.card,
         ),
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.sm),
         child: Row(
           children: [
             Expanded(
               child: GestureDetector(
                 onTap: () => _showWaiterCartSheet(state),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  alignment: Alignment.center,
+                  constraints: const BoxConstraints(minHeight: 48),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                     Text(
                       '${state.cartItemCount} item',
-                      style: const TextStyle(
-                          fontSize: 12, color: Color(0xFF94A3B8)),
+                      style: AppType.caption
+                          .copyWith(color: AppColors.textTertiary),
                     ),
                     Text(
                       _formatTotal(state.cartTotal),
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF059669),
-                      ),
+                      style:
+                          AppType.amount.copyWith(color: AppColors.moduleWaiter),
                     ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: AppSpacing.xs),
             _waiterPaxStepper(state),
-            const SizedBox(width: 10),
-            SizedBox(
-              height: 44,
-              child: FilledButton(
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF059669),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                ),
-                onPressed: state.isProcessing
-                    ? null
-                    : () => _controller.createOrder(),
-                child: state.isProcessing
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Text('KIRIM',
-                        style: TextStyle(
-                            fontSize: 14, fontWeight: FontWeight.bold)),
-              ),
+            const SizedBox(width: AppSpacing.xs),
+            AppButton(
+              label: 'Kirim',
+              icon: Icons.send_rounded,
+              accent: AppColors.moduleWaiter,
+              size: AppButtonSize.medium,
+              expanded: false,
+              loading: state.isProcessing,
+              onPressed: () => _controller.createOrder(),
             ),
           ],
         ),
@@ -635,39 +570,39 @@ class _WaiterScreenState extends State<WaiterScreen> {
 
   String _formatTotal(double total) {
     return 'Rp ${total.toStringAsFixed(0).replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-      (m) => '${m[1]}.',
-    )}';
+          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+          (m) => '${m[1]}.',
+        )}';
   }
 
   /// Stepper jumlah tamu (pax) untuk order baru — kompak.
   Widget _waiterPaxStepper(WaiterState state) {
     Widget btn(IconData icon, VoidCallback onTap) => Material(
-          color: const Color(0xFFF1F5F9),
-          borderRadius: BorderRadius.circular(8),
+          color: AppColors.surfaceMuted,
+          borderRadius: AppRadius.rXs,
           child: InkWell(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: AppRadius.rXs,
             onTap: onTap,
             child: SizedBox(
-              width: 30,
-              height: 30,
-              child: Icon(icon, size: 16, color: const Color(0xFF059669)),
+              width: 44,
+              height: 44,
+              child: Icon(icon, size: 18, color: AppColors.moduleWaiter),
             ),
           ),
         );
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(Icons.people_outline, size: 16, color: Color(0xFF64748B)),
-        const SizedBox(width: 4),
-        btn(Icons.remove, () => _controller.setPax(state.pax - 1)),
+        const Icon(Icons.people_outline_rounded,
+            size: 18, color: AppColors.textTertiary),
+        const SizedBox(width: AppSpacing.xxs),
+        btn(Icons.remove_rounded, () => _controller.setPax(state.pax - 1)),
         Container(
-          width: 28,
+          width: 30,
           alignment: Alignment.center,
-          child: Text('${state.pax}',
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+          child: Text('${state.pax}', style: AppType.title),
         ),
-        btn(Icons.add, () => _controller.setPax(state.pax + 1)),
+        btn(Icons.add_rounded, () => _controller.setPax(state.pax + 1)),
       ],
     );
   }
@@ -686,9 +621,12 @@ class _WaiterScreenState extends State<WaiterScreen> {
           builder: (context, scrollController) {
             return Container(
               decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                color: AppColors.surface,
+                borderRadius:
+                    BorderRadius.vertical(top: Radius.circular(AppRadius.xxl)),
+                boxShadow: AppShadows.modal,
               ),
+              clipBehavior: Clip.antiAlias,
               child: ListenableBuilder(
                 listenable: _controller,
                 builder: (context, _) {
@@ -697,50 +635,42 @@ class _WaiterScreenState extends State<WaiterScreen> {
                     children: [
                       Center(
                         child: Container(
-                          margin: const EdgeInsets.only(top: 12),
-                          width: 36,
+                          margin: const EdgeInsets.only(top: AppSpacing.sm),
+                          width: 40,
                           height: 4,
-                          decoration: BoxDecoration(
-                            color: Colors.grey[300],
-                            borderRadius: BorderRadius.circular(2),
+                          decoration: const BoxDecoration(
+                            color: AppColors.borderStrong,
+                            borderRadius: AppRadius.rPill,
                           ),
                         ),
                       ),
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                        padding: const EdgeInsets.fromLTRB(AppSpacing.md,
+                            AppSpacing.sm, AppSpacing.md, AppSpacing.xs),
                         child: Row(
                           children: [
-                            const Icon(Icons.receipt_long_outlined,
-                                color: Color(0xFF059669), size: 20),
-                            const SizedBox(width: 8),
-                            const Text('Pesanan',
-                                style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: Color(0xFF0F172A))),
+                            const IconBadge(
+                              icon: Icons.receipt_long_rounded,
+                              color: AppColors.moduleWaiter,
+                              size: 34,
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            Text('Pesanan', style: AppType.h3),
                             const Spacer(),
                             if (state.cartItemCount > 0)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFD1FAE5),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text('${state.cartItemCount} item',
-                                    style: const TextStyle(
-                                      color: Color(0xFF059669),
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                    )),
+                              StatusPill(
+                                label: '${state.cartItemCount} item',
+                                color: AppColors.moduleWaiter,
                               ),
                           ],
                         ),
                       ),
-                      const Divider(),
+                      const Divider(height: 1),
                       Expanded(
                         child: ListView(
                           controller: scrollController,
+                          padding:
+                              const EdgeInsets.symmetric(vertical: AppSpacing.xs),
                           children: state.cart.entries.map((entry) {
                             final product = state.productCache[entry.key];
                             if (product == null) return const SizedBox.shrink();
@@ -760,78 +690,56 @@ class _WaiterScreenState extends State<WaiterScreen> {
                       ),
                       Container(
                         decoration: const BoxDecoration(
-                            border: Border(
-                                top: BorderSide(color: Color(0xFFF2F2F7)))),
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text('Total',
-                                    style: TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.bold,
-                                        color: Color(0xFF0F172A))),
-                                Text(
-                                  _formatTotal(state.cartTotal),
-                                  style: const TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w800,
-                                    color: Color(0xFF059669),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            if (state.cart.isNotEmpty) ...[
+                          color: AppColors.surface,
+                          border:
+                              Border(top: BorderSide(color: AppColors.border)),
+                        ),
+                        padding: const EdgeInsets.all(AppSpacing.md),
+                        child: SafeArea(
+                          top: false,
+                          child: Column(
+                            children: [
                               Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                                 children: [
-                                  const Icon(Icons.people_outline,
-                                      size: 18, color: Color(0xFF64748B)),
-                                  const SizedBox(width: 8),
-                                  const Text('Jumlah Tamu',
-                                      style: TextStyle(
-                                          fontSize: 14,
-                                          color: Color(0xFF475569))),
-                                  const Spacer(),
-                                  _waiterPaxStepper(state),
+                                  Text('Total', style: AppType.title),
+                                  Text(
+                                    _formatTotal(state.cartTotal),
+                                    style: AppType.amount.copyWith(
+                                        color: AppColors.moduleWaiter),
+                                  ),
                                 ],
                               ),
-                              const SizedBox(height: 12),
-                              SizedBox(
-                                width: double.infinity,
-                                height: 50,
-                                child: FilledButton(
-                                  style: FilledButton.styleFrom(
-                                    backgroundColor: const Color(0xFF059669),
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(14)),
-                                  ),
-                                  onPressed: state.isProcessing
-                                      ? null
-                                      : () {
-                                          Navigator.pop(sheetContext);
-                                          _controller.createOrder();
-                                        },
-                                  child: state.isProcessing
-                                      ? const SizedBox(
-                                          width: 20,
-                                          height: 20,
-                                          child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: Colors.white),
-                                        )
-                                      : const Text('KIRIM PESANAN',
-                                          style: TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.bold,
-                                          )),
+                              const SizedBox(height: AppSpacing.sm),
+                              if (state.cart.isNotEmpty) ...[
+                                Row(
+                                  children: [
+                                    const Icon(Icons.people_outline_rounded,
+                                        size: 18,
+                                        color: AppColors.textSecondary),
+                                    const SizedBox(width: AppSpacing.xs),
+                                    Text('Jumlah Tamu',
+                                        style: AppType.body.copyWith(
+                                            color: AppColors.textSecondary)),
+                                    const Spacer(),
+                                    _waiterPaxStepper(state),
+                                  ],
                                 ),
-                              ),
+                                const SizedBox(height: AppSpacing.sm),
+                                AppButton(
+                                  label: 'Kirim Pesanan',
+                                  icon: Icons.send_rounded,
+                                  accent: AppColors.moduleWaiter,
+                                  loading: state.isProcessing,
+                                  onPressed: () {
+                                    Navigator.pop(sheetContext);
+                                    _controller.createOrder();
+                                  },
+                                ),
+                              ],
                             ],
-                          ],
+                          ),
                         ),
                       ),
                     ],
@@ -850,36 +758,33 @@ class _WaiterScreenState extends State<WaiterScreen> {
   Widget _buildDetailView(WaiterState state) {
     final order = state.currentOrder;
     if (order == null) {
-      return const Center(child: Text('Order tidak ditemukan'));
+      return const EmptyState(
+        icon: Icons.receipt_long_outlined,
+        title: 'Order tidak ditemukan',
+        accent: AppColors.moduleWaiter,
+      );
     }
     if (state.isLoading) {
-      return const Center(
-          child: CircularProgressIndicator(color: Color(0xFF10B981)));
+      return const AppLoader(label: 'Memuat pesanan...');
     }
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
+      padding: context.pagePadding,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Order summary card
+          // Order summary hero card
           Container(
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [Color(0xFF065F46), Color(0xFF059669)],
+                colors: [AppColors.moduleWaiter, AppColors.moduleDapur],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF059669).withValues(alpha: 0.3),
-                  blurRadius: 16,
-                  offset: const Offset(0, 6),
-                ),
-              ],
+              borderRadius: AppRadius.rXl,
+              boxShadow: AppShadows.glow(AppColors.moduleWaiter, strength: 0.32),
             ),
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(AppSpacing.lg),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -887,10 +792,10 @@ class _WaiterScreenState extends State<WaiterScreen> {
                   children: [
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 4),
+                          horizontal: AppSpacing.sm, vertical: 4),
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(8),
+                        color: AppColors.soft(Colors.white, 0.18),
+                        borderRadius: AppRadius.rSm,
                       ),
                       child: Text(
                         order.orderStatus.toUpperCase(),
@@ -905,28 +810,24 @@ class _WaiterScreenState extends State<WaiterScreen> {
                     const Spacer(),
                     Text('${order.basketSize} item',
                         style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.7),
-                            fontSize: 13)),
+                            color: AppColors.soft(Colors.white, 0.8),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600)),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: AppSpacing.sm),
                 Text(
                   CurrencyHelper.format(order.totalAmount),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 30,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -1,
-                  ),
+                  style: AppType.amountLg.copyWith(color: Colors.white),
                 ),
-                const SizedBox(height: 12),
-                Row(
+                const SizedBox(height: AppSpacing.sm),
+                Wrap(
+                  spacing: AppSpacing.xs,
+                  runSpacing: AppSpacing.xs,
                   children: [
-                    _summaryChip(Icons.table_restaurant_outlined,
+                    _summaryChip(Icons.table_restaurant_rounded,
                         'Meja ${order.tableNumber}'),
-                    const SizedBox(width: 10),
-                    _summaryChip(Icons.people_outline, '${order.pax} pax'),
-                    const SizedBox(width: 10),
+                    _summaryChip(Icons.people_outline_rounded, '${order.pax} pax'),
                     _summaryChip(
                       Icons.payments_outlined,
                       order.paymentStatus == 'paid' ? 'Lunas' : 'Belum Bayar',
@@ -936,31 +837,18 @@ class _WaiterScreenState extends State<WaiterScreen> {
               ],
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.md),
 
           // Items card
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.04),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
+          AppCard(
+            padding: EdgeInsets.zero,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  child: Text('Item Pesanan',
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                          color: Color(0xFF0F172A))),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(AppSpacing.md,
+                      AppSpacing.md, AppSpacing.md, AppSpacing.xs),
+                  child: Text('Item Pesanan', style: AppType.title),
                 ),
                 ...state.currentOrderItems.asMap().entries.map((e) {
                   final i = e.key;
@@ -969,47 +857,41 @@ class _WaiterScreenState extends State<WaiterScreen> {
                     children: [
                       if (i > 0)
                         const Divider(
-                            height: 1, color: Color(0xFFF2F2F7),
-                            indent: 16, endIndent: 16),
+                            height: 1,
+                            color: AppColors.border,
+                            indent: AppSpacing.md,
+                            endIndent: AppSpacing.md),
                       Padding(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 12),
+                            horizontal: AppSpacing.md, vertical: AppSpacing.sm),
                         child: Row(
                           children: [
                             // Qty badge
                             Container(
-                              width: 32,
-                              height: 32,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF2F2F7),
-                                borderRadius: BorderRadius.circular(8),
+                              width: 34,
+                              height: 34,
+                              decoration: const BoxDecoration(
+                                color: AppColors.surfaceMuted,
+                                borderRadius: AppRadius.rXs,
                               ),
                               child: Center(
                                 child: Text('${item.qty}x',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                      color: Color(0xFF3C3C43),
-                                    )),
+                                    style: AppType.label.copyWith(
+                                        color: AppColors.textSecondary)),
                               ),
                             ),
-                            const SizedBox(width: 12),
+                            const SizedBox(width: AppSpacing.sm),
 
                             // Name + notes
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(item.productName,
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 14,
-                                          color: Color(0xFF0F172A))),
+                                  Text(item.productName, style: AppType.body),
                                   if (item.notes.isNotEmpty)
                                     Text(item.notes,
-                                        style: const TextStyle(
-                                            color: Color(0xFF8E8E93),
-                                            fontSize: 12)),
+                                        style: AppType.caption.copyWith(
+                                            color: AppColors.textTertiary)),
                                 ],
                               ),
                             ),
@@ -1020,29 +902,15 @@ class _WaiterScreenState extends State<WaiterScreen> {
                               children: [
                                 Text(
                                   CurrencyHelper.format(item.subtotal),
-                                  style: const TextStyle(
+                                  style: AppType.body.copyWith(
+                                    color: AppColors.moduleWaiter,
                                     fontWeight: FontWeight.w700,
-                                    fontSize: 14,
-                                    color: Color(0xFF059669),
                                   ),
                                 ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color:
-                                        _statusColor(item.itemStatus)
-                                            .withValues(alpha: 0.1),
-                                    borderRadius: BorderRadius.circular(5),
-                                  ),
-                                  child: Text(
-                                    item.itemStatus.toUpperCase(),
-                                    style: TextStyle(
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.w700,
-                                      color: _statusColor(item.itemStatus),
-                                    ),
-                                  ),
+                                const SizedBox(height: 2),
+                                StatusPill(
+                                  label: item.itemStatus.toUpperCase(),
+                                  color: _statusColor(item.itemStatus),
                                 ),
                               ],
                             ),
@@ -1057,25 +925,17 @@ class _WaiterScreenState extends State<WaiterScreen> {
                 Container(
                   decoration: const BoxDecoration(
                     border: Border(
-                        top: BorderSide(color: Color(0xFFF2F2F7), width: 2)),
+                        top: BorderSide(color: AppColors.border, width: 1.5)),
                   ),
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(AppSpacing.md),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Total',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 17,
-                            color: Color(0xFF0F172A),
-                          )),
+                      Text('Total', style: AppType.h3),
                       Text(
                         CurrencyHelper.format(order.totalAmount),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 20,
-                          color: Color(0xFF059669),
-                        ),
+                        style: AppType.amount
+                            .copyWith(color: AppColors.moduleWaiter),
                       ),
                     ],
                   ),
@@ -1083,48 +943,48 @@ class _WaiterScreenState extends State<WaiterScreen> {
               ],
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: AppSpacing.lg),
 
           // Actions
           Row(
             children: [
               Expanded(
-                child: _actionBtn(
+                child: AppButton(
                   label: 'Cetak Bill',
                   icon: Icons.print_outlined,
-                  isOutlined: true,
-                  onTap: () => _controller.printBill(order.id),
+                  variant: AppButtonVariant.tonal,
+                  accent: AppColors.accent, // aksi sekunder → SECONDARY gold
+                  onPressed: () => _controller.printBill(order.id),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppSpacing.sm),
               Expanded(
-                child: _actionBtn(
+                child: AppButton(
                   label: 'Tambah Item',
                   icon: Icons.add_shopping_cart_outlined,
-                  onTap: () =>
+                  accent: AppColors.moduleWaiter,
+                  onPressed: () =>
                       _controller.selectTableForOrder(state.selectedTable!),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.sm),
           Row(
             children: [
               Expanded(
-                child: _actionBtn(
-                  label: 'Pindah Meja',
-                  icon: Icons.swap_horiz,
-                  isOutlined: true,
-                  onTap: () => _showMovePicker(state),
+                child: AppButton.neutral(
+                  'Pindah Meja',
+                  icon: Icons.swap_horiz_rounded,
+                  onPressed: () => _showMovePicker(state),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppSpacing.sm),
               Expanded(
-                child: _actionBtn(
-                  label: 'Gabung Meja',
-                  icon: Icons.merge_type,
-                  isOutlined: true,
-                  onTap: () => _showMergePicker(state),
+                child: AppButton.neutral(
+                  'Gabung Meja',
+                  icon: Icons.merge_type_rounded,
+                  onPressed: () => _showMergePicker(state),
                 ),
               ),
             ],
@@ -1146,57 +1006,41 @@ class _WaiterScreenState extends State<WaiterScreen> {
         .toList();
     if (!mounted) return;
     if (targets.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Tidak ada meja kosong')),
-      );
+      _showSnack('Tidak ada meja kosong', isError: true);
       return;
     }
-    final picked = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 20, 20, 8),
-              child: Text('Pindah ke Meja',
-                  style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF0F172A))),
-            ),
-            Flexible(
-              child: ListView(
-                shrinkWrap: true,
-                children: targets
-                    .map((t) => ListTile(
-                          leading: const Icon(Icons.table_restaurant_outlined,
-                              color: Color(0xFF059669)),
-                          title: Text('Meja ${t.tableNumber}'),
-                          onTap: () => Navigator.pop(ctx, t.tableNumber),
-                        ))
-                    .toList(),
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
+    final picked = await showAppModal<String>(
+      context,
+      title: 'Pindah ke Meja',
+      subtitle: 'Pilih meja tujuan yang kosong',
+      icon: Icons.swap_horiz_rounded,
+      accent: AppColors.moduleWaiter,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: targets
+            .map((t) => ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const IconBadge(
+                    icon: Icons.table_restaurant_rounded,
+                    color: AppColors.moduleWaiter,
+                    size: 40,
+                  ),
+                  title: Text('Meja ${t.tableNumber}', style: AppType.body),
+                  trailing: const Icon(Icons.chevron_right_rounded,
+                      color: AppColors.textTertiary),
+                  onTap: () => Navigator.pop(ctx, t.tableNumber),
+                ))
+            .toList(),
       ),
     );
     if (picked == null || !mounted) return;
     final ok = await _controller.moveOrderToTable(picked);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Pesanan dipindah ke Meja $picked'
-            : state.errorMessage ?? 'Gagal pindah meja'),
-      ),
+    _showSnack(
+      ok
+          ? 'Pesanan dipindah ke Meja $picked'
+          : state.errorMessage ?? 'Gagal pindah meja',
+      isError: !ok,
     );
   }
 
@@ -1206,100 +1050,70 @@ class _WaiterScreenState extends State<WaiterScreen> {
     final mergeable = await _controller.getMergeableOrders();
     if (!mounted) return;
     if (mergeable.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Tidak ada meja lain untuk digabung')),
-      );
+      _showSnack('Tidak ada meja lain untuk digabung', isError: true);
       return;
     }
-    final picked = await showModalBottomSheet<Order>(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
-              child: Text('Gabung ke Meja ${order.tableNumber}',
-                  style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF0F172A))),
-            ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Text('Pilih meja yang item-nya akan dipindah ke sini',
-                  style: TextStyle(fontSize: 12, color: Color(0xFF8E8E93))),
-            ),
-            Flexible(
-              child: ListView(
-                shrinkWrap: true,
-                children: mergeable
-                    .map((o) => ListTile(
-                          leading: const Icon(Icons.merge_type,
-                              color: Color(0xFF059669)),
-                          title: Text('Meja ${o.tableNumber}'),
-                          subtitle: Text(
-                              '${o.basketSize} item · ${CurrencyHelper.format(o.totalAmount)}'),
-                          onTap: () => Navigator.pop(ctx, o),
-                        ))
-                    .toList(),
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
+    final picked = await showAppModal<Order>(
+      context,
+      title: 'Gabung ke Meja ${order.tableNumber}',
+      subtitle: 'Pilih meja yang item-nya akan dipindah ke sini',
+      icon: Icons.merge_type_rounded,
+      accent: AppColors.moduleWaiter,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: mergeable
+            .map((o) => ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const IconBadge(
+                    icon: Icons.merge_type_rounded,
+                    color: AppColors.moduleWaiter,
+                    size: 40,
+                  ),
+                  title: Text('Meja ${o.tableNumber}', style: AppType.body),
+                  subtitle: Text(
+                    '${o.basketSize} item · ${CurrencyHelper.format(o.totalAmount)}',
+                    style: AppType.caption,
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded,
+                      color: AppColors.textTertiary),
+                  onTap: () => Navigator.pop(ctx, o),
+                ))
+            .toList(),
       ),
     );
     if (picked == null || !mounted) return;
     final ok = await _controller.mergeTable(picked.id);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Meja ${picked.tableNumber} digabung ke Meja ${order.tableNumber}'
-            : state.errorMessage ?? 'Gagal gabung meja'),
-      ),
+    _showSnack(
+      ok
+          ? 'Meja ${picked.tableNumber} digabung ke Meja ${order.tableNumber}'
+          : state.errorMessage ?? 'Gagal gabung meja',
+      isError: !ok,
     );
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
-
-  Widget _headerStat(String value, String label, Color color) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Text(value,
-            style: TextStyle(
-                color: color, fontWeight: FontWeight.w800, fontSize: 18)),
-        Text(label,
-            style: const TextStyle(color: Colors.white70, fontSize: 10)),
-      ],
-    );
-  }
 
   Widget _filterPill(String label, String value) {
     final selected = _filterStatus == value;
     return GestureDetector(
       onTap: () => setState(() => _filterStatus = value),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        duration: AppMotion.fast,
+        alignment: Alignment.center,
+        constraints: const BoxConstraints(minHeight: 44),
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
         decoration: BoxDecoration(
-          color: selected ? Colors.white : Colors.white.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(7),
+          // Selected filter → SECONDARY gold (identitas hangat), unselected netral.
+          color: selected ? AppColors.accent : AppColors.surface,
+          borderRadius: AppRadius.rPill,
+          border: Border.all(
+              color: selected ? AppColors.accent : AppColors.border),
         ),
         child: Text(label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: selected
-                  ? const Color(0xFF059669)
-                  : Colors.white,
+            style: AppType.label.copyWith(
+              color: selected ? Colors.white : AppColors.textSecondary,
             )),
       ),
     );
@@ -1307,24 +1121,25 @@ class _WaiterScreenState extends State<WaiterScreen> {
 
   Widget _catChip(String label, bool selected, VoidCallback onTap) {
     return Padding(
-      padding: const EdgeInsets.only(right: 6),
+      padding: const EdgeInsets.only(right: AppSpacing.xs),
       child: GestureDetector(
         onTap: onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          padding:
-              const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          duration: AppMotion.fast,
+          alignment: Alignment.center,
+          constraints: const BoxConstraints(minHeight: 44),
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md, vertical: AppSpacing.xs),
           decoration: BoxDecoration(
-            color: selected
-                ? const Color(0xFF059669)
-                : const Color(0xFFF2F2F7),
-            borderRadius: BorderRadius.circular(8),
+            // Kategori terpilih → SECONDARY gold; kategori lain tetap netral.
+            color: selected ? AppColors.accent : AppColors.surfaceMuted,
+            borderRadius: AppRadius.rPill,
+            border: Border.all(
+                color: selected ? AppColors.accent : AppColors.border),
           ),
           child: Text(label,
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
-                color: selected ? Colors.white : const Color(0xFF8E8E93),
+              style: AppType.label.copyWith(
+                color: selected ? Colors.white : AppColors.textSecondary,
               )),
         ),
       ),
@@ -1333,15 +1148,16 @@ class _WaiterScreenState extends State<WaiterScreen> {
 
   Widget _summaryChip(IconData icon, String label) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(8),
+        color: AppColors.soft(Colors.white, 0.18),
+        borderRadius: AppRadius.rSm,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 13, color: Colors.white70),
+          Icon(icon, size: 13, color: AppColors.soft(Colors.white, 0.85)),
           const SizedBox(width: 4),
           Text(label,
               style: const TextStyle(
@@ -1353,53 +1169,16 @@ class _WaiterScreenState extends State<WaiterScreen> {
     );
   }
 
-  Widget _actionBtn({
-    required String label,
-    required IconData icon,
-    required VoidCallback onTap,
-    bool isOutlined = false,
-  }) {
-    return SizedBox(
-      height: 52,
-      child: isOutlined
-          ? OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Color(0xFF059669), width: 1.5),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
-              ),
-              onPressed: onTap,
-              icon: Icon(icon, color: const Color(0xFF059669), size: 18),
-              label: Text(label,
-                  style: const TextStyle(
-                    color: Color(0xFF059669),
-                    fontWeight: FontWeight.w600,
-                  )),
-            )
-          : FilledButton.icon(
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF059669),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
-              ),
-              onPressed: onTap,
-              icon: Icon(icon, size: 18),
-              label: Text(label,
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
-            ),
-    );
-  }
-
   Color _statusColor(String status) {
     switch (status) {
       case 'pending':
-        return const Color(0xFFF59E0B);
+        return AppColors.warning;
       case 'cooking':
-        return const Color(0xFF3B82F6);
+        return AppColors.info;
       case 'ready':
-        return const Color(0xFF10B981);
+        return AppColors.success;
       default:
-        return const Color(0xFF8E8E93);
+        return AppColors.textTertiary;
     }
   }
 }
@@ -1412,6 +1191,7 @@ class _CartPanel extends StatelessWidget {
   final void Function(String) onRemove;
   final void Function(String productId, String? current) onEditNote;
   final VoidCallback onSubmit;
+  final double width;
 
   const _CartPanel({
     required this.state,
@@ -1419,57 +1199,40 @@ class _CartPanel extends StatelessWidget {
     required this.onRemove,
     required this.onEditNote,
     required this.onSubmit,
+    required this.width,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 300,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: const Border(left: BorderSide(color: Color(0xFFE5E5EA))),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 12,
-            offset: const Offset(-4, 0),
-          ),
-        ],
+      width: width,
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(left: BorderSide(color: AppColors.border)),
+        boxShadow: AppShadows.card,
       ),
       child: Column(
         children: [
           // Header
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppSpacing.md),
             decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: Color(0xFFF2F2F7))),
+              border: Border(bottom: BorderSide(color: AppColors.border)),
             ),
             child: Row(
               children: [
-                const Icon(Icons.receipt_long_outlined,
-                    color: Color(0xFF059669), size: 18),
-                const SizedBox(width: 8),
-                const Text('Pesanan',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF0F172A),
-                    )),
+                const IconBadge(
+                  icon: Icons.receipt_long_rounded,
+                  color: AppColors.moduleWaiter,
+                  size: 34,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Text('Pesanan', style: AppType.h3),
                 const Spacer(),
                 if (state.cartItemCount > 0)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFD1FAE5),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text('${state.cartItemCount} item',
-                        style: const TextStyle(
-                          color: Color(0xFF059669),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        )),
+                  StatusPill(
+                    label: '${state.cartItemCount} item',
+                    color: AppColors.moduleWaiter,
                   ),
               ],
             ),
@@ -1478,21 +1241,14 @@ class _CartPanel extends StatelessWidget {
           // Items
           Expanded(
             child: state.cart.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.shopping_cart_outlined,
-                            size: 44, color: Colors.grey[300]),
-                        const SizedBox(height: 10),
-                        Text('Belum ada item',
-                            style: TextStyle(
-                                color: Colors.grey[400], fontSize: 13)),
-                      ],
-                    ),
+                ? const EmptyState(
+                    icon: Icons.shopping_cart_outlined,
+                    title: 'Belum ada item',
+                    message: 'Pilih menu untuk mulai memesan.',
+                    accent: AppColors.moduleWaiter,
                   )
                 : ListView(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
                     children: state.cart.entries.map((entry) {
                       final product = state.productCache[entry.key];
                       if (product == null) return const SizedBox.shrink();
@@ -1513,54 +1269,29 @@ class _CartPanel extends StatelessWidget {
           // Bottom
           Container(
             decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: Color(0xFFF2F2F7)))),
-            padding: const EdgeInsets.all(16),
+                border: Border(top: BorderSide(color: AppColors.border))),
+            padding: const EdgeInsets.all(AppSpacing.md),
             child: Column(
               children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Total',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF0F172A),
-                        )),
+                    Text('Total', style: AppType.title),
                     Text(
                       CurrencyHelper.format(state.cartTotal),
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF059669),
-                      ),
+                      style:
+                          AppType.amount.copyWith(color: AppColors.moduleWaiter),
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: AppSpacing.sm),
                 if (state.cart.isNotEmpty)
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF059669),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                      ),
-                      onPressed: state.isProcessing ? null : onSubmit,
-                      child: state.isProcessing
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Text('KIRIM PESANAN',
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                              )),
-                    ),
+                  AppButton(
+                    label: 'Kirim Pesanan',
+                    icon: Icons.send_rounded,
+                    accent: AppColors.moduleWaiter,
+                    loading: state.isProcessing,
+                    onPressed: onSubmit,
                   ),
               ],
             ),
@@ -1594,30 +1325,51 @@ class _CartItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasNotes = notes != null && notes!.isNotEmpty;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md, vertical: AppSpacing.xs),
       child: Row(
         children: [
+          // Tombol catatan paling depan (sebelum item) agar jauh dari +/−.
+          if (onEditNote != null)
+            GestureDetector(
+              onTap: onEditNote,
+              child: Container(
+                width: 44,
+                height: 44,
+                margin: const EdgeInsets.only(right: 8),
+                decoration: BoxDecoration(
+                  color: hasNotes
+                      ? AppColors.soft(AppColors.moduleWaiter, 0.12)
+                      : AppColors.surfaceMuted,
+                  borderRadius: AppRadius.rXs,
+                ),
+                child: Icon(
+                  hasNotes ? Icons.edit_note_rounded : Icons.note_add_outlined,
+                  size: 20,
+                  color: hasNotes
+                      ? AppColors.moduleWaiter
+                      : AppColors.textTertiary,
+                ),
+              ),
+            ),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(name,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600, fontSize: 13)),
+                Text(name, style: AppType.body),
                 Text(CurrencyHelper.format(price * qty),
-                    style: const TextStyle(
-                        color: Color(0xFF059669),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600)),
-                if (notes != null && notes!.isNotEmpty)
+                    style: AppType.caption.copyWith(
+                        color: AppColors.moduleWaiter,
+                        fontWeight: FontWeight.w700)),
+                if (hasNotes)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
                     child: Text(
                       '📝 $notes',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: Color(0xFF64748B),
+                      style: AppType.caption.copyWith(
+                        color: AppColors.textSecondary,
                         fontStyle: FontStyle.italic,
                       ),
                     ),
@@ -1625,50 +1377,34 @@ class _CartItem extends StatelessWidget {
               ],
             ),
           ),
-          if (onEditNote != null)
-            GestureDetector(
-              onTap: onEditNote,
-              child: Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: Icon(
-                  (notes != null && notes!.isNotEmpty)
-                      ? Icons.edit_note_rounded
-                      : Icons.note_add_outlined,
-                  size: 18,
-                  color: (notes != null && notes!.isNotEmpty)
-                      ? const Color(0xFF059669)
-                      : const Color(0xFFCBD5E1),
-                ),
-              ),
-            ),
           if (onRemove != null)
             GestureDetector(
               onTap: onRemove,
               child: Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                    color: const Color(0xFFF2F2F7),
-                    borderRadius: BorderRadius.circular(8)),
-                child: const Icon(Icons.remove, size: 14),
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(
+                    color: AppColors.surfaceMuted,
+                    borderRadius: AppRadius.rXs),
+                child: const Icon(Icons.remove_rounded,
+                    size: 16, color: AppColors.textSecondary),
               ),
             ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Text('$qty',
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 14)),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+            child: Text('$qty', style: AppType.title),
           ),
           if (onAdd != null)
             GestureDetector(
               onTap: onAdd,
               child: Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                    color: const Color(0xFF059669),
-                    borderRadius: BorderRadius.circular(8)),
-                child: const Icon(Icons.add, size: 14, color: Colors.white),
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(
+                    color: AppColors.moduleWaiter,
+                    borderRadius: AppRadius.rXs),
+                child: const Icon(Icons.add_rounded,
+                    size: 16, color: Colors.white),
               ),
             ),
         ],
@@ -1693,83 +1429,41 @@ class _WaiterTableCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isAvailable = table.status == 'available';
-    final statusColor =
-        isAvailable ? const Color(0xFF10B981) : const Color(0xFFF59E0B);
+    final statusColor = isAvailable ? AppColors.success : AppColors.warning;
 
-    return Material(
-      color: isAvailable ? Colors.white : const Color(0xFFFFFBEB),
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: isAvailable
-                  ? const Color(0xFFE5E5EA)
-                  : const Color(0xFFFCD34D).withValues(alpha: 0.5),
+    return AppCard(
+      onTap: onTap,
+      accent: statusColor,
+      color: isAvailable ? null : AppColors.warningSoft,
+      padding: const EdgeInsets.all(AppSpacing.xs),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconBadge(
+              icon: Icons.table_restaurant_rounded,
+              color: statusColor,
+              size: 40),
+          const SizedBox(height: AppSpacing.xs),
+          Text(table.tableNumber,
+              style: AppType.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+          const SizedBox(height: AppSpacing.xxs),
+          StatusPill(
+            label: isAvailable ? 'Tersedia' : 'Terisi',
+            color: statusColor,
+          ),
+          if (order != null) ...[
+            const SizedBox(height: AppSpacing.xxs),
+            Text(
+              CurrencyHelper.format(order!.totalAmount),
+              style: AppType.caption.copyWith(color: AppColors.textSecondary),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                    color: statusColor, shape: BoxShape.circle),
-              ),
-              const SizedBox(height: 6),
-              Icon(Icons.table_restaurant_rounded,
-                  size: 26, color: statusColor),
-              const SizedBox(height: 6),
-              Text(table.tableNumber,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
-                    color: Color(0xFF0F172A),
-                  )),
-              const SizedBox(height: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(5),
-                ),
-                child: Text(
-                  isAvailable ? 'Tersedia' : 'Terisi',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    color: statusColor,
-                  ),
-                ),
-              ),
-              if (order != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  CurrencyHelper.format(order!.totalAmount),
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Color(0xFF64748B),
-                    fontWeight: FontWeight.w600,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ],
-          ),
-        ),
+          ],
+        ],
       ),
     );
   }
@@ -1790,70 +1484,61 @@ class _WaiterProductTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: inCart > 0 ? const Color(0xFFD1FAE5) : Colors.white,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: inCart > 0
-                  ? const Color(0xFF10B981).withValues(alpha: 0.4)
-                  : const Color(0xFFE5E5EA),
+    final selected = inCart > 0;
+    return AppCard(
+      onTap: onTap,
+      accent: selected ? AppColors.moduleWaiter : null,
+      color: selected ? AppColors.soft(AppColors.moduleWaiter, 0.1) : null,
+      padding: const EdgeInsets.all(AppSpacing.xs),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Avatar besar mengisi bagian atas kartu
+          Expanded(
+            child: ClipRRect(
+              borderRadius: AppRadius.rMd,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: MenuAvatar.fill(name: product.name),
+                  ),
+                  if (selected)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.xs, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.moduleWaiter,
+                          borderRadius: AppRadius.rXs,
+                          boxShadow:
+                              AppShadows.glow(AppColors.moduleWaiter, strength: 0.4),
+                        ),
+                        child: Text('$inCart',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                            )),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
-          padding: const EdgeInsets.all(10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Avatar besar mengisi bagian atas kartu
-              Expanded(
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: MenuAvatar.fill(name: product.name),
-                    ),
-                    if (inCart > 0)
-                      Positioned(
-                        top: 6,
-                        right: 6,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF059669),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text('$inCart',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                              )),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(product.name,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w600, fontSize: 13),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis),
-              const SizedBox(height: 2),
-              Text(CurrencyHelper.format(product.price),
-                  style: const TextStyle(
-                    color: Color(0xFF059669),
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                  )),
-            ],
+          const SizedBox(height: AppSpacing.xs),
+          SizedBox(
+            height: 34,
+            child: Text(product.name,
+                style: AppType.label.copyWith(height: 1.2),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis),
           ),
-        ),
+          const SizedBox(height: 2),
+          Text(CurrencyHelper.format(product.price),
+              style: AppType.label.copyWith(color: AppColors.moduleWaiter)),
+        ],
       ),
     );
   }

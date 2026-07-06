@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../services/print_queue_service.dart';
+import '../../theme/theme.dart';
+import '../../widgets/ui/ui.dart';
 
 /// Monitor antrian cetak dapur/bar: lihat pending/done/failed + cetak ulang.
 class PrintQueueScreen extends StatefulWidget {
@@ -14,6 +16,8 @@ class PrintQueueScreen extends StatefulWidget {
 
 class _PrintQueueScreenState extends State<PrintQueueScreen> {
   final _service = PrintQueueService.instance;
+
+  static const _accent = AppColors.moduleWaiter;
 
   Map<String, int> _stats = const {'pending': 0, 'done': 0, 'failed': 0};
   List<Map<String, dynamic>> _jobs = [];
@@ -52,9 +56,7 @@ class _PrintQueueScreenState extends State<PrintQueueScreen> {
   Future<void> _reprintJob(String id) async {
     await _service.reprint(id);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Mencetak ulang ke printer...')),
-      );
+      showAppSnack(context, 'Mencetak ulang ke printer...');
     }
     _load();
   }
@@ -62,18 +64,14 @@ class _PrintQueueScreenState extends State<PrintQueueScreen> {
   Future<void> _retryFailed() async {
     await _service.retryFailed();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Job gagal dimasukkan ulang ke antrian')),
-    );
+    showAppSnack(context, 'Job gagal dimasukkan ulang ke antrian');
     await _load();
   }
 
   Future<void> _clearDone() async {
     final n = await _service.clearDone();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$n riwayat cetak dibersihkan')),
-    );
+    showAppSnack(context, '$n riwayat cetak dibersihkan');
     await _load();
   }
 
@@ -82,136 +80,138 @@ class _PrintQueueScreenState extends State<PrintQueueScreen> {
     final failed = _stats['failed'] ?? 0;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F2F7),
-      appBar: AppBar(
-        title: const Text('Antrian Cetak Dapur/Bar'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Muat ulang',
-            onPressed: () => _load(),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          _buildStatsBar(),
-          if (failed > 0) _buildRetryBanner(failed),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _jobs.isEmpty
-                    ? _buildEmpty()
-                    : RefreshIndicator(
-                        onRefresh: _load,
-                        child: ListView.separated(
-                          padding: const EdgeInsets.all(16),
-                          itemCount: _jobs.length,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(height: 8),
-                          itemBuilder: (_, i) => _JobTile(
-                            job: _jobs[i],
-                            onReprint: () =>
-                                _reprintJob(_jobs[i]['id'] as String),
+      body: AppBackground(
+        child: Column(
+          children: [
+            AppPageHeader(
+              title: 'Antrian Cetak',
+              subtitle: 'Status cetak dapur & bar',
+              icon: Icons.print_rounded,
+              accent: _accent,
+              actions: [
+                AppIconButton(
+                  icon: Icons.refresh_rounded,
+                  tooltip: 'Muat ulang',
+                  filled: true,
+                  color: _accent,
+                  size: 42,
+                  onPressed: () => _load(),
+                ),
+              ],
+            ),
+            _buildStatsBar(),
+            if (failed > 0) _buildRetryBanner(failed),
+            Expanded(
+              child: _loading
+                  ? const AppLoader()
+                  : _jobs.isEmpty
+                      ? const EmptyState(
+                          icon: Icons.print_disabled_rounded,
+                          title: 'Belum ada riwayat cetak',
+                          message: 'Tiket cetak dapur/bar akan muncul di sini.',
+                          accent: _accent,
+                        )
+                      : RefreshIndicator(
+                          onRefresh: _load,
+                          child: ListView.separated(
+                            padding: const EdgeInsets.all(AppSpacing.md),
+                            itemCount: _jobs.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: AppSpacing.sm),
+                            itemBuilder: (_, i) => _JobTile(
+                              job: _jobs[i],
+                              onReprint: () =>
+                                  _reprintJob(_jobs[i]['id'] as String),
+                            ),
                           ),
                         ),
-                      ),
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildStatsBar() {
-    return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-      child: Row(
-        children: [
-          _statChip('Antri', _stats['pending'] ?? 0, const Color(0xFFF59E0B)),
-          const SizedBox(width: 10),
-          _statChip('Selesai', _stats['done'] ?? 0, const Color(0xFF10B981)),
-          const SizedBox(width: 10),
-          _statChip('Gagal', _stats['failed'] ?? 0, const Color(0xFFEF4444)),
-          const Spacer(),
-          TextButton.icon(
-            onPressed: (_stats['done'] ?? 0) > 0 ? _clearDone : null,
-            icon: const Icon(Icons.cleaning_services_outlined, size: 16),
-            label: const Text('Bersihkan'),
-          ),
-        ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.xs),
+      child: AppCard(
+        padding: const EdgeInsets.all(AppSpacing.sm),
+        child: Row(
+          children: [
+            _statChip('Antri', _stats['pending'] ?? 0, AppColors.warning),
+            const SizedBox(width: AppSpacing.xs),
+            _statChip('Selesai', _stats['done'] ?? 0, AppColors.success),
+            const SizedBox(width: AppSpacing.xs),
+            _statChip('Gagal', _stats['failed'] ?? 0, AppColors.danger),
+            const Spacer(),
+            // Aksi sekunder (bukan CTA utama) → aksen GOLD tonal.
+            AppButton(
+              label: 'Bersihkan',
+              icon: Icons.cleaning_services_rounded,
+              variant: AppButtonVariant.tonal,
+              accent: AppColors.accent,
+              size: AppButtonSize.small,
+              expanded: false,
+              onPressed: (_stats['done'] ?? 0) > 0 ? _clearDone : null,
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _statChip(String label, int value, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(10),
+        color: AppColors.soft(color, 0.10),
+        borderRadius: AppRadius.rSm,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text('$value',
-              style: TextStyle(
-                  fontWeight: FontWeight.w800, fontSize: 18, color: color)),
+              style: AppType.h3.copyWith(color: color)),
           Text(label,
-              style: TextStyle(
-                  fontSize: 11, color: color, fontWeight: FontWeight.w600)),
+              style: AppType.caption.copyWith(
+                  color: color, fontWeight: FontWeight.w600)),
         ],
       ),
     );
   }
 
   Widget _buildRetryBanner(int failed) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEF4444).withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.3)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.warning_amber_rounded,
-              color: Color(0xFFEF4444), size: 20),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text('$failed cetakan gagal terkirim ke printer',
-                style: const TextStyle(
-                    color: Color(0xFFB91C1C),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600)),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFEF4444)),
-            onPressed: _retryFailed,
-            child: const Text('Cetak Ulang'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmpty() {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.print_disabled_outlined, size: 56, color: Colors.grey[300]),
-          const SizedBox(height: 12),
-          Text('Belum ada riwayat cetak',
-              style: TextStyle(color: Colors.grey[400], fontSize: 15)),
-        ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, AppSpacing.xs, AppSpacing.md, 0),
+      child: AppCard(
+        color: AppColors.dangerSoft,
+        border: Border.all(color: AppColors.soft(AppColors.danger, 0.3)),
+        shadow: const [],
+        padding: const EdgeInsets.all(AppSpacing.sm),
+        child: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded,
+                color: AppColors.danger, size: 20),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text('$failed cetakan gagal terkirim ke printer',
+                  style: AppType.bodySm.copyWith(
+                      color: AppColors.danger, fontWeight: FontWeight.w700)),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            AppButton(
+              label: 'Cetak Ulang',
+              variant: AppButtonVariant.danger,
+              size: AppButtonSize.small,
+              expanded: false,
+              onPressed: _retryFailed,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -232,32 +232,29 @@ class _JobTile extends StatelessWidget {
     final error = job['error_message'] as String?;
 
     final (color, icon, text) = switch (status) {
-      'done' => (const Color(0xFF10B981), Icons.check_circle, 'Terkirim'),
-      'failed' => (const Color(0xFFEF4444), Icons.error, 'Gagal'),
-      _ => (const Color(0xFFF59E0B), Icons.schedule, 'Menunggu'),
+      'done' => (AppColors.success, Icons.check_circle_rounded, 'Terkirim'),
+      'failed' => (AppColors.danger, Icons.error_rounded, 'Gagal'),
+      _ => (AppColors.warning, Icons.schedule_rounded, 'Menunggu'),
     };
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-      ),
+    return AppCard(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md, vertical: AppSpacing.sm),
       child: Row(
         children: [
-          Icon(icon, color: color, size: 22),
-          const SizedBox(width: 12),
+          IconBadge(icon: icon, color: color, size: 40),
+          const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(label.isNotEmpty ? label : '${role.toUpperCase()} ($type)',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600, fontSize: 14)),
+                    style: AppType.title, maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 2),
                 Text(
                   '${role.toUpperCase()} · $type${retry > 0 ? ' · retry $retry' : ''}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                  style: AppType.caption,
                 ),
                 if (status == 'failed' && error != null && error.isNotEmpty)
                   Padding(
@@ -265,30 +262,22 @@ class _JobTile extends StatelessWidget {
                     child: Text(error,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 11, color: Color(0xFFB91C1C))),
+                        style: AppType.caption.copyWith(color: AppColors.danger)),
                   ),
               ],
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(text,
-                style: TextStyle(
-                    fontSize: 11, color: color, fontWeight: FontWeight.w700)),
-          ),
+          const SizedBox(width: AppSpacing.xs),
+          StatusPill(label: text, color: color, icon: icon),
           // Cetak ulang per-tiket (selain yang masih menunggu).
           if (status != 'pending' && onReprint != null) ...[
-            const SizedBox(width: 4),
-            IconButton(
-              onPressed: onReprint,
-              icon: const Icon(Icons.refresh, size: 20, color: Color(0xFF2563EB)),
+            const SizedBox(width: AppSpacing.xxs),
+            AppIconButton(
+              icon: Icons.refresh_rounded,
+              color: AppColors.moduleProduk,
               tooltip: 'Cetak ulang',
-              visualDensity: VisualDensity.compact,
+              size: 40,
+              onPressed: onReprint,
             ),
           ],
         ],

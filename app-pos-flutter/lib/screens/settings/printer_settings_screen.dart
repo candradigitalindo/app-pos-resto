@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../models/models.dart';
 import '../../repositories/product_repository.dart';
 import '../../services/printer_service.dart';
+import '../../theme/theme.dart';
+import '../../widgets/ui/ui.dart';
 
 class PrinterSettingsScreen extends StatefulWidget {
   const PrinterSettingsScreen({super.key});
@@ -16,6 +18,8 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen>
   final _service = PrinterService();
   final _productRepo = ProductRepository();
   late final TabController _tabController;
+
+  static const _accent = AppColors.brand; // seragam hijau primer (bukan biru)
 
   // Saved printers
   List<PrinterDevice> _saved = [];
@@ -110,73 +114,75 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen>
     String? error;
     var testing = false;
 
-    showDialog(
-      context: context,
+    showAppModal(
+      context,
+      title: 'Tambah Printer LAN',
+      icon: Icons.lan_rounded,
+      accent: _accent,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('Tambah Printer LAN'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: ipCtrl,
-                autofocus: true,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Alamat IP printer *',
-                  hintText: 'mis. 192.168.1.50',
-                  border: OutlineInputBorder(),
-                ),
+        builder: (ctx, setS) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: ipCtrl,
+              autofocus: true,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Alamat IP printer *',
+                hintText: 'mis. 192.168.1.50',
               ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    flex: 2,
-                    child: TextField(
-                      controller: portCtrl,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Port',
-                        hintText: '9100',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    flex: 3,
-                    child: TextField(
-                      controller: nameCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Nama (opsional)',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              if (error != null) ...[
-                const SizedBox(height: 10),
-                Text(error!,
-                    style: const TextStyle(
-                        color: Color(0xFFEF4444), fontSize: 12)),
-              ],
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Batal'),
             ),
-            FilledButton.icon(
-              onPressed: testing
-                  ? null
-                  : () async {
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              children: [
+                Expanded(
+                  flex: 2,
+                  child: TextField(
+                    controller: portCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Port',
+                      hintText: '9100',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    controller: nameCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Nama (opsional)',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (error != null) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(error!,
+                  style: AppType.caption.copyWith(color: AppColors.danger)),
+            ],
+            const SizedBox(height: AppSpacing.md),
+            Row(
+              children: [
+                Expanded(
+                  child: AppButton.neutral('Batal',
+                      onPressed: () => Navigator.pop(ctx)),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: AppButton(
+                    label: 'Tes & Simpan',
+                    icon: Icons.check_rounded,
+                    accent: _accent,
+                    loading: testing,
+                    onPressed: () async {
                       final ip = ipCtrl.text.trim();
-                      final port = int.tryParse(portCtrl.text.trim()) ?? 9100;
+                      final port =
+                          int.tryParse(portCtrl.text.trim()) ?? 9100;
                       if (!_isValidIp(ip)) {
                         setS(() => error = 'Format IP tidak valid');
                         return;
@@ -185,8 +191,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen>
                         testing = true;
                         error = null;
                       });
-                      final reachable =
-                          await _service.pingLan(ip, port);
+                      final reachable = await _service.pingLan(ip, port);
                       if (!ctx.mounted) return;
                       if (!reachable) {
                         setS(() {
@@ -206,15 +211,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen>
                       Navigator.pop(ctx);
                       await _save(device);
                     },
-              icon: testing
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Icon(Icons.check, size: 18),
-              label: Text(testing ? 'Menguji...' : 'Tes & Simpan'),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -238,9 +237,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen>
     await _service.savePrinter(device);
     await _loadSaved();
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${device.name} disimpan')),
-      );
+      showAppSnack(context, '${device.name} disimpan');
     }
   }
 
@@ -263,49 +260,30 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen>
   }
 
   Future<void> _remove(PrinterDevice device) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Hapus Printer?'),
-        content: Text('Hapus "${device.name}" dari daftar?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Batal')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Hapus'),
-          ),
-        ],
-      ),
+    final ok = await showAppConfirm(
+      context,
+      title: 'Hapus Printer?',
+      message: 'Hapus "${device.name}" dari daftar?',
+      confirmText: 'Hapus',
+      icon: Icons.print_disabled_rounded,
+      destructive: true,
     );
-    if (ok == true) {
+    if (ok) {
       await _service.removePrinter(device.address);
       await _loadSaved();
     }
   }
 
   Future<void> _testPrint(PrinterDevice device) async {
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
-      SnackBar(content: Text('Mengirim test print ke ${device.name}...')),
-    );
+    showAppSnack(context, 'Mengirim test print ke ${device.name}...');
     try {
       await _service.testPrint(device);
       if (mounted) {
-        messenger.showSnackBar(
-          SnackBar(content: Text('Test print berhasil: ${device.name}')),
-        );
+        showAppSnack(context, 'Test print berhasil: ${device.name}');
       }
     } catch (e) {
       if (mounted) {
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text('Gagal: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        showAppSnack(context, 'Gagal: $e', isError: true);
       }
     }
   }
@@ -315,28 +293,45 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Pengaturan Printer'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
-        ),
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(icon: Icon(Icons.print), text: 'Tersimpan'),
-            Tab(icon: Icon(Icons.bluetooth), text: 'Bluetooth'),
-            Tab(icon: Icon(Icons.lan), text: 'LAN'),
+      body: AppBackground(
+        child: Column(
+          children: [
+            const AppPageHeader(
+              title: 'Pengaturan Printer',
+              subtitle: 'Bluetooth & LAN (ESC-POS)',
+              icon: Icons.print_rounded,
+              accent: _accent,
+            ),
+            Container(
+              decoration: const BoxDecoration(
+                color: AppColors.surface,
+                border: Border(bottom: BorderSide(color: AppColors.border)),
+              ),
+              child: TabBar(
+                controller: _tabController,
+                labelColor: _accent,
+                unselectedLabelColor: AppColors.textTertiary,
+                indicatorColor: _accent,
+                indicatorSize: TabBarIndicatorSize.label,
+                tabs: const [
+                  Tab(icon: Icon(Icons.print_rounded), text: 'Tersimpan'),
+                  Tab(icon: Icon(Icons.bluetooth_rounded), text: 'Bluetooth'),
+                  Tab(icon: Icon(Icons.lan_rounded), text: 'LAN'),
+                ],
+              ),
+            ),
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildSavedTab(),
+                  _buildBluetoothTab(),
+                  _buildLanTab(),
+                ],
+              ),
+            ),
           ],
         ),
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _buildSavedTab(),
-          _buildBluetoothTab(),
-          _buildLanTab(),
-        ],
       ),
     );
   }
@@ -345,26 +340,18 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen>
 
   Widget _buildSavedTab() {
     if (_saved.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.print_disabled, size: 64, color: Colors.grey[300]),
-            const SizedBox(height: 12),
-            Text('Belum ada printer tersimpan',
-                style: TextStyle(color: Colors.grey[400], fontSize: 16)),
-            const SizedBox(height: 8),
-            Text('Scan Bluetooth atau LAN untuk menambahkan',
-                style: TextStyle(color: Colors.grey[400], fontSize: 13)),
-          ],
-        ),
+      return const EmptyState(
+        icon: Icons.print_disabled_rounded,
+        title: 'Belum ada printer tersimpan',
+        message: 'Scan Bluetooth atau LAN untuk menambahkan.',
+        accent: _accent,
       );
     }
 
     return ListView.separated(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(AppSpacing.md),
       itemCount: _saved.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
       itemBuilder: (context, i) => _PrinterTile(
         device: _saved[i],
         isSaved: true,
@@ -385,41 +372,34 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen>
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(16),
-          child: SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: _btScanning ? null : _scanBluetooth,
-              icon: _btScanning
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Icon(Icons.bluetooth_searching),
-              label: Text(_btScanning ? 'Mencari...' : 'Scan Bluetooth'),
-            ),
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: AppButton(
+            label: _btScanning ? 'Mencari...' : 'Scan Bluetooth',
+            icon: _btScanning ? null : Icons.bluetooth_searching_rounded,
+            accent: _accent,
+            loading: _btScanning,
+            onPressed: _btScanning ? null : _scanBluetooth,
           ),
         ),
         if (_btError != null)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
             child: _ErrorBanner(message: _btError!),
           ),
         Expanded(
           child: _btDevices.isEmpty && !_btScanning
-              ? Center(
-                  child: Text(
-                    'Tekan Scan untuk mencari printer Bluetooth\n(hanya perangkat yang sudah dipasangkan)',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey[400], fontSize: 13),
-                  ),
+              ? const EmptyState(
+                  icon: Icons.bluetooth_rounded,
+                  title: 'Cari printer Bluetooth',
+                  message:
+                      'Tekan Scan untuk mencari printer\n(hanya perangkat yang sudah dipasangkan).',
+                  accent: _accent,
                 )
               : ListView.separated(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
                   itemCount: _btDevices.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  separatorBuilder: (_, __) =>
+                      const SizedBox(height: AppSpacing.sm),
                   itemBuilder: (context, i) {
                     final d = _btDevices[i];
                     final alreadySaved =
@@ -444,60 +424,58 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen>
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.md),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _lanScanning ? null : _scanLan,
-                  icon: _lanScanning
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Icon(Icons.search),
-                  label: Text(_lanScanning
-                      ? 'Scanning... ($_lanProgress/254)'
-                      : 'Scan Printer LAN (port 9100)'),
-                ),
+              AppButton(
+                label: _lanScanning
+                    ? 'Scanning... ($_lanProgress/254)'
+                    : 'Scan Printer LAN (port 9100)',
+                icon: _lanScanning ? null : Icons.search_rounded,
+                accent: _accent,
+                onPressed: _lanScanning ? null : _scanLan,
               ),
               if (_lanScanning) ...[
-                const SizedBox(height: 8),
-                LinearProgressIndicator(value: _lanProgress / 254),
-              ],
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: _lanScanning ? null : _showManualLanDialog,
-                  icon: const Icon(Icons.add_link, size: 18),
-                  label: const Text('Tambah manual via IP'),
+                const SizedBox(height: AppSpacing.sm),
+                ClipRRect(
+                  borderRadius: AppRadius.rPill,
+                  child: LinearProgressIndicator(
+                    value: _lanProgress / 254,
+                    minHeight: 6,
+                    color: _accent,
+                    backgroundColor: AppColors.soft(_accent, 0.12),
+                  ),
                 ),
+              ],
+              const SizedBox(height: AppSpacing.sm),
+              AppButton.neutral(
+                'Tambah manual via IP',
+                icon: Icons.add_link_rounded,
+                onPressed: _lanScanning ? null : _showManualLanDialog,
               ),
             ],
           ),
         ),
         if (_lanError != null)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
             child: _ErrorBanner(message: _lanError!),
           ),
         Expanded(
           child: _lanDevices.isEmpty && !_lanScanning
-              ? Center(
-                  child: Text(
-                    'Tekan Scan untuk mendeteksi printer di jaringan LAN\n(port 9100 / ESC-POS)',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey[400], fontSize: 13),
-                  ),
+              ? const EmptyState(
+                  icon: Icons.lan_rounded,
+                  title: 'Cari printer LAN',
+                  message:
+                      'Tekan Scan untuk mendeteksi printer di jaringan\n(port 9100 / ESC-POS).',
+                  accent: _accent,
                 )
               : ListView.separated(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
                   itemCount: _lanDevices.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  separatorBuilder: (_, __) =>
+                      const SizedBox(height: AppSpacing.sm),
                   itemBuilder: (context, i) {
                     final d = _lanDevices[i];
                     final alreadySaved =
@@ -545,101 +523,84 @@ class _PrinterTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isBt = device.type == PrinterType.bluetooth;
-    final color = isBt ? Colors.blue : Colors.teal;
+    // Ikon device seragam hijau primer (Bluetooth maupun LAN) — bukan biru.
+    const color = AppColors.moduleKasir;
 
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-          children: [
-            // Icon
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(
-                isBt ? Icons.bluetooth : Icons.lan,
+    return AppCard(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              IconBadge(
+                icon: isBt ? Icons.bluetooth_rounded : Icons.lan_rounded,
                 color: color,
-                size: 22,
+                size: 44,
               ),
-            ),
-            const SizedBox(width: 12),
-
-            // Info
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(device.name,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 14)),
-                  const SizedBox(height: 2),
-                  Text(device.address,
-                      style: TextStyle(fontSize: 12, color: Colors.grey[500])),
-                  if (isSaved)
-                    Container(
-                      margin: const EdgeInsets.only(top: 4),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(4),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(device.name,
+                        style: AppType.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 2),
+                    Text(device.address, style: AppType.caption),
+                    if (isSaved) ...[
+                      const SizedBox(height: AppSpacing.xs),
+                      const StatusPill(
+                        label: 'Tersimpan',
+                        color: AppColors.success,
+                        icon: Icons.check_rounded,
                       ),
-                      child: const Text('Tersimpan',
-                          style: TextStyle(
-                              fontSize: 10,
-                              color: Colors.green,
-                              fontWeight: FontWeight.w600)),
+                    ],
+                  ],
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (onTest != null)
+                    AppIconButton(
+                      icon: Icons.print_rounded,
+                      color: AppColors.accent, // gold: beda dari Simpan/Hapus
+                      tooltip: 'Test Print',
+                      size: 40,
+                      onPressed: onTest,
+                    ),
+                  if (onSave != null)
+                    AppIconButton(
+                      icon: Icons.save_rounded,
+                      color: AppColors.success,
+                      tooltip: 'Simpan',
+                      size: 40,
+                      onPressed: onSave,
+                    ),
+                  if (onRemove != null)
+                    AppIconButton(
+                      icon: Icons.delete_outline_rounded,
+                      color: AppColors.danger,
+                      tooltip: 'Hapus',
+                      size: 40,
+                      onPressed: onRemove,
                     ),
                 ],
               ),
-            ),
-
-            // Actions
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (onTest != null)
-                  IconButton(
-                    icon: const Icon(Icons.print_outlined, size: 20),
-                    tooltip: 'Test Print',
-                    onPressed: onTest,
-                  ),
-                if (onSave != null)
-                  IconButton(
-                    icon: const Icon(Icons.save_outlined,
-                        size: 20, color: Colors.green),
-                    tooltip: 'Simpan',
-                    onPressed: onSave,
-                  ),
-                if (onRemove != null)
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline,
-                        size: 20, color: Colors.red),
-                    tooltip: 'Hapus',
-                    onPressed: onRemove,
-                  ),
-              ],
-            ),
-          ],
-            ),
-            if (isSaved && onRoleToggle != null) ...[
-              const Divider(height: 18),
-              _buildCategorySelector(),
-              const SizedBox(height: 12),
-              _buildRoleSelector(),
-              const SizedBox(height: 12),
-              _buildPaperSelector(),
             ],
+          ),
+          if (isSaved && onRoleToggle != null) ...[
+            const Divider(height: AppSpacing.lg, color: AppColors.border),
+            _buildCategorySelector(),
+            const SizedBox(height: AppSpacing.sm),
+            _buildRoleSelector(),
+            const SizedBox(height: AppSpacing.sm),
+            _buildPaperSelector(),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -651,16 +612,18 @@ class _PrinterTile extends StatelessWidget {
       return GestureDetector(
         onTap: () => onPaperChange?.call(cols),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md, vertical: 6),
           decoration: BoxDecoration(
-            color: selected ? const Color(0xFF0F766E) : const Color(0xFFF2F2F7),
-            borderRadius: BorderRadius.circular(8),
+            // Segmented selector aktif → aksen GOLD (identitas sekunder).
+            color: selected ? AppColors.accent : AppColors.surfaceMuted,
+            borderRadius: AppRadius.rXs,
           ),
           child: Text(label,
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
-                color: selected ? Colors.white : const Color(0xFF8E8E93),
+                color: selected ? Colors.white : AppColors.textTertiary,
               )),
         ),
       );
@@ -668,14 +631,10 @@ class _PrinterTile extends StatelessWidget {
 
     return Row(
       children: [
-        const Icon(Icons.straighten, size: 14, color: Color(0xFF0F766E)),
+        const Icon(Icons.straighten_rounded, size: 14, color: AppColors.moduleKasir),
         const SizedBox(width: 5),
-        const Text('Lebar kertas:',
-            style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF3C3C43))),
-        const SizedBox(width: 8),
+        Text('Lebar kertas:', style: AppType.label),
+        const SizedBox(width: AppSpacing.xs),
         chip('58mm', 32),
         const SizedBox(width: 6),
         chip('80mm', 48),
@@ -689,26 +648,23 @@ class _PrinterTile extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Row(
+        Row(
           children: [
-            Icon(Icons.restaurant_menu, size: 14, color: Color(0xFF059669)),
-            SizedBox(width: 5),
-            Text('Cetak kategori menu:',
-                style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF3C3C43))),
+            const Icon(Icons.restaurant_menu_rounded,
+                size: 14, color: AppColors.success),
+            const SizedBox(width: 5),
+            Text('Cetak kategori menu:', style: AppType.label),
           ],
         ),
         const SizedBox(height: 6),
         if (isChecker)
-          const Text(
+          Text(
             'Printer ini Checker — otomatis mencetak SEMUA pesanan.',
-            style: TextStyle(fontSize: 10, color: Color(0xFF2563EB)),
+            style: AppType.caption.copyWith(color: AppColors.moduleProduk),
           )
         else if (categories.isEmpty)
-          const Text('Belum ada kategori menu.',
-              style: TextStyle(fontSize: 10, color: Color(0xFF8E8E93)))
+          Text('Belum ada kategori menu.',
+              style: AppType.caption.copyWith(color: AppColors.textTertiary))
         else
           Wrap(
             spacing: 6,
@@ -718,26 +674,26 @@ class _PrinterTile extends StatelessWidget {
               return GestureDetector(
                 onTap: () => onCategoryToggle?.call(cat.id),
                 child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 11, vertical: 6),
                   decoration: BoxDecoration(
                     color: selected
-                        ? const Color(0xFF059669)
-                        : const Color(0xFFF2F2F7),
-                    borderRadius: BorderRadius.circular(8),
+                        ? AppColors.success
+                        : AppColors.surfaceMuted,
+                    borderRadius: AppRadius.rXs,
                     border: Border.all(
                         color: selected
-                            ? const Color(0xFF059669)
-                            : const Color(0xFFE5E5EA)),
+                            ? AppColors.success
+                            : AppColors.border),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(selected ? Icons.check : Icons.add,
+                      Icon(selected ? Icons.check_rounded : Icons.add_rounded,
                           size: 13,
                           color: selected
                               ? Colors.white
-                              : const Color(0xFFB0B0B5)),
+                              : AppColors.textTertiary),
                       const SizedBox(width: 4),
                       Text(cat.name,
                           style: TextStyle(
@@ -745,7 +701,7 @@ class _PrinterTile extends StatelessWidget {
                             fontWeight: FontWeight.w600,
                             color: selected
                                 ? Colors.white
-                                : const Color(0xFF8E8E93),
+                                : AppColors.textSecondary,
                           )),
                     ],
                   ),
@@ -756,11 +712,11 @@ class _PrinterTile extends StatelessWidget {
         if (!isChecker &&
             device.categoryIds.isEmpty &&
             !device.hasRole(PrinterRole.cashier))
-          const Padding(
-            padding: EdgeInsets.only(top: 6),
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
             child: Text(
               '⚠ Belum ada kategori/peran — printer ini hanya dipakai bila tak ada printer lain.',
-              style: TextStyle(fontSize: 10, color: Color(0xFFD97706)),
+              style: AppType.caption.copyWith(color: AppColors.warning),
             ),
           ),
       ],
@@ -772,11 +728,7 @@ class _PrinterTile extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Peran khusus:',
-            style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF3C3C43))),
+        Text('Peran khusus:', style: AppType.label),
         const SizedBox(height: 6),
         Wrap(
           spacing: 6,
@@ -787,31 +739,32 @@ class _PrinterTile extends StatelessWidget {
             return GestureDetector(
               onTap: () => onRoleToggle!(value),
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm, vertical: 6),
                 decoration: BoxDecoration(
                   color: selected
-                      ? const Color(0xFF2563EB)
-                      : const Color(0xFFF2F2F7),
-                  borderRadius: BorderRadius.circular(8),
+                      ? AppColors.moduleProduk
+                      : AppColors.surfaceMuted,
+                  borderRadius: AppRadius.rXs,
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
                       selected
-                          ? Icons.check_circle
-                          : Icons.radio_button_unchecked,
+                          ? Icons.check_circle_rounded
+                          : Icons.radio_button_unchecked_rounded,
                       size: 13,
-                      color: selected ? Colors.white : const Color(0xFFB0B0B5),
+                      color: selected ? Colors.white : AppColors.textTertiary,
                     ),
                     const SizedBox(width: 5),
                     Text(label,
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
-                          color:
-                              selected ? Colors.white : const Color(0xFF8E8E93),
+                          color: selected
+                              ? Colors.white
+                              : AppColors.textSecondary,
                         )),
                   ],
                 ),
@@ -832,20 +785,21 @@ class _ErrorBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      padding: const EdgeInsets.all(AppSpacing.sm),
       decoration: BoxDecoration(
-        color: Colors.red.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+        color: AppColors.dangerSoft,
+        borderRadius: AppRadius.rSm,
+        border: Border.all(color: AppColors.soft(AppColors.danger, 0.3)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.error_outline, color: Colors.red, size: 18),
-          const SizedBox(width: 8),
+          const Icon(Icons.error_outline_rounded,
+              color: AppColors.danger, size: 18),
+          const SizedBox(width: AppSpacing.xs),
           Expanded(
             child: Text(message,
-                style: const TextStyle(color: Colors.red, fontSize: 13)),
+                style: AppType.bodySm.copyWith(color: AppColors.danger)),
           ),
         ],
       ),

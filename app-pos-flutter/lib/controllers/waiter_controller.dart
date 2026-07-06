@@ -219,7 +219,8 @@ class WaiterController extends ChangeNotifier {
       _setState(_state.copyWith(
         categories: categories,
         products: products,
-        selectedCategory: categories.isNotEmpty ? categories.first : null,
+        // Default "Semua" saat pertama buka (bukan kategori pertama).
+        clearSelectedCategory: true,
         productCache: productCache,
         isLoading: false,
       ));

@@ -170,19 +170,12 @@ class CashierController extends ChangeNotifier {
       final tables = results[1] as List<RestaurantTable>;
       final shift = results[2] as CashierShift?;
 
-      List<Product> products;
-      Category? selectedCategory = _state.selectedCategory;
-
-      if (categories.isNotEmpty && selectedCategory == null) {
-        selectedCategory = categories.first;
-        products =
-            await _productRepo.getProducts(categoryId: selectedCategory.id);
-      } else if (selectedCategory != null) {
-        products =
-            await _productRepo.getProducts(categoryId: selectedCategory.id);
-      } else {
-        products = await _productRepo.getProducts();
-      }
+      // Default "Semua" (selectedCategory == null) → tampilkan SEMUA item saat
+      // pertama buka. Kategori tersimpan bila pengguna memilihnya.
+      final selectedCategory = _state.selectedCategory;
+      final products = selectedCategory != null
+          ? await _productRepo.getProducts(categoryId: selectedCategory.id)
+          : await _productRepo.getProducts();
 
       final productCache = Map<String, Product>.from(_state.productCache);
       for (final p in products) {
@@ -1038,6 +1031,7 @@ class CashierController extends ChangeNotifier {
       ordererName: _orderersLabel(items, order), // semua pemesan
       outletName: o.name.isNotEmpty ? o.name : 'POS Resto',
       outletAddress: o.address,
+      outletPhone: o.phone,
     );
   }
 
@@ -1089,6 +1083,7 @@ class CashierController extends ChangeNotifier {
       isBill: true,
       outletName: o.name.isNotEmpty ? o.name : 'POS Resto',
       outletAddress: o.address,
+      outletPhone: o.phone,
     );
     await _printReceipt(data);
     return true;
@@ -1152,6 +1147,7 @@ class CashierController extends ChangeNotifier {
       isBill: false,
       outletName: o.name.isNotEmpty ? o.name : 'POS Resto',
       outletAddress: o.address,
+      outletPhone: o.phone,
       receiptFooter: 'Struk Ulang - Terima Kasih!',
     );
     await _printReceipt(data);

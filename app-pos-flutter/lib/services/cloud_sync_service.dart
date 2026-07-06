@@ -33,11 +33,16 @@ class CloudSyncService {
   static const _lastSyncAtKey = 'cloud_last_sync_at';
 
   Timer? _timer;
-  bool _syncing = false;
+  bool _pushBusy = false; // reentrancy guard khusus pushNow()
   int _consecutiveFails = 0;
   static const _maxBackoffMinutes = 30;
 
-  bool get isSyncing => _syncing;
+  /// True selama satu siklus sinkron berjalan — baik otomatis (timer) maupun
+  /// manual (tombol kasir). UI mendengarkan ini agar tombol ikut berputar saat
+  /// auto-sync, sekaligus mencegah tap manual memicu siklus ganda.
+  final ValueNotifier<bool> syncing = ValueNotifier(false);
+
+  bool get isSyncing => syncing.value;
 
   /// Status ringkas untuk indikator UI kasir.
   /// [enabled] sync aktif?, [pending] jumlah item outbox belum terkirim,
@@ -96,7 +101,19 @@ class CloudSyncService {
   }
 
   /// Satu siklus penuh seperti sync_service.go: push → pull → tax.
+  /// Dijaga agar tidak berjalan ganda (auto timer + tap manual) dan mengekspos
+  /// [syncing] ke UI untuk animasi tombol sinkron.
   Future<void> syncCycle() async {
+    if (syncing.value) return; // siklus lain sedang jalan → jangan dobel
+    syncing.value = true;
+    try {
+      await _runCycle();
+    } finally {
+      syncing.value = false;
+    }
+  }
+
+  Future<void> _runCycle() async {
     // Auto-discover outlet ID jika belum ada
     final outlet = await _outletService.loadOutlet();
     if (outlet.cloudOutletId.isEmpty && outlet.cloudApiKey.isNotEmpty) {
@@ -162,8 +179,8 @@ class CloudSyncService {
   /// Kirim semua item pending. Aman dipanggil manual (tombol "Sync Sekarang").
   /// Mengembalikan ringkasan {sent, success, failed}.
   Future<Map<String, int>> pushNow() async {
-    if (_syncing) return {'sent': 0, 'success': 0, 'failed': 0};
-    _syncing = true;
+    if (_pushBusy) return {'sent': 0, 'success': 0, 'failed': 0};
+    _pushBusy = true;
     try {
       final outlet = await _outletService.loadOutlet();
       if (!_isConfigured(outlet)) {
@@ -249,7 +266,7 @@ class CloudSyncService {
       debugPrint('CloudSync pushNow error: $e');
       return {'sent': 0, 'success': 0, 'failed': 0};
     } finally {
-      _syncing = false;
+      _pushBusy = false;
     }
   }
 
@@ -881,16 +898,24 @@ class CloudSyncService {
         final outletName = data['name']?.toString() ?? '';
         final outletCode = data['code']?.toString() ?? '';
         final outletAddress = data['address']?.toString() ?? '';
+        // Nomor HP outlet — dukung beberapa nama field yang mungkin dipakai cloud.
+        final outletPhone = (data['phone'] ??
+                data['phone_number'] ??
+                data['hp'] ??
+                data['telp'])
+            ?.toString() ??
+            '';
 
         // Simpan outlet ID ke shared preferences
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('outlet_cloud_outlet_id', outletId);
 
-        // Isi profil outlet dari cloud (nama/kode/alamat) — cloud = sumber kebenaran
+        // Isi profil outlet dari cloud (nama/kode/alamat/telepon) — cloud = sumber kebenaran
         await _outletService.saveOutlet(outlet.copyWith(
           name: outletName.isNotEmpty ? outletName : outlet.name,
           code: outletCode.isNotEmpty ? outletCode : outlet.code,
           address: outletAddress.isNotEmpty ? outletAddress : outlet.address,
+          phone: outletPhone.isNotEmpty ? outletPhone : outlet.phone,
         ));
 
         // Tarik semua master data (produk & kategori) dari cloud

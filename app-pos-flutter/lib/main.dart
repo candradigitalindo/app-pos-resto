@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'app.dart';
 import 'services/device_role_service.dart';
+import 'services/logo_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Muat logo struk dari penyimpanan lokal ke cache (untuk cetak offline).
+  await LogoService.instance.init();
 
   // Server API 7070 + print queue + cloud sync HANYA untuk Main POS.
   // Mode Station (atau peran belum dipilih) tidak membuka port apa pun.

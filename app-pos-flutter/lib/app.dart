@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'models/models.dart';
+import 'theme/theme.dart';
 import 'services/auth_service.dart';
 import 'services/data_retention_service.dart';
 import 'services/device_role_service.dart';
@@ -104,11 +105,7 @@ class PosRestoApp extends StatelessWidget {
       child: MaterialApp(
         title: 'POS Resto',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorSchemeSeed: const Color(0xFF10B981),
-          useMaterial3: true,
-          brightness: Brightness.light,
-        ),
+        theme: AppTheme.light,
         home: const RootGate(),
       ),
     );
@@ -235,23 +232,7 @@ class AuthWrapper extends ConsumerWidget {
     final authState = ref.watch(authProvider);
 
     if (!authState.isChecked || authState.isLoading) {
-      return const Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.restaurant, size: 80, color: Color(0xFF10B981)),
-              SizedBox(height: 16),
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text(
-                'POS Resto',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-        ),
-      );
+      return const _BrandSplash();
     }
 
     if (authState.isLoggedIn) {
@@ -259,5 +240,58 @@ class AuthWrapper extends ConsumerWidget {
     }
 
     return const LoginScreen();
+  }
+}
+
+/// Splash brand saat memeriksa sesi — logo gradasi + glow ala iOS.
+class _BrandSplash extends StatelessWidget {
+  const _BrandSplash();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: AppColors.canvasGradient,
+          ),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 96,
+                height: 96,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: AppColors.brandGradient,
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: AppRadius.rXl,
+                  boxShadow: AppShadows.glow(AppColors.brand, strength: 0.45),
+                ),
+                child: const Icon(Icons.restaurant_menu_rounded,
+                    size: 48, color: Colors.white),
+              ),
+              const SizedBox(height: AppSpacing.xl),
+              Text('POS Resto', style: AppType.h1),
+              const SizedBox(height: AppSpacing.xs),
+              Text('Point of Sale System',
+                  style: AppType.caption.copyWith(color: AppColors.textTertiary)),
+              const SizedBox(height: AppSpacing.xl),
+              const SizedBox(
+                width: 26,
+                height: 26,
+                child: CircularProgressIndicator(strokeWidth: 2.6),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -7,14 +7,19 @@ import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'printer_service.dart';
 
 /// Mengumpulkan telemetri perangkat untuk dikirim ke cloud (heartbeat):
-/// kondisi tablet (baterai, penyimpanan, model, OS, versi app), status tiap
-/// printer (online/offline), dan ringkasan konektivitas.
+/// kondisi tablet (baterai, penyimpanan, CPU, RAM, model, OS, versi app),
+/// status tiap printer (online/offline), dan ringkasan konektivitas.
 class DeviceHeartbeatService {
   DeviceHeartbeatService._();
   static final DeviceHeartbeatService instance = DeviceHeartbeatService._();
 
   static const _channel = MethodChannel('pos/device');
   final _printer = PrinterService();
+
+  /// Channel native `pos/device` hanya diimplementasikan di Android. Di platform
+  /// lain (iOS/desktop) panggilannya melempar MissingPluginException — sekali
+  /// terdeteksi tak tersedia, hentikan agar tidak membanjiri log.
+  static bool _nativeAvailable = true;
 
   /// Bangun payload heartbeat. [online]/[pendingSync]/[lastSyncAt] berasal dari
   /// CloudSyncService (status konektivitas terakhir).
@@ -49,27 +54,66 @@ class DeviceHeartbeatService {
       out['battery'] = await battery.batteryLevel; // 0..100
       out['battery_state'] = (await battery.batteryState).name; // charging/full/...
     } catch (_) {}
-    try {
-      final d = await _channel.invokeMethod('deviceInfo');
-      if (d is Map) {
-        out['model'] = '${d['manufacturer']} ${d['model']}';
-        out['os'] =
-            'Android ${d['android_release']} (SDK ${d['sdk_int']})';
+    // Info model/OS/penyimpanan via MethodChannel native — Android saja.
+    // Di iOS/desktop channel tak ada; lewati diam-diam agar log tak dibanjiri.
+    if (_nativeAvailable && defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        final d = await _channel.invokeMethod('deviceInfo');
+        if (d is Map) {
+          out['model'] = '${d['manufacturer']} ${d['model']}';
+          out['os'] =
+              'Android ${d['android_release']} (SDK ${d['sdk_int']})';
+        }
+      } on MissingPluginException {
+        _nativeAvailable = false;
+      } catch (e) {
+        debugPrint('Heartbeat deviceInfo error: $e');
       }
-    } catch (e) {
-      debugPrint('Heartbeat deviceInfo error: $e');
-    }
-    try {
-      final s = await _channel.invokeMethod('storage');
-      if (s is Map) {
-        final total = (s['total'] as num?)?.toInt() ?? 0;
-        final free = (s['free'] as num?)?.toInt() ?? 0;
-        const mb = 1024 * 1024;
-        out['storage_total_mb'] = (total / mb).round();
-        out['storage_free_mb'] = (free / mb).round();
+      try {
+        final s = await _channel.invokeMethod('storage');
+        if (s is Map) {
+          final total = (s['total'] as num?)?.toInt() ?? 0;
+          final free = (s['free'] as num?)?.toInt() ?? 0;
+          const mb = 1024 * 1024;
+          out['storage_total_mb'] = (total / mb).round();
+          out['storage_free_mb'] = (free / mb).round();
+        }
+      } on MissingPluginException {
+        _nativeAvailable = false;
+      } catch (e) {
+        debugPrint('Heartbeat storage error: $e');
       }
-    } catch (e) {
-      debugPrint('Heartbeat storage error: $e');
+      // Kondisi CPU & RAM. RAM selalu ada; %CPU/load average best-effort
+      // (bisa null bila /proc/stat diblok SELinux) → cukup dilewati.
+      try {
+        final r = await _channel.invokeMethod('resources');
+        if (r is Map) {
+          const mb = 1024 * 1024;
+          final ramTotal = (r['ram_total'] as num?)?.toInt();
+          final ramAvail = (r['ram_avail'] as num?)?.toInt();
+          if (ramTotal != null) out['ram_total_mb'] = (ramTotal / mb).round();
+          if (ramAvail != null) out['ram_free_mb'] = (ramAvail / mb).round();
+          if (ramTotal != null && ramAvail != null && ramTotal > 0) {
+            out['ram_used_percent'] =
+                (((ramTotal - ramAvail) / ramTotal) * 100).round();
+          }
+          if (r['ram_low'] is bool) out['ram_low'] = r['ram_low'];
+          final cores = (r['cpu_cores'] as num?)?.toInt();
+          if (cores != null) out['cpu_cores'] = cores;
+          final cpuPct = (r['cpu_used_percent'] as num?)?.toDouble();
+          if (cpuPct != null) out['cpu_used_percent'] = cpuPct;
+          final l1 = (r['load_1m'] as num?)?.toDouble();
+          final l5 = (r['load_5m'] as num?)?.toDouble();
+          final l15 = (r['load_15m'] as num?)?.toDouble();
+          if (l1 != null) out['cpu_load_1m'] = l1;
+          if (l5 != null) out['cpu_load_5m'] = l5;
+          if (l15 != null) out['cpu_load_15m'] = l15;
+        }
+      } on MissingPluginException {
+        _nativeAvailable = false;
+      } catch (e) {
+        debugPrint('Heartbeat resources error: $e');
+      }
     }
     return out;
   }

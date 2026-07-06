@@ -24,15 +24,16 @@ class MenuAvatar extends StatelessWidget {
   }) : size = null;
 
   // Palet warna lembut; dipilih deterministik dari nama agar konsisten.
+  // [latar terang, latar kedua (gradasi), warna teks].
   static const _palette = [
-    [Color(0xFFD1FAE5), Color(0xFF059669)], // hijau
-    [Color(0xFFDBEAFE), Color(0xFF2563EB)], // biru
-    [Color(0xFFFEF3C7), Color(0xFFD97706)], // amber
-    [Color(0xFFFCE7F3), Color(0xFFDB2777)], // pink
-    [Color(0xFFEDE9FE), Color(0xFF7C3AED)], // ungu
-    [Color(0xFFFFE4E6), Color(0xFFE11D48)], // merah
-    [Color(0xFFCCFBF1), Color(0xFF0D9488)], // teal
-    [Color(0xFFFFEDD5), Color(0xFFEA580C)], // oranye
+    [Color(0xFFD1FAE5), Color(0xFFBBF7E4), Color(0xFF0D9488)], // teal
+    [Color(0xFFDBEAFE), Color(0xFFC7DBFF), Color(0xFF3B82F6)], // biru
+    [Color(0xFFFEF3C7), Color(0xFFFDE9B0), Color(0xFFD97706)], // amber
+    [Color(0xFFFCE7F3), Color(0xFFFBD5EA), Color(0xFFDB2777)], // pink
+    [Color(0xFFEDE9FE), Color(0xFFDDD6FE), Color(0xFF7C3AED)], // ungu
+    [Color(0xFFFFE4E6), Color(0xFFFECDD3), Color(0xFFE11D48)], // merah
+    [Color(0xFFE0F2FE), Color(0xFFCAE9FD), Color(0xFF0EA5E9)], // langit
+    [Color(0xFFFFEDD5), Color(0xFFFED7AA), Color(0xFFEA580C)], // oranye
   ];
 
   /// Inisial dari nama menu: huruf pertama tiap kata (maks 2 kata).
@@ -55,10 +56,20 @@ class MenuAvatar extends StatelessWidget {
     return _palette[idx];
   }
 
+  BoxDecoration _decoration(List<Color> c) => BoxDecoration(
+        gradient: LinearGradient(
+          colors: [c[0], c[1]],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(radius),
+      );
+
   @override
   Widget build(BuildContext context) {
     final c = _colors;
     final initials = _initials;
+    final fg = c[2];
     final factor = initials.length > 1 ? 0.34 : 0.42;
 
     // Ukuran tetap
@@ -67,14 +78,11 @@ class MenuAvatar extends StatelessWidget {
         width: size,
         height: size,
         alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: c[0],
-          borderRadius: BorderRadius.circular(radius),
-        ),
+        decoration: _decoration(c),
         child: Text(
           initials,
           style: TextStyle(
-            color: c[1],
+            color: fg,
             fontWeight: FontWeight.w800,
             fontSize: size! * factor,
           ),
@@ -92,14 +100,11 @@ class MenuAvatar extends StatelessWidget {
           width: double.infinity,
           height: double.infinity,
           alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: c[0],
-            borderRadius: BorderRadius.circular(radius),
-          ),
+          decoration: _decoration(c),
           child: Text(
             initials,
             style: TextStyle(
-              color: c[1],
+              color: fg,
               fontWeight: FontWeight.w800,
               fontSize: dim * factor,
             ),

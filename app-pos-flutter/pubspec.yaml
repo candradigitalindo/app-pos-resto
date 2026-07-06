@@ -27,6 +27,11 @@ dependencies:
   google_fonts: ^6.2.1
   flutter_slidable: ^3.1.0
 
+  # Logo struk: pilih gambar dari galeri + proses (resize & monokrom 1-bit).
+  # Diproses & disimpan LOKAL agar cetak tetap jalan tanpa internet.
+  image_picker: ^1.1.2
+  image: ^4.3.0
+
   # Local API Server (waiter station)
   shelf: ^1.4.1
   shelf_router: ^1.1.4

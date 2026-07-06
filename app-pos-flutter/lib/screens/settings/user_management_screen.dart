@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 
 import '../../models/models.dart';
 import '../../services/auth_service.dart';
+import '../../theme/theme.dart';
+import '../../widgets/ui/ui.dart';
 
 class UserManagementScreen extends StatefulWidget {
   const UserManagementScreen({super.key});
@@ -14,6 +16,8 @@ class UserManagementScreen extends StatefulWidget {
 class _UserManagementScreenState extends State<UserManagementScreen> {
   final _auth = AuthService();
   List<User>? _users;
+
+  static const _accent = AppColors.moduleProduk;
 
   static const _roleLabels = {
     'admin': 'Admin',
@@ -38,10 +42,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
   void _snack(String msg, {bool error = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
-      backgroundColor: error ? Colors.red : const Color(0xFF059669),
-    ));
+    showAppSnack(context, msg, isError: error);
   }
 
   void _showForm({User? existing}) {
@@ -52,109 +53,102 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     var role = existing?.role ?? 'cashier';
     String? error;
 
-    showDialog(
-      context: context,
+    showAppModal(
+      context,
+      title: isEdit ? 'Ubah User' : 'Tambah User',
+      icon: isEdit ? Icons.manage_accounts_rounded : Icons.person_add_rounded,
+      accent: _accent,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text(isEdit ? 'Ubah User' : 'Tambah User'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameCtrl,
-                  textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(
-                    labelText: 'Nama Lengkap',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: userCtrl,
-                  enabled: !isEdit, // username tak diubah saat edit
-                  decoration: InputDecoration(
-                    labelText: 'Username',
-                    helperText: isEdit ? 'Username tidak dapat diubah' : null,
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: role,
-                  decoration: const InputDecoration(
-                    labelText: 'Peran',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: AuthService.roles
-                      .map((r) => DropdownMenuItem(
-                            value: r,
-                            child: Text(_roleLabels[r] ?? r),
-                          ))
-                      .toList(),
-                  onChanged: (v) => setS(() => role = v ?? role),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: pinCtrl,
-                  keyboardType: TextInputType.number,
-                  obscureText: true,
-                  maxLength: 4,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly,
-                  ],
-                  decoration: InputDecoration(
-                    labelText: isEdit ? 'PIN Baru (opsional)' : 'PIN (4 digit)',
-                    counterText: '',
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                if (error != null) ...[
-                  const SizedBox(height: 8),
-                  Text(error!,
-                      style:
-                          const TextStyle(color: Color(0xFFEF4444), fontSize: 12)),
-                ],
+        builder: (ctx, setS) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: nameCtrl,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(labelText: 'Nama Lengkap'),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            TextField(
+              controller: userCtrl,
+              enabled: !isEdit, // username tak diubah saat edit
+              decoration: InputDecoration(
+                labelText: 'Username',
+                helperText: isEdit ? 'Username tidak dapat diubah' : null,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            DropdownButtonFormField<String>(
+              initialValue: role,
+              decoration: const InputDecoration(labelText: 'Peran'),
+              items: AuthService.roles
+                  .map((r) => DropdownMenuItem(
+                        value: r,
+                        child: Text(_roleLabels[r] ?? r),
+                      ))
+                  .toList(),
+              onChanged: (v) => setS(() => role = v ?? role),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            TextField(
+              controller: pinCtrl,
+              keyboardType: TextInputType.number,
+              obscureText: true,
+              maxLength: 4,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
               ],
+              decoration: InputDecoration(
+                labelText: isEdit ? 'PIN Baru (opsional)' : 'PIN (4 digit)',
+                counterText: '',
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Batal'),
-            ),
-            FilledButton(
-              style:
-                  FilledButton.styleFrom(backgroundColor: const Color(0xFF059669)),
-              onPressed: () async {
-                try {
-                  if (isEdit) {
-                    await _auth.updateUser(
-                      id: existing.id,
-                      fullName: nameCtrl.text,
-                      role: role,
-                      newPin: pinCtrl.text,
-                    );
-                  } else {
-                    await _auth.registerUser(
-                      username: userCtrl.text,
-                      fullName: nameCtrl.text,
-                      role: role,
-                      pin: pinCtrl.text,
-                    );
-                  }
-                  if (!ctx.mounted) return;
-                  Navigator.pop(ctx);
-                  _snack(isEdit ? 'User diperbarui' : 'User ditambahkan');
-                  await _load();
-                } catch (e) {
-                  setS(() =>
-                      error = e.toString().replaceFirst('Exception: ', ''));
-                }
-              },
-              child: Text(isEdit ? 'Simpan' : 'Tambah'),
+            if (error != null) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(error!,
+                  style: AppType.caption.copyWith(color: AppColors.danger)),
+            ],
+            const SizedBox(height: AppSpacing.md),
+            Row(
+              children: [
+                Expanded(
+                  child: AppButton.neutral('Batal',
+                      onPressed: () => Navigator.pop(ctx)),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: AppButton(
+                    label: isEdit ? 'Simpan' : 'Tambah',
+                    accent: _accent,
+                    onPressed: () async {
+                      try {
+                        if (isEdit) {
+                          await _auth.updateUser(
+                            id: existing.id,
+                            fullName: nameCtrl.text,
+                            role: role,
+                            newPin: pinCtrl.text,
+                          );
+                        } else {
+                          await _auth.registerUser(
+                            username: userCtrl.text,
+                            fullName: nameCtrl.text,
+                            role: role,
+                            pin: pinCtrl.text,
+                          );
+                        }
+                        if (!ctx.mounted) return;
+                        Navigator.pop(ctx);
+                        _snack(isEdit ? 'User diperbarui' : 'User ditambahkan');
+                        await _load();
+                      } catch (e) {
+                        setS(() =>
+                            error = e.toString().replaceFirst('Exception: ', ''));
+                      }
+                    },
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -168,26 +162,16 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   }
 
   Future<void> _confirmDelete(User u) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Hapus User?'),
-        content: Text(
-            'Hapus akun "${u.fullName}" (@${u.username})? Tindakan ini permanen.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Batal')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFEF4444)),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Hapus'),
-          ),
-        ],
-      ),
+    final ok = await showAppConfirm(
+      context,
+      title: 'Hapus User?',
+      message:
+          'Hapus akun "${u.fullName}" (@${u.username})? Tindakan ini permanen.',
+      confirmText: 'Hapus',
+      icon: Icons.person_remove_rounded,
+      destructive: true,
     );
-    if (ok != true) return;
+    if (!ok) return;
     try {
       await _auth.deleteUser(u.id);
       _snack('User "${u.fullName}" dihapus');
@@ -200,21 +184,21 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   Color _roleColor(String role) {
     switch (role) {
       case 'admin':
-        return const Color(0xFFEF4444);
+        return AppColors.danger;
       case 'manager':
-        return const Color(0xFF7C3AED);
+        return AppColors.accent;
       case 'svp':
-        return const Color(0xFFDB2777);
+        return AppColors.moduleMeja;
       case 'cashier':
-        return const Color(0xFF059669);
+        return AppColors.moduleKasir;
       case 'waiter':
-        return const Color(0xFF2563EB);
+        return AppColors.moduleProduk;
       case 'kitchen':
-        return const Color(0xFFEA580C);
+        return AppColors.moduleDapur;
       case 'bar':
-        return const Color(0xFF0891B2);
+        return AppColors.info;
       default:
-        return Colors.grey;
+        return AppColors.textTertiary;
     }
   }
 
@@ -222,90 +206,121 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   Widget build(BuildContext context) {
     final users = _users;
     return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9),
-      appBar: AppBar(
-        title: const Text('Manajemen User'),
-        backgroundColor: const Color(0xFF059669),
-        foregroundColor: Colors.white,
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: const Color(0xFF059669),
-        onPressed: () => _showForm(),
-        icon: const Icon(Icons.person_add, color: Colors.white),
-        label: const Text('Tambah User', style: TextStyle(color: Colors.white)),
-      ),
-      body: users == null
-          ? const Center(child: CircularProgressIndicator())
-          : users.isEmpty
-              ? const Center(child: Text('Belum ada user'))
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
-                  itemCount: users.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemBuilder: (_, i) {
-                    final u = users[i];
-                    final active = u.isActive == 1;
-                    return Card(
-                      margin: EdgeInsets.zero,
-                      child: ListTile(
-                        onTap: () => _showForm(existing: u),
-                        leading: CircleAvatar(
-                          backgroundColor:
-                              _roleColor(u.role).withValues(alpha: 0.15),
-                          child: Text(
-                            u.fullName.isNotEmpty
-                                ? u.fullName.characters.first.toUpperCase()
-                                : '?',
-                            style: TextStyle(
-                                color: _roleColor(u.role),
-                                fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        title: Text(
-                          u.fullName,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: active ? null : Colors.grey,
-                            decoration:
-                                active ? null : TextDecoration.lineThrough,
-                          ),
-                        ),
-                        subtitle: Text('@${u.username}'),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: _roleColor(u.role).withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                _roleLabels[u.role] ?? u.role,
-                                style: TextStyle(
-                                    color: _roleColor(u.role),
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700),
-                              ),
-                            ),
-                            Switch(
-                              value: active,
-                              activeThumbColor: const Color(0xFF059669),
-                              onChanged: (_) => _toggleActive(u),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline,
-                                  color: Color(0xFFEF4444)),
-                              tooltip: 'Hapus User',
-                              onPressed: () => _confirmDelete(u),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
+      body: AppBackground(
+        child: Column(
+          children: [
+            AppPageHeader(
+              title: 'Manajemen User',
+              subtitle: 'Kelola akun & peran',
+              icon: Icons.group_rounded,
+              accent: _accent,
+              actions: [
+                AppButton(
+                  label: 'Tambah',
+                  icon: Icons.person_add_rounded,
+                  size: AppButtonSize.small,
+                  expanded: false,
+                  accent: _accent,
+                  onPressed: () => _showForm(),
                 ),
+              ],
+            ),
+            Expanded(
+              child: users == null
+                  ? const AppLoader(label: 'Memuat user...')
+                  : users.isEmpty
+                      ? EmptyState(
+                          icon: Icons.group_rounded,
+                          title: 'Belum ada user',
+                          message: 'Tambahkan akun kasir, waiter, atau manager.',
+                          actionLabel: 'Tambah User',
+                          onAction: () => _showForm(),
+                          accent: _accent,
+                        )
+                      : ListView.separated(
+                          padding: EdgeInsets.fromLTRB(
+                              context.pagePadX, AppSpacing.md,
+                              context.pagePadX, AppSpacing.xl),
+                          itemCount: users.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: AppSpacing.sm),
+                          itemBuilder: (_, i) => _userCard(users[i]),
+                        ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _userCard(User u) {
+    final active = u.isActive == 1;
+    final roleColor = _roleColor(u.role);
+    final initial = u.fullName.isNotEmpty
+        ? u.fullName.characters.first.toUpperCase()
+        : '?';
+
+    return AppCard(
+      onTap: () => _showForm(existing: u),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AppColors.soft(roleColor, 0.14),
+              borderRadius: AppRadius.rSm,
+            ),
+            child: Text(initial,
+                style: TextStyle(
+                    color: roleColor,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18)),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  u.fullName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppType.title.copyWith(
+                    color: active ? AppColors.textPrimary : AppColors.textTertiary,
+                    decoration:
+                        active ? null : TextDecoration.lineThrough,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Text('@${u.username}', style: AppType.caption),
+                    const SizedBox(width: AppSpacing.xs),
+                    StatusPill(
+                      label: _roleLabels[u.role] ?? u.role,
+                      color: roleColor,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: active,
+            onChanged: (_) => _toggleActive(u),
+          ),
+          AppIconButton(
+            icon: Icons.delete_outline_rounded,
+            color: AppColors.danger,
+            tooltip: 'Hapus User',
+            onPressed: () => _confirmDelete(u),
+          ),
+        ],
+      ),
     );
   }
 }

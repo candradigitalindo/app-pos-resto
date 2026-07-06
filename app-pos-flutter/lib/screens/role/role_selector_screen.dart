@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../services/device_role_service.dart';
+import '../../theme/theme.dart';
+import '../../widgets/ui/ui.dart';
 
 /// Pemilih peran perangkat saat pertama kali (atau diubah dari Settings):
 /// Main POS (server) vs Station (client/tablet pelayan).
@@ -20,71 +22,79 @@ class RoleSelectorScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
+      body: DecoratedBox(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF064E3B), Color(0xFF065F46)],
+            colors: AppColors.sidebarGradient,
           ),
         ),
         child: SafeArea(
           child: Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.devices_other,
-                      size: 56, color: Colors.white),
-                  const SizedBox(height: 12),
-                  const Text('Perangkat ini sebagai?',
-                      style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white)),
-                  const SizedBox(height: 6),
-                  Text('Pilih peran perangkat. Bisa diubah nanti dari Pengaturan.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.white.withValues(alpha: 0.7))),
-                  const SizedBox(height: 28),
-                  LayoutBuilder(builder: (context, c) {
-                    final wide = c.maxWidth > 560;
-                    final cards = [
-                      _RoleCard(
-                        icon: Icons.point_of_sale,
-                        title: 'Kasir Utama',
-                        subtitle:
-                            'Main POS — server, kasir, dapur, laporan. Menjalankan API untuk station.',
-                        onTap: () => _choose(context, DeviceRole.mainPos),
-                      ),
-                      _RoleCard(
-                        icon: Icons.tablet_mac,
-                        title: 'Station Pelayan',
-                        subtitle:
-                            'Client — pesan dari meja, terhubung ke Main POS via WiFi. Tanpa server.',
-                        onTap: () => _choose(context, DeviceRole.station),
-                      ),
-                    ];
-                    return wide
-                        ? Row(
-                            children: [
-                              Expanded(child: cards[0]),
-                              const SizedBox(width: 16),
-                              Expanded(child: cards[1]),
-                            ],
-                          )
-                        : Column(
-                            children: [
-                              cards[0],
-                              const SizedBox(height: 16),
-                              cards[1],
-                            ],
+              padding: const EdgeInsets.all(AppSpacing.xl),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildBranding(),
+                    const SizedBox(height: AppSpacing.xxl),
+                    LayoutBuilder(
+                      builder: (context, c) {
+                        final wide = c.maxWidth > 560;
+                        final mainPos = _RoleCard(
+                          icon: Icons.point_of_sale_rounded,
+                          title: 'Kasir Utama',
+                          badge: 'SERVER',
+                          subtitle:
+                              'Main POS — server, kasir, dapur, laporan. Menjalankan API untuk station.',
+                          accent: AppColors.brand,
+                          onTap: () => _choose(context, DeviceRole.mainPos),
+                        );
+                        final station = _RoleCard(
+                          icon: Icons.tablet_mac_rounded,
+                          title: 'Station Pelayan',
+                          badge: 'CLIENT',
+                          subtitle:
+                              'Client — pesan dari meja, terhubung ke Main POS via WiFi. Tanpa server.',
+                          // SECONDARY gold: bedakan kartu Station (client) dari
+                          // Main POS (hijau) — identitas primer+sekunder.
+                          accent: AppColors.accent,
+                          onTap: () => _choose(context, DeviceRole.station),
+                        );
+                        if (wide) {
+                          return IntrinsicHeight(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Expanded(child: mainPos),
+                                const SizedBox(width: AppSpacing.md),
+                                Expanded(child: station),
+                              ],
+                            ),
                           );
-                  }),
-                ],
+                        }
+                        return Column(
+                          children: [
+                            mainPos,
+                            const SizedBox(height: AppSpacing.md),
+                            station,
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                    Text(
+                      'Peran bisa diubah nanti dari Pengaturan.',
+                      textAlign: TextAlign.center,
+                      style: AppType.caption.copyWith(
+                        color: AppColors.soft(Colors.white, 0.55),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -92,56 +102,97 @@ class RoleSelectorScreen extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildBranding() {
+    return Column(
+      children: [
+        Container(
+          width: 76,
+          height: 76,
+          decoration: BoxDecoration(
+            color: AppColors.soft(Colors.white, 0.95),
+            borderRadius: AppRadius.rXl,
+            border: Border.all(color: AppColors.soft(Colors.white, 0.6)),
+            boxShadow: AppShadows.glow(AppColors.greenDark, strength: 0.4),
+          ),
+          child: const Icon(Icons.devices_other_rounded,
+              color: AppColors.green, size: 38),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        const Text(
+          'Perangkat ini sebagai?',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+            letterSpacing: -0.5,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Pilih peran perangkat untuk memulai',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.white.withValues(alpha: 0.6),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _RoleCard extends StatelessWidget {
   final IconData icon;
   final String title;
+  final String badge;
   final String subtitle;
+  final Color accent;
   final VoidCallback onTap;
 
   const _RoleCard({
     required this.icon,
     required this.title,
+    required this.badge,
     required this.subtitle,
+    required this.accent,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
+    return AppCard(
+      onTap: onTap,
+      accent: accent,
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
             children: [
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF10B981).withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Icon(icon, size: 32, color: const Color(0xFF059669)),
-              ),
-              const SizedBox(height: 14),
-              Text(title,
-                  style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF0F172A))),
-              const SizedBox(height: 6),
-              Text(subtitle,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      fontSize: 12.5, color: Color(0xFF64748B), height: 1.4)),
+              IconBadge(icon: icon, color: accent, size: 60, filled: true),
+              const Spacer(),
+              StatusPill(label: badge, color: accent),
             ],
           ),
-        ),
+          const SizedBox(height: AppSpacing.lg),
+          Text(title, style: AppType.h2),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            subtitle,
+            style: AppType.body.copyWith(color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          Row(
+            children: [
+              Text('Pilih', style: AppType.label.copyWith(color: accent)),
+              const SizedBox(width: AppSpacing.xxs),
+              Icon(Icons.arrow_forward_rounded, size: 18, color: accent),
+            ],
+          ),
+        ],
       ),
     );
   }
