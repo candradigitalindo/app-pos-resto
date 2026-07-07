@@ -30,7 +30,7 @@ class AppDatabase {
 
     return openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -84,6 +84,14 @@ class AppDatabase {
       await db.execute('INSERT INTO users_new SELECT * FROM users');
       await db.execute('DROP TABLE users');
       await db.execute('ALTER TABLE users_new RENAME TO users');
+    }
+    if (oldVersion < 8) {
+      // Default retensi data lokal = 90 hari (3 bulan). Config lama yang masih
+      // 0 dinaikkan ke 90 agar konsisten (data lengkap tetap di cloud).
+      await db.execute(
+        'UPDATE outlet_config SET data_retention_days = 90 '
+        'WHERE data_retention_days <= 0',
+      );
     }
   }
 
@@ -490,7 +498,7 @@ class AppDatabase {
         is_active INTEGER DEFAULT 1,
         sync_enabled INTEGER DEFAULT 0,
         sync_interval_minutes INTEGER DEFAULT 5,
-        data_retention_days INTEGER NOT NULL DEFAULT 0,
+        data_retention_days INTEGER NOT NULL DEFAULT 90,
         last_sync_at DATETIME,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP

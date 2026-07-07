@@ -658,15 +658,15 @@ class _SettingsScreenState extends State<SettingsScreen>
         children: [
           _group([
             _dropdownRow<int>(
-              'Retensi Data',
-              '0 = simpan selamanya',
+              'Retensi Data Lokal',
+              'Data lengkap tetap tersimpan di cloud. Default 90 hari (3 bulan).',
               Icons.history_rounded,
-              retentionDays,
-              [0, 30, 60, 90, 180, 365],
-              (v) => _controller.saveRetention(v ?? 0),
+              retentionDays <= 0 ? 90 : retentionDays,
+              [30, 60, 90, 180, 365],
+              (v) => _controller.saveRetention(v ?? 90),
               labelMap: const {
-                0: 'Selamanya', 30: '30 hari', 60: '60 hari',
-                90: '90 hari', 180: '6 bulan', 365: '1 tahun',
+                30: '30 hari', 60: '60 hari',
+                90: '90 hari (3 bulan)', 180: '6 bulan', 365: '1 tahun',
               },
             ),
           ]),

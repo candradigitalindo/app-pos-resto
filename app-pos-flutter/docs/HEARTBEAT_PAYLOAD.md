@@ -102,18 +102,22 @@ Semua di dalam objek **`device`**.
 | Field | Tipe | Satuan / Rentang | Arti | Selalu ada? |
 |---|---|---|---|---|
 | `cpu_cores` | integer | — | Jumlah core CPU (logis) | Ya (Android) |
-| `cpu_used_percent` | number (desimal) | 0–100 | %CPU sistem rata-rata sejak heartbeat sebelumnya | **Best-effort** |
+| `cpu_used_percent` | number (desimal) | 0–100 | %CPU rata-rata selama ±300ms sampling di heartbeat itu | Ya (Android)¹ |
+| `cpu_source` | string | `system` \| `app` | Sumber angka CPU: `system` = seluruh perangkat (`/proc/stat`); `app` = proses POS saja (fallback bila `/proc/stat` diblok SELinux) | Menyertai `cpu_used_percent` |
 | `cpu_load_1m` | number (desimal) | ≥ 0 | Load average 1 menit | **Best-effort** |
 | `cpu_load_5m` | number (desimal) | ≥ 0 | Load average 5 menit | **Best-effort** |
 | `cpu_load_15m` | number (desimal) | ≥ 0 | Load average 15 menit | **Best-effort** |
 
-> **Best-effort** = bisa **tidak muncul** di payload. Penyebab:
-> - `cpu_used_percent`: dihitung dari selisih dua pembacaan `/proc/stat`. Pada
->   **heartbeat pertama** setelah aplikasi dibuka belum ada baseline → field ini
->   belum dikirim; heartbeat berikutnya baru mengirimnya.
-> - `cpu_used_percent` / `cpu_load_*`: pada Android 8+ pembacaan `/proc/stat` &
->   `/proc/loadavg` kadang diblok SELinux. Bila terblok, field-nya dilewati,
->   tetapi `cpu_cores` + seluruh field RAM **tetap** terkirim.
+> ¹ `cpu_used_percent` dihitung dari **dua sampling berjarak ±300ms dalam satu
+> heartbeat** (bukan selisih antar-heartbeat), jadi **selalu ada tiap heartbeat**
+> — termasuk heartbeat pertama. Utamakan `/proc/stat` (CPU sistem, `cpu_source=system`);
+> bila diblok SELinux (Android 8+), fallback ke `/proc/self/stat` (CPU proses
+> app, `cpu_source=app`) yang selalu terbaca. Perhatikan: saat `cpu_source=app`,
+> angka mencerminkan beban aplikasi POS saja, bukan seluruh perangkat.
+>
+> **Best-effort** = bisa **tidak muncul** di payload:
+> - `cpu_load_*`: pada Android 8+ `/proc/loadavg` kadang diblok SELinux → field
+>   dilewati, tetapi `cpu_cores`, `cpu_used_percent`, & RAM **tetap** terkirim.
 >
 > Sisi cloud **wajib memperlakukan field CPU sebagai nullable/opsional**
 > (jangan asumsikan selalu ada).

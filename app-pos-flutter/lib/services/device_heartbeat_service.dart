@@ -86,7 +86,11 @@ class DeviceHeartbeatService {
       // Kondisi CPU & RAM. RAM selalu ada; %CPU/load average best-effort
       // (bisa null bila /proc/stat diblok SELinux) → cukup dilewati.
       try {
-        final r = await _channel.invokeMethod('resources');
+        // Timeout: bila native macet (mis. I/O /proc lambat), jangan biarkan
+        // heartbeat menggantung — batalkan setelah 5 dtk & lewati CPU/RAM.
+        final r = await _channel
+            .invokeMethod('resources')
+            .timeout(const Duration(seconds: 5));
         if (r is Map) {
           const mb = 1024 * 1024;
           final ramTotal = (r['ram_total'] as num?)?.toInt();
@@ -102,12 +106,17 @@ class DeviceHeartbeatService {
           if (cores != null) out['cpu_cores'] = cores;
           final cpuPct = (r['cpu_used_percent'] as num?)?.toDouble();
           if (cpuPct != null) out['cpu_used_percent'] = cpuPct;
+          final cpuSrc = r['cpu_source'] as String?; // 'system' | 'app'
+          if (cpuSrc != null) out['cpu_source'] = cpuSrc;
           final l1 = (r['load_1m'] as num?)?.toDouble();
           final l5 = (r['load_5m'] as num?)?.toDouble();
           final l15 = (r['load_15m'] as num?)?.toDouble();
           if (l1 != null) out['cpu_load_1m'] = l1;
           if (l5 != null) out['cpu_load_5m'] = l5;
           if (l15 != null) out['cpu_load_15m'] = l15;
+          debugPrint('Heartbeat resources: cpu=${out['cpu_used_percent']}% '
+              '(${out['cpu_source']}) cores=${out['cpu_cores']} '
+              'ram=${out['ram_used_percent']}%');
         }
       } on MissingPluginException {
         _nativeAvailable = false;

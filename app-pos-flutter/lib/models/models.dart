@@ -1043,7 +1043,7 @@ class OutletConfig {
     this.isActive = 1,
     this.syncEnabled = 0,
     this.syncIntervalMinutes = 5,
-    this.dataRetentionDays = 0,
+    this.dataRetentionDays = 90, // default retensi lokal 3 bulan
     this.lastSyncAt,
     required this.createdAt,
     required this.updatedAt,
@@ -1085,7 +1085,7 @@ class OutletConfig {
         isActive: map['is_active'] as int? ?? 1,
         syncEnabled: map['sync_enabled'] as int? ?? 0,
         syncIntervalMinutes: map['sync_interval_minutes'] as int? ?? 5,
-        dataRetentionDays: map['data_retention_days'] as int? ?? 0,
+        dataRetentionDays: map['data_retention_days'] as int? ?? 90,
         lastSyncAt: map['last_sync_at'] != null
             ? DateTime.parse(map['last_sync_at'] as String)
             : null,
