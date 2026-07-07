@@ -1048,6 +1048,7 @@ class _CashierScreenState extends State<CashierScreen> {
       builder: (ctx) => _CloseShiftDialog(
         activeShift: shift,
         getShiftTotals: _controller.getShiftTotals,
+        getShiftReport: _controller.getShiftReport,
         getShiftMovements: _controller.getShiftMovements,
         onClose: () async {
           await _controller.closeShift();
@@ -1214,6 +1215,7 @@ class _CashierScreenState extends State<CashierScreen> {
       builder: (ctx) => _SwapShiftDialog(
         activeShift: shift,
         getShiftTotals: _controller.getShiftTotals,
+        getShiftReport: _controller.getShiftReport,
         getCashierUsers: _controller.getCashierUsers,
         getShiftMovements: _controller.getShiftMovements,
         onSwap: (handoverTo, newCash) async {
@@ -3839,12 +3841,14 @@ class _CashMovementDialogState extends State<_CashMovementDialog> {
 class _CloseShiftDialog extends StatefulWidget {
   final CashierShift activeShift;
   final Future<Map<String, double>> Function() getShiftTotals;
+  final Future<Map<String, dynamic>> Function() getShiftReport;
   final Future<List<CashMovement>> Function() getShiftMovements;
   final Future<void> Function() onClose;
 
   const _CloseShiftDialog({
     required this.activeShift,
     required this.getShiftTotals,
+    required this.getShiftReport,
     required this.getShiftMovements,
     required this.onClose,
   });
@@ -3855,6 +3859,7 @@ class _CloseShiftDialog extends StatefulWidget {
 
 class _CloseShiftDialogState extends State<_CloseShiftDialog> {
   Map<String, double>? _totals;
+  Map<String, dynamic>? _report;
   List<CashMovement> _movements = [];
   bool _loading = true;
   bool _closing = false;
@@ -3865,11 +3870,13 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
     Future.wait([
       widget.getShiftTotals(),
       widget.getShiftMovements(),
+      widget.getShiftReport(),
     ]).then((r) {
       if (mounted) {
         setState(() {
           _totals = r[0] as Map<String, double>;
           _movements = r[1] as List<CashMovement>;
+          _report = r[2] as Map<String, dynamic>;
           _loading = false;
         });
       }
@@ -4067,6 +4074,58 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                 ),
               ),
 
+              // Diskon / Kompliment / Void (pengawasan — tidak memengaruhi kas)
+              if (!_loading && _report != null)
+                Builder(builder: (_) {
+                  final r = _report!;
+                  final dCnt = (r['discount_count'] as num?)?.toInt() ?? 0;
+                  final dTot = (r['discount_total'] as num?)?.toDouble() ?? 0;
+                  final kCnt = (r['compliment_count'] as num?)?.toInt() ?? 0;
+                  final kTot = (r['compliment_total'] as num?)?.toDouble() ?? 0;
+                  final vCnt = (r['void_count'] as num?)?.toInt() ?? 0;
+                  final vTot = (r['void_total'] as num?)?.toDouble() ?? 0;
+                  if (dCnt == 0 && kCnt == 0 && vCnt == 0) {
+                    return const SizedBox.shrink();
+                  }
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceAlt,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('DISKON / KOMPLIMEN / VOID',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textTertiary,
+                                letterSpacing: 0.8,
+                              )),
+                          const SizedBox(height: 10),
+                          _row('Diskon ($dCnt)', CurrencyHelper.format(dTot),
+                              icon: Icons.local_offer_outlined,
+                              iconColor: AppColors.accent),
+                          const SizedBox(height: 6),
+                          _row('Kompliment ($kCnt)',
+                              CurrencyHelper.format(kTot),
+                              icon: Icons.card_giftcard_outlined,
+                              iconColor: AppColors.moduleWaiter),
+                          const SizedBox(height: 6),
+                          _row('Void ($vCnt)', CurrencyHelper.format(vTot),
+                              icon: Icons.block_outlined,
+                              iconColor: AppColors.danger),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+
               // Kas Non-Penjualan
               if (!_loading && _movements.isNotEmpty) ...[
                 const SizedBox(height: 12),
@@ -4249,6 +4308,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
 class _SwapShiftDialog extends StatefulWidget {
   final CashierShift activeShift;
   final Future<Map<String, double>> Function() getShiftTotals;
+  final Future<Map<String, dynamic>> Function() getShiftReport;
   final Future<List<User>> Function() getCashierUsers;
   final Future<List<CashMovement>> Function() getShiftMovements;
   final Future<void> Function(String handoverTo, double newOpeningCash) onSwap;
@@ -4256,6 +4316,7 @@ class _SwapShiftDialog extends StatefulWidget {
   const _SwapShiftDialog({
     required this.activeShift,
     required this.getShiftTotals,
+    required this.getShiftReport,
     required this.getCashierUsers,
     required this.getShiftMovements,
     required this.onSwap,
@@ -4267,6 +4328,7 @@ class _SwapShiftDialog extends StatefulWidget {
 
 class _SwapShiftDialogState extends State<_SwapShiftDialog> {
   Map<String, double>? _totals;
+  Map<String, dynamic>? _report;
   List<User> _users = [];
   List<CashMovement> _movements = [];
   bool _loading = true;
@@ -4281,12 +4343,14 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
       widget.getShiftTotals(),
       widget.getCashierUsers(),
       widget.getShiftMovements(),
+      widget.getShiftReport(),
     ]).then((results) {
       if (mounted) {
         setState(() {
           _totals = results[0] as Map<String, double>;
           _users = results[1] as List<User>;
           _movements = results[2] as List<CashMovement>;
+          _report = results[3] as Map<String, dynamic>;
           _loading = false;
         });
       }
@@ -4506,6 +4570,68 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                   ],
                 ),
               ),
+
+              // ── Diskon / Kompliment / Void (pengawasan) ──
+              if (!_loading && _report != null)
+                Builder(builder: (_) {
+                  final r = _report!;
+                  final dCnt = (r['discount_count'] as num?)?.toInt() ?? 0;
+                  final dTot = (r['discount_total'] as num?)?.toDouble() ?? 0;
+                  final kCnt = (r['compliment_count'] as num?)?.toInt() ?? 0;
+                  final kTot = (r['compliment_total'] as num?)?.toDouble() ?? 0;
+                  final vCnt = (r['void_count'] as num?)?.toInt() ?? 0;
+                  final vTot = (r['void_total'] as num?)?.toDouble() ?? 0;
+                  if (dCnt == 0 && kCnt == 0 && vCnt == 0) {
+                    return const SizedBox.shrink();
+                  }
+                  Widget line(
+                          IconData ic, Color c, String label, double val) =>
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Row(children: [
+                          Icon(ic, size: 16, color: c),
+                          const SizedBox(width: 8),
+                          Text(label,
+                              style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.textSecondary)),
+                          const Spacer(),
+                          Text(CurrencyHelper.format(val),
+                              style: const TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w700)),
+                        ]),
+                      );
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceAlt,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('DISKON / KOMPLIMEN / VOID',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textTertiary,
+                                letterSpacing: 0.8,
+                              )),
+                          line(Icons.local_offer_outlined, AppColors.accent,
+                              'Diskon ($dCnt)', dTot),
+                          line(Icons.card_giftcard_outlined,
+                              AppColors.moduleWaiter, 'Kompliment ($kCnt)', kTot),
+                          line(Icons.block_outlined, AppColors.danger,
+                              'Void ($vCnt)', vTot),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
 
               // ── Kas Non-Penjualan ──
               if (!_loading && _movements.isNotEmpty) ...[

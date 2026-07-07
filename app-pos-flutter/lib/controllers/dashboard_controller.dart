@@ -197,9 +197,10 @@ class DashboardController extends ChangeNotifier {
         DateTime(today.year, today.month, today.day).toIso8601String();
     final results = await _db.rawQuery(
       '''
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM payments
-      WHERE created_at >= ?
+      SELECT COALESCE(SUM(p.amount), 0) as total
+      FROM payments p
+      JOIN orders o ON o.id = p.order_id
+      WHERE p.created_at >= ? AND o.voided_at IS NULL
       ''',
       [startOfDay],
     );

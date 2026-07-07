@@ -240,7 +240,8 @@ class CashierRepository {
       '''
       SELECT p.payment_method, COUNT(*) AS cnt, SUM(p.amount) AS total
       FROM payments p
-      WHERE p.created_at >= ?
+      JOIN orders o ON o.id = p.order_id
+      WHERE p.created_at >= ? AND o.voided_at IS NULL
       GROUP BY p.payment_method
     ''',
       [shift.openedAt.toIso8601String()],
@@ -296,10 +297,11 @@ class CashierRepository {
     // Rincian per kasir (termasuk kasir station) sejak shift dibuka.
     final cashierRows = await db.rawQuery(
       '''
-      SELECT created_by, COUNT(*) AS cnt, SUM(amount) AS total
-      FROM payments
-      WHERE created_at >= ? AND created_by != ''
-      GROUP BY created_by
+      SELECT p.created_by, COUNT(*) AS cnt, SUM(p.amount) AS total
+      FROM payments p
+      JOIN orders o ON o.id = p.order_id
+      WHERE p.created_at >= ? AND p.created_by != '' AND o.voided_at IS NULL
+      GROUP BY p.created_by
       ORDER BY total DESC
     ''',
       [shift.openedAt.toIso8601String()],
@@ -311,6 +313,52 @@ class CashierRepository {
               'total': (r['total'] as num).toDouble(),
             })
         .toList();
+
+    // ── Metrik pengawasan: diskon, kompliment, void selama shift ────────────
+    final since = shift.openedAt.toIso8601String();
+
+    // Diskon: charge 'Diskon' pada order yang DIBAYAR di shift ini & tidak
+    // di-void. Di-agregat per order dulu agar split-payment tidak menggandakan.
+    final discRows = await db.rawQuery(
+      '''
+      SELECT COUNT(*) AS cnt, COALESCE(SUM(t.disc), 0) AS total FROM (
+        SELECT c.order_id, SUM(-c.applied_amount) AS disc
+        FROM order_additional_charges c
+        WHERE c.name = 'Diskon'
+          AND c.order_id IN (SELECT DISTINCT order_id FROM payments WHERE created_at >= ?)
+          AND c.order_id NOT IN (SELECT id FROM orders WHERE voided_at IS NOT NULL)
+        GROUP BY c.order_id
+      ) t
+    ''',
+      [since],
+    );
+    final discountCount = (discRows.first['cnt'] as num?)?.toInt() ?? 0;
+    final discountTotal = (discRows.first['total'] as num?)?.toDouble() ?? 0;
+
+    // Kompliment: order digratiskan di shift ini (nilai = subtotal digratiskan).
+    final compRows = await db.rawQuery(
+      '''
+      SELECT COUNT(*) AS cnt, COALESCE(SUM(-c.applied_amount), 0) AS total
+      FROM order_additional_charges c
+      JOIN orders o ON o.id = c.order_id
+      WHERE c.name = 'Kompliment' AND o.complimented_at >= ?
+    ''',
+      [since],
+    );
+    final complimentCount = (compRows.first['cnt'] as num?)?.toInt() ?? 0;
+    final complimentTotal = (compRows.first['total'] as num?)?.toDouble() ?? 0;
+
+    // Void: transaksi dibatalkan di shift ini (nilai = total tagihan yang di-void).
+    final voidRows = await db.rawQuery(
+      '''
+      SELECT COUNT(*) AS cnt, COALESCE(SUM(total_amount), 0) AS total
+      FROM orders
+      WHERE voided_at >= ?
+    ''',
+      [since],
+    );
+    final voidCount = (voidRows.first['cnt'] as num?)?.toInt() ?? 0;
+    final voidTotal = (voidRows.first['total'] as num?)?.toDouble() ?? 0;
 
     return {
       'shift_id': shiftId,
@@ -324,6 +372,13 @@ class CashierRepository {
       'cash_out_count': cashOutCount,
       'cash_out_total': cashOutTotal,
       'expected_cash': expectedCash,
+      // Metrik pengawasan (tidak memengaruhi kas — hanya kontrol)
+      'discount_count': discountCount,
+      'discount_total': discountTotal,
+      'compliment_count': complimentCount,
+      'compliment_total': complimentTotal,
+      'void_count': voidCount,
+      'void_total': voidTotal,
     };
   }
 
@@ -366,10 +421,11 @@ class CashierRepository {
     final db = await _db.database;
     final rows = await db.rawQuery(
       '''
-      SELECT payment_method, COUNT(*) AS cnt, SUM(amount) AS total
-      FROM payments
-      WHERE created_by = ? AND created_at >= ?
-      GROUP BY payment_method
+      SELECT p.payment_method, COUNT(*) AS cnt, SUM(p.amount) AS total
+      FROM payments p
+      JOIN orders o ON o.id = p.order_id
+      WHERE p.created_by = ? AND p.created_at >= ? AND o.voided_at IS NULL
+      GROUP BY p.payment_method
     ''',
       [cashierName, sinceIso],
     );
@@ -419,7 +475,8 @@ class CashierRepository {
       '''
       SELECT p.payment_method, SUM(p.amount) as total
       FROM payments p
-      WHERE p.created_at >= ?
+      JOIN orders o ON o.id = p.order_id
+      WHERE p.created_at >= ? AND o.voided_at IS NULL
       GROUP BY p.payment_method
     ''',
       [shift.openedAt.toIso8601String()],

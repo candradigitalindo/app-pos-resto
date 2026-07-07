@@ -268,6 +268,14 @@ class CashierController extends ChangeNotifier {
     return _cashierRepo.getShiftTotals(shift.id);
   }
 
+  /// Laporan shift lengkap (termasuk metrik diskon/kompliment/void) untuk
+  /// ditampilkan di dialog tutup kasir / ganti shift.
+  Future<Map<String, dynamic>> getShiftReport() async {
+    final shift = _state.activeShift;
+    if (shift == null) return {};
+    return _cashierRepo.getShiftReport(shift.id);
+  }
+
   Future<void> openShift({
     required double openingCash,
     required String openedBy,

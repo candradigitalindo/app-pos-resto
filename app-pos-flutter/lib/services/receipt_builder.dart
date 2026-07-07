@@ -246,6 +246,27 @@ class ReceiptBuilder {
     buf.addAll(_Esc.boldOff());
     buf.addAll(_Esc.line(_divider()));
 
+    // Pengawasan: diskon, kompliment, void (tidak memengaruhi kas laci)
+    final discountCount = (report['discount_count'] as num?)?.toInt() ?? 0;
+    final discountTotal = (report['discount_total'] as num?)?.toDouble() ?? 0;
+    final complimentCount = (report['compliment_count'] as num?)?.toInt() ?? 0;
+    final complimentTotal =
+        (report['compliment_total'] as num?)?.toDouble() ?? 0;
+    final voidCount = (report['void_count'] as num?)?.toInt() ?? 0;
+    final voidTotal = (report['void_total'] as num?)?.toDouble() ?? 0;
+    if (discountCount > 0 || complimentCount > 0 || voidCount > 0) {
+      buf.addAll(_Esc.boldOn());
+      buf.addAll(_Esc.line('DISKON / KOMPLIMEN / VOID'));
+      buf.addAll(_Esc.boldOff());
+      buf.addAll(_Esc.line(_rightAlign(
+          'Diskon ($discountCount)', _formatAmount(discountTotal))));
+      buf.addAll(_Esc.line(_rightAlign(
+          'Kompliment ($complimentCount)', _formatAmount(complimentTotal))));
+      buf.addAll(_Esc
+          .line(_rightAlign('Void ($voidCount)', _formatAmount(voidTotal))));
+      buf.addAll(_Esc.line(_divider()));
+    }
+
     // Rincian per kasir (termasuk kasir station)
     final byCashier = (report['by_cashier'] as List?) ?? const [];
     if (byCashier.isNotEmpty) {
