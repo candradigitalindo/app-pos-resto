@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../app.dart';
 import '../../controllers/settings_controller.dart';
@@ -60,6 +61,9 @@ class _SettingsScreenState extends State<SettingsScreen>
   List<AdditionalCharge> _charges = [];
   bool _loadingCharges = false;
 
+  // Versi aplikasi (nama versi + build code asli dari versionCode)
+  String _appVersion = 'POS Resto';
+
   static const _tabs = [
     Tab(icon: Icon(Icons.store_rounded), text: 'Outlet'),
     Tab(icon: Icon(Icons.receipt_rounded), text: 'Biaya'),
@@ -76,6 +80,7 @@ class _SettingsScreenState extends State<SettingsScreen>
     _controller.addListener(_onStateChanged);
     _controller.loadSettings().then((_) => _populate());
     _loadCharges();
+    _loadAppVersion();
     _refreshLastSync();
     // Refresh waktu sync terakhir tiap 20 detik agar perubahan dari sync
     // background ikut terlihat tanpa keluar dari layar.
@@ -87,6 +92,19 @@ class _SettingsScreenState extends State<SettingsScreen>
     final t = await CloudSyncService.instance.lastSyncAt();
     if (!mounted) return;
     setState(() => _lastSyncAt = t);
+  }
+
+  /// Muat versi aplikasi memakai build code ASLI (versionCode → buildNumber),
+  /// bukan angka statis. Contoh: "POS Resto v1.2.0 (build 83213480)".
+  Future<void> _loadAppVersion() async {
+    try {
+      final pkg = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() => _appVersion =
+          'POS Resto v${pkg.version} (build ${pkg.buildNumber})');
+    } catch (_) {
+      // biarkan default
+    }
   }
 
   String _formatLastSync(DateTime? t) {
@@ -752,7 +770,7 @@ class _SettingsScreenState extends State<SettingsScreen>
         _settingRow(
           Icons.info_rounded,
           'Versi Aplikasi',
-          'POS Resto v1.2.0  (build 3)',
+          _appVersion,
         ),
       ]),
     );

@@ -762,6 +762,7 @@ class CashierController extends ChangeNotifier {
     required String itemId,
     required String pin,
     String reason = '',
+    int? qty,
   }) async {
     final authorizer = await _voidAuthorizer(pin);
     if (authorizer == null) return 'invalid_pin';
@@ -773,6 +774,7 @@ class CashierController extends ChangeNotifier {
         itemId: itemId,
         voidedBy: authorizer,
         reason: reason.isEmpty ? 'Hapus item' : reason,
+        qty: qty,
       );
       if (order != null) await _loadOrderItems(order.id);
       _setState(_state.copyWith(isProcessing: false));
@@ -797,17 +799,19 @@ class CashierController extends ChangeNotifier {
   /// Pindahkan item terpilih ke order aktif [targetOrderId] (meja lain).
   /// Item dipindah tanpa memicu cetak dapur ulang. Bila order saat ini jadi
   /// kosong, keluar dari mode order. Return 'ok' | 'error'.
-  Future<String> moveItemsToTable({
-    required List<String> itemIds,
+  Future<String> moveItemToTable({
+    required String itemId,
     required String targetOrderId,
+    int? qty,
   }) async {
     if (_state.isProcessing) return 'error';
     final order = _state.currentOrder;
     if (order == null) return 'error';
     _setState(_state.copyWith(isProcessing: true, clearError: true));
     try {
-      await _orderRepo.transferItemsToOrder(
-        itemIds: itemIds,
+      await _orderRepo.transferItemQty(
+        itemId: itemId,
+        qty: qty,
         targetOrderId: targetOrderId,
         movedBy: await _currentCashierName(),
       );
@@ -840,7 +844,8 @@ class CashierController extends ChangeNotifier {
 
   /// Titipkan satu item ke Meja Titipan (parked check) — wajib PIN Manager/SVP.
   /// Item dipindah tanpa cetak dapur ulang. Return 'ok' | 'invalid_pin' | 'error'.
-  Future<String> parkItem({required String itemId, required String pin}) async {
+  Future<String> parkItem(
+      {required String itemId, required String pin, int? qty}) async {
     final authorizer = await _voidAuthorizer(pin);
     if (authorizer == null) return 'invalid_pin';
     if (_state.isProcessing) return 'error';
@@ -848,7 +853,7 @@ class CashierController extends ChangeNotifier {
     if (order == null) return 'error';
     _setState(_state.copyWith(isProcessing: true, clearError: true));
     try {
-      await _orderRepo.parkItems(itemIds: [itemId], movedBy: authorizer);
+      await _orderRepo.parkItem(itemId: itemId, qty: qty, movedBy: authorizer);
       final remaining = await _orderRepo.getOrderItems(order.id);
       if (remaining.isEmpty) {
         _setState(_state.copyWith(
@@ -885,6 +890,7 @@ class CashierController extends ChangeNotifier {
     required String itemId,
     required String pin,
     String reason = '',
+    int? qty,
   }) async {
     final authorizer = await _voidAuthorizer(pin);
     if (authorizer == null) return 'invalid_pin';
@@ -893,6 +899,7 @@ class CashierController extends ChangeNotifier {
         itemId: itemId,
         voidedBy: authorizer,
         reason: reason.isEmpty ? 'Titipan tidak terjual (waste)' : reason,
+        qty: qty,
       );
       return 'ok';
     } catch (e) {
@@ -902,14 +909,15 @@ class CashierController extends ChangeNotifier {
 
   /// Tarik satu item titipan ke order tamu SAAT INI. Perlu ada order aktif.
   /// Return 'ok' | 'no_order' | 'error'.
-  Future<String> pullHeldItem(String itemId) async {
+  Future<String> pullHeldItem(String itemId, {int? qty}) async {
     if (_state.isProcessing) return 'error';
     final order = _state.currentOrder;
     if (order == null) return 'no_order';
     _setState(_state.copyWith(isProcessing: true, clearError: true));
     try {
-      await _orderRepo.pullHeldItems(
-        itemIds: [itemId],
+      await _orderRepo.pullHeldItem(
+        itemId: itemId,
+        qty: qty,
         targetOrderId: order.id,
         movedBy: await _currentCashierName(),
       );

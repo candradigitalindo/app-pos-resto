@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../app.dart';
 import '../../config/app_config.dart';
@@ -19,6 +20,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   String? _error;
   bool _loading = false;
   late AnimationController _shakeController;
+  // Versi + build code asli (versionCode). Default dari AppConfig sebelum termuat.
+  String _versionLabel = 'v${AppConfig.version}';
 
   // Aksen putih glass di atas latar hijau majoo.
   static const _accent = Colors.white;
@@ -73,6 +76,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       duration: const Duration(milliseconds: 400),
       vsync: this,
     );
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    try {
+      final pkg = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() =>
+          _versionLabel = 'v${pkg.version} · build ${pkg.buildNumber}');
+    } catch (_) {
+      // biarkan default dari AppConfig
+    }
   }
 
   @override
@@ -338,7 +353,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                   style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.4))),
             ],
           ),
-          Text('v${AppConfig.version}',
+          Text(_versionLabel,
               style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.4))),
         ],
       ),

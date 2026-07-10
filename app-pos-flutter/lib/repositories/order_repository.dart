@@ -469,10 +469,14 @@ class OrderRepository {
   /// VOID (hapus) satu item dari order yang belum lunas. Otorisasi manager/SVP
   /// dicek di controller. Item dihapus lokal + total dihitung ulang; event
   /// void item dikirim ke cloud untuk audit (siapa & alasan).
+  /// Void item. [qty] null / ≥ qty baris → void SELURUH baris (dihapus);
+  /// [qty] lebih kecil → void SEBAGIAN (qty baris dikurangi). Audit mencatat
+  /// jumlah unit yang di-void.
   Future<void> voidOrderItem({
     required String itemId,
     required String voidedBy,
     String reason = '',
+    int? qty,
   }) async {
     final item = await _getOrderItem(itemId);
     if (item == null) throw Exception('Item tidak ditemukan');
@@ -481,20 +485,71 @@ class OrderRepository {
     if (order.isPaid) throw Exception('Order sudah dibayar');
     if (order.isVoided) throw Exception('Order sudah dibatalkan');
 
+    final n = (qty == null || qty >= item.qty || qty < 1) ? item.qty : qty;
     final now = DateTime.now();
-    // Audit void item ke cloud SEBELUM item dihapus (agar datanya lengkap).
-    await _enqueueOrderItemVoid(order, item, voidedBy, reason, now);
+    // Audit void (n unit) ke cloud SEBELUM baris diubah/dihapus.
+    await _enqueueOrderItemVoid(order, item, voidedBy, reason, now, voidQty: n);
 
-    await _db.delete('order_items', where: 'id = ?', whereArgs: [itemId]);
+    if (n >= item.qty) {
+      await _db.delete('order_items', where: 'id = ?', whereArgs: [itemId]);
+    } else {
+      await _db.update(
+        'order_items',
+        {'qty': item.qty - n, 'updated_at': now.toIso8601String()},
+        where: 'id = ?',
+        whereArgs: [itemId],
+      );
+    }
     // Subtotal berubah → pajak & total dihitung ulang.
     await _reapplyAutoChargesAndRecalc(item.orderId);
     // Kirim status order terbaru (item & total) ke cloud.
     await _enqueueOrder(item.orderId, 'upsert');
   }
 
+  /// Pisahkan [qty] unit dari baris [itemId] menjadi baris BARU pada order yang
+  /// sama (mempertahankan status masak, notes, dst), lalu kurangi baris asal.
+  /// Kembalikan id baris hasil pisah. Bila [qty] >= qty baris, tak ada split →
+  /// kembalikan [itemId] apa adanya (operasi berlaku ke baris utuh).
+  Future<String> _splitLine(String itemId, int qty) async {
+    final item = await _getOrderItem(itemId);
+    if (item == null) throw Exception('Item tidak ditemukan');
+    if (qty >= item.qty || qty < 1) return itemId; // tak perlu split
+    final db = await _db.database;
+    final now = DateTime.now();
+    final newItem = OrderItem(
+      id: Ulid.generate(),
+      orderId: item.orderId,
+      productName: item.productName,
+      categoryId: item.categoryId,
+      qty: qty,
+      price: item.price,
+      destination: item.destination,
+      itemStatus: item.itemStatus, // status masak terjaga → tak cetak dapur ulang
+      notes: item.notes,
+      addons: item.addons,
+      waiterName: item.waiterName,
+      isAdditional: item.isAdditional,
+      createdAt: now,
+      updatedAt: now,
+    );
+    await db.transaction((txn) async {
+      await txn.update(
+        'order_items',
+        {'qty': item.qty - qty, 'updated_at': now.toIso8601String()},
+        where: 'id = ?',
+        whereArgs: [itemId],
+      );
+      await txn.insert('order_items', newItem.toMap());
+    });
+    return newItem.id;
+  }
+
   /// Outbox: audit void item ke cloud (entityType 'order_item_void').
+  /// [voidQty] = jumlah unit yang di-void (default: seluruh qty baris).
   Future<void> _enqueueOrderItemVoid(Order order, OrderItem item,
-      String voidedBy, String reason, DateTime now) async {
+      String voidedBy, String reason, DateTime now,
+      {int? voidQty}) async {
+    final q = voidQty ?? item.qty;
     try {
       await _sync.enqueue(
         entityType: 'order_item_void',
@@ -505,9 +560,9 @@ class OrderRepository {
           'order_id': order.id,
           'table_number': order.tableNumber,
           'product_name': item.productName,
-          'qty': item.qty,
+          'qty': q,
           'price': item.price,
-          'subtotal': item.subtotal,
+          'subtotal': item.price * q,
           'category_id': item.categoryId,
           'waiter_name': item.waiterName,
           'voided_by': voidedBy, // manager/SVP yang mengotorisasi
@@ -1335,33 +1390,52 @@ class OrderRepository {
     }
   }
 
-  Future<void> parkItems({
-    required List<String> itemIds,
+  /// Pindahkan [qty] unit item [itemId] ke order aktif [targetOrderId] (meja
+  /// lain). [qty] null/penuh → seluruh baris; sebagian → split baris dulu.
+  Future<void> transferItemQty({
+    required String itemId,
+    int? qty,
+    required String targetOrderId,
+    String movedBy = '',
+  }) async {
+    final orig = await _getOrderItem(itemId);
+    if (orig == null) throw Exception('Item tidak ditemukan');
+    final moveId = await _splitLine(itemId, qty ?? orig.qty);
+    await transferItemsToOrder(
+      itemIds: [moveId],
+      targetOrderId: targetOrderId,
+      movedBy: movedBy,
+    );
+  }
+
+  /// Titipkan [qty] unit item [itemId] ke Meja Titipan. Otorisasi manajer di UI.
+  /// [qty] null/penuh → seluruh baris; sebagian → split. Tanpa cetak dapur
+  /// ulang; meja asal dibebaskan bila jadi kosong.
+  Future<void> parkItem({
+    required String itemId,
+    int? qty,
     String movedBy = '',
   }) async {
     final holding = await _getOrCreateHoldingOrder();
-    // Detail item + meja asal SEBELUM transfer (untuk audit).
-    final details = <({OrderItem item, String src})>[];
-    for (final id in itemIds) {
-      final it = await _getOrderItem(id);
-      if (it == null) continue;
-      final o = await getOrderById(it.orderId);
-      details.add((item: it, src: o?.tableNumber ?? '-'));
-    }
+    final orig = await _getOrderItem(itemId);
+    if (orig == null) throw Exception('Item tidak ditemukan');
+    final srcOrder = await getOrderById(orig.orderId);
+    final srcTable = srcOrder?.tableNumber ?? '-';
+    final moveId = await _splitLine(itemId, qty ?? orig.qty);
     await transferItemsToOrder(
-      itemIds: itemIds,
+      itemIds: [moveId],
       targetOrderId: holding.id,
       movedBy: movedBy,
     );
-    final now = DateTime.now();
-    for (final d in details) {
+    final moved = await _getOrderItem(moveId);
+    if (moved != null) {
       await _enqueueTitipanAudit(
         action: 'park',
-        item: d.item,
-        sourceTable: d.src,
+        item: moved,
+        sourceTable: srcTable,
         targetTable: holding.tableNumber,
         by: movedBy,
-        at: now,
+        at: DateTime.now(),
       );
     }
   }
@@ -1378,47 +1452,38 @@ class OrderRepository {
     return getOrderItems(existing.first['id'] as String);
   }
 
-  /// Tarik item titipan [itemIds] ke order tamu [targetOrderId] — tanpa cetak
-  /// dapur ulang (item sudah dibuat). Order titipan TETAP terbuka walau kosong.
-  Future<void> pullHeldItems({
-    required List<String> itemIds,
+  /// Tarik [qty] unit item titipan [itemId] ke order tamu [targetOrderId] —
+  /// tanpa cetak dapur ulang. [qty] null/penuh → seluruh baris; sebagian →
+  /// split. Order titipan TETAP terbuka walau kosong.
+  Future<void> pullHeldItem({
+    required String itemId,
+    int? qty,
     required String targetOrderId,
     String movedBy = '',
   }) async {
-    if (itemIds.isEmpty) throw Exception('Tidak ada item dipilih');
     final target = await getOrderById(targetOrderId);
     if (target == null) throw Exception('Order tujuan tidak ditemukan');
     if (target.isPaid || target.isVoided) {
       throw Exception('Order tujuan tidak aktif');
     }
-    final holdingRows = await _db.query(
-      'orders',
-      columns: ['id'],
-      where: "is_holding = 1 AND payment_status != 'paid' AND voided_at IS NULL",
-      limit: 1,
-    );
-    if (holdingRows.isEmpty) throw Exception('Tidak ada titipan');
-    final holdingId = holdingRows.first['id'] as String;
-
-    // Detail item SEBELUM re-parent (untuk audit tarik).
-    final details = <OrderItem>[];
-    for (final id in itemIds) {
-      final it = await _getOrderItem(id);
-      if (it != null) details.add(it);
+    final orig = await _getOrderItem(itemId);
+    if (orig == null) throw Exception('Item titipan tidak ditemukan');
+    final holdingId = orig.orderId;
+    final holdingOrder = await getOrderById(holdingId);
+    if (holdingOrder == null || holdingOrder.isHolding != 1) {
+      throw Exception('Item bukan dari Meja Titipan');
     }
+    final moveId = await _splitLine(itemId, qty ?? orig.qty); // split dlm titipan
 
     final db = await _db.database;
     final now = DateTime.now();
-    final ph = List.filled(itemIds.length, '?').join(',');
     await db.transaction((txn) async {
-      // Re-parent HANYA item yang benar dari order titipan.
       await txn.update(
         'order_items',
         {'order_id': targetOrderId, 'updated_at': now.toIso8601String()},
-        where: 'id IN ($ph) AND order_id = ?',
-        whereArgs: [...itemIds, holdingId],
+        where: 'id = ?',
+        whereArgs: [moveId],
       );
-      // Pastikan meja tujuan occupied.
       await txn.update('tables',
           {'status': 'occupied', 'updated_at': now.toIso8601String()},
           where: 'table_number = ?', whereArgs: [target.tableNumber]);
@@ -1430,11 +1495,11 @@ class OrderRepository {
     await _enqueueOrder(holdingId, 'upsert');
     await _enqueueOrder(targetOrderId, 'upsert');
 
-    // Audit tarik titipan (siapa & item apa) ke cloud.
-    for (final it in details) {
+    final pulled = await _getOrderItem(moveId);
+    if (pulled != null) {
       await _enqueueTitipanAudit(
         action: 'pull',
-        item: it,
+        item: pulled,
         sourceTable: holdingTableLabel,
         targetTable: target.tableNumber,
         by: movedBy,

@@ -2121,14 +2121,16 @@ class _CashierScreenState extends State<CashierScreen> {
   // ── Pindah Meja ───────────────────────────────────────────────────────────
   /// Hapus (void) satu item — wajib PIN Manager/SVP (atau PIN void bersama).
   Future<void> _showItemVoidDialog(OrderItem item) async {
+    final n = await _askUnitQty(item.qty, title: 'Void berapa unit?');
+    if (n == null || !mounted) return;
     final auth = await showPinAuthDialog(
       context,
       title: 'Hapus Item',
       actionLabel: 'Hapus Item',
       icon: Icons.delete_outline,
       details: {
-        'Item': '${item.qty}x ${item.productName}',
-        'Harga': CurrencyHelper.format(item.subtotal),
+        'Item': '${n}x ${item.productName}',
+        'Harga': CurrencyHelper.format(item.price * n),
         if (item.waiterName.isNotEmpty) 'Pemesan': item.waiterName,
       },
       reasonHint: 'Contoh: salah input, pelanggan batal',
@@ -2138,6 +2140,7 @@ class _CashierScreenState extends State<CashierScreen> {
       itemId: item.id,
       pin: auth.pin,
       reason: auth.reason,
+      qty: n,
     );
     if (!mounted) return;
     final msg = res == 'ok'
@@ -2166,6 +2169,55 @@ class _CashierScreenState extends State<CashierScreen> {
             maxHeight: MediaQuery.of(ctx).size.height * 0.82,
           ),
           child: builder(ctx),
+        ),
+      ),
+    );
+  }
+
+  /// Tanya jumlah unit (1..[maxQty]). null = batal. Bila maxQty ≤ 1, langsung
+  /// kembalikan 1 tanpa dialog (baris qty 1 tak perlu ditanya).
+  Future<int?> _askUnitQty(int maxQty, {String title = 'Berapa unit?'}) async {
+    if (maxQty <= 1) return 1;
+    int qty = maxQty; // default: seluruh baris
+    return showDialog<int>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          title: Text(title, style: const TextStyle(fontSize: 16)),
+          content: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                iconSize: 36,
+                color: AppColors.moduleKasir,
+                icon: const Icon(Icons.remove_circle_outline),
+                onPressed: qty > 1 ? () => setD(() => qty--) : null,
+              ),
+              SizedBox(
+                width: 64,
+                child: Text('$qty',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontSize: 30, fontWeight: FontWeight.bold)),
+              ),
+              IconButton(
+                iconSize: 36,
+                color: AppColors.moduleKasir,
+                icon: const Icon(Icons.add_circle_outline),
+                onPressed: qty < maxQty ? () => setD(() => qty++) : null,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Batal')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, qty),
+                child: Text('Pilih $qty dari $maxQty')),
+          ],
         ),
       ),
     );
@@ -2232,10 +2284,12 @@ class _CashierScreenState extends State<CashierScreen> {
 
   /// Titip item ke Meja Titipan: peringatan keamanan pangan → PIN manajer → park.
   Future<void> _titipItem(OrderItem item) async {
+    final n = await _askUnitQty(item.qty, title: 'Titip berapa unit?');
+    if (n == null || !mounted) return;
     final proceed = await showAppConfirm(
       context,
       title: 'Titip ke Meja Titipan?',
-      message: '${item.qty}x ${item.productName} disimpan untuk dijual ke '
+      message: '${n}x ${item.productName} disimpan untuk dijual ke '
           'tamu berikutnya.\n\n'
           '⚠️ Pastikan item MASIH LAYAK & AMAN dikonsumsi. Untuk makanan '
           'matang/minuman terbuka yang sudah lama, sebaiknya Void (waste), '
@@ -2251,13 +2305,14 @@ class _CashierScreenState extends State<CashierScreen> {
       actionLabel: 'Titip Item',
       icon: Icons.inventory_2_outlined,
       details: {
-        'Item': '${item.qty}x ${item.productName}',
-        'Harga': CurrencyHelper.format(item.subtotal),
+        'Item': '${n}x ${item.productName}',
+        'Harga': CurrencyHelper.format(item.price * n),
       },
       reasonHint: 'Contoh: tamu batal, salah antar',
     );
     if (auth == null || !mounted) return;
-    final res = await _controller.parkItem(itemId: item.id, pin: auth.pin);
+    final res =
+        await _controller.parkItem(itemId: item.id, pin: auth.pin, qty: n);
     if (!mounted) return;
     final msg = res == 'ok'
         ? 'Item dititip ke Meja Titipan'
@@ -2346,8 +2401,11 @@ class _CashierScreenState extends State<CashierScreen> {
                                   child: InkWell(
                                     borderRadius: BorderRadius.circular(12),
                                     onTap: () async {
+                                      final n = await _askUnitQty(it.qty,
+                                          title: 'Tarik berapa unit?');
+                                      if (n == null || !mounted) return;
                                       final res = await _controller
-                                          .pullHeldItem(it.id);
+                                          .pullHeldItem(it.id, qty: n);
                                       if (!mounted) return;
                                       showAppSnack(
                                         context,
@@ -2412,16 +2470,18 @@ class _CashierScreenState extends State<CashierScreen> {
                                   icon: const Icon(Icons.delete_outline,
                                       color: AppColors.danger),
                                   onPressed: () async {
+                                    final n = await _askUnitQty(it.qty,
+                                        title: 'Void berapa unit?');
+                                    if (n == null || !mounted) return;
                                     final auth = await showPinAuthDialog(
                                       context,
                                       title: 'Void Titipan',
                                       actionLabel: 'Void (Waste)',
                                       icon: Icons.delete_outline,
                                       details: {
-                                        'Item':
-                                            '${it.qty}x ${it.productName}',
+                                        'Item': '${n}x ${it.productName}',
                                         'Harga': CurrencyHelper.format(
-                                            it.subtotal),
+                                            it.price * n),
                                       },
                                       reasonHint:
                                           'Contoh: sudah tidak layak, kadaluarsa',
@@ -2430,7 +2490,8 @@ class _CashierScreenState extends State<CashierScreen> {
                                     final res = await _controller.voidHeldItem(
                                         itemId: it.id,
                                         pin: auth.pin,
-                                        reason: auth.reason);
+                                        reason: auth.reason,
+                                        qty: n);
                                     if (!mounted) return;
                                     showAppSnack(
                                         context,
@@ -2461,6 +2522,8 @@ class _CashierScreenState extends State<CashierScreen> {
   Future<void> _showItemMovePicker(OrderItem item) async {
     final order = _controller.state.currentOrder;
     if (order == null) return;
+    final n = await _askUnitQty(item.qty, title: 'Pindah berapa unit?');
+    if (n == null || !mounted) return;
     showDialog(
       context: context,
       builder: (ctx) => _MergePicker(
@@ -2470,9 +2533,10 @@ class _CashierScreenState extends State<CashierScreen> {
         headerIcon: Icons.swap_horiz_rounded,
         onPick: (dest) async {
           Navigator.pop(ctx);
-          final res = await _controller.moveItemsToTable(
-            itemIds: [item.id],
+          final res = await _controller.moveItemToTable(
+            itemId: item.id,
             targetOrderId: dest.id,
+            qty: n,
           );
           if (!mounted) return;
           showAppSnack(
@@ -2927,15 +2991,18 @@ class _CartItemTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(name,
+                Text('$qty×  $name',
                     style: const TextStyle(
                         fontWeight: FontWeight.w500, fontSize: 13)),
                 Text(
-                  CurrencyHelper.format(price * qty),
+                  '@ ${CurrencyHelper.format(price)}  •  '
+                  '${CurrencyHelper.format(price * qty)}',
                   style: const TextStyle(
                       color: AppColors.moduleKasir,
                       fontSize: 12,
                       fontWeight: FontWeight.w600),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 if (notes != null && notes!.isNotEmpty)
                   Padding(
