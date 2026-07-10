@@ -291,7 +291,8 @@ class PrinterService {
               (t) => t.name == parts[2],
               orElse: () => PrinterType.lan,
             ),
-            // parts[3]=peran; parts[4]=id kategori; parts[5]=lebar kolom kertas.
+            // parts[3]=peran; parts[4]=id kategori; parts[5]=lebar kolom kertas;
+            // parts[6]=rangkap cetak (copies).
             roles: parts.length >= 4
                 ? PrinterDevice._parseSet(parts[3])
                 : const {},
@@ -301,6 +302,7 @@ class PrinterService {
             paperCols: parts.length >= 6
                 ? (int.tryParse(parts[5]) ?? 48)
                 : 48,
+            copies: parts.length >= 7 ? (int.tryParse(parts[6]) ?? 1) : 1,
           );
         })
         .whereType<PrinterDevice>()
@@ -339,7 +341,7 @@ class PrinterService {
   }
 
   String _serialize(PrinterDevice d) =>
-      '${d.name}|${d.address}|${d.type.name}|${d.roles.join(',')}|${d.categoryIds.join(',')}|${d.paperCols}';
+      '${d.name}|${d.address}|${d.type.name}|${d.roles.join(',')}|${d.categoryIds.join(',')}|${d.paperCols}|${d.copies}';
 
   // ── Test Print ─────────────────────────────────────────────────────────────
 
