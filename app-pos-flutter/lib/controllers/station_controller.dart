@@ -140,6 +140,10 @@ class StationController extends ChangeNotifier {
 
   // ── Operasi item terkirim (void / titip / pindah) via Main POS ──────────────
 
+  /// Order lengkap (order + items + charges) — untuk cetak tagihan di station.
+  Future<Map<String, dynamic>> getOrderFull(String orderId) =>
+      _api.getOrderFull(orderId);
+
   /// Order aktif di meja LAIN (untuk target pindah item).
   Future<List<Map<String, dynamic>>> activeOrdersExcept(String orderId) async {
     final all = await _api.getActiveOrders();

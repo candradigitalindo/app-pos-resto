@@ -4,12 +4,16 @@ import 'package:flutter/material.dart';
 
 import '../../app.dart';
 import '../../controllers/station_controller.dart';
+import '../../models/models.dart';
 import '../../services/auth_service.dart';
 import '../../services/device_role_service.dart';
+import '../../services/printer_service.dart';
+import '../../services/receipt_builder.dart';
 import '../../services/station_api_client.dart';
 import '../../theme/theme.dart';
 import '../../utils/currency.dart';
 import '../../widgets/ui/ui.dart';
+import '../settings/printer_settings_screen.dart';
 import 'station_setup_screen.dart';
 
 /// Layar utama mode Station: pilih meja → menu → kirim order ke Main POS.
@@ -186,11 +190,14 @@ class _StationScreenState extends State<StationScreen> {
       PopupMenuButton<String>(
         icon: const Icon(Icons.more_vert_rounded, color: AppColors.textSecondary),
         onSelected: (v) {
+          if (v == 'printer') _openPrinterSettings();
           if (v == 'server') _changeServer();
           if (v == 'exit') _exitStationMode();
           if (v == 'logout') widget.onLogout?.call();
         },
         itemBuilder: (_) => [
+          const PopupMenuItem(
+              value: 'printer', child: Text('Pengaturan Printer')),
           if (widget.onLogout != null)
             const PopupMenuItem(
                 value: 'logout', child: Text('Logout (ganti user)')),
@@ -894,18 +901,33 @@ class _StationScreenState extends State<StationScreen> {
             ],
           ),
         ),
-        // Tambah item ke order ini
+        // Cetak tagihan (printer lokal station) + tambah item ke order ini
         SafeArea(
           top: false,
           child: Padding(
             padding: EdgeInsets.fromLTRB(context.pagePadX, AppSpacing.sm,
                 context.pagePadX, AppSpacing.sm),
-            child: AppButton(
-              label: 'Tambah Item',
-              icon: Icons.add_shopping_cart_rounded,
-              variant: AppButtonVariant.tonal,
-              accent: _accent,
-              onPressed: _controller.startAddItems,
+            child: Row(
+              children: [
+                Expanded(
+                  child: AppButton(
+                    label: 'Cetak Tagihan',
+                    icon: Icons.receipt_long_outlined,
+                    variant: AppButtonVariant.neutral,
+                    onPressed: _printBill,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: AppButton(
+                    label: 'Tambah Item',
+                    icon: Icons.add_shopping_cart_rounded,
+                    variant: AppButtonVariant.tonal,
+                    accent: _accent,
+                    onPressed: _controller.startAddItems,
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -1109,6 +1131,93 @@ class _StationScreenState extends State<StationScreen> {
     if (!mounted) return;
     showAppSnack(context, ok ? okMsg : (_controller.errorMessage ?? 'Gagal'),
         isError: !ok);
+  }
+
+  // ── Printer station (struk tagihan + pengaturan) ────────────────────────────
+
+  /// Buka Pengaturan Printer di perangkat station (config printer lokal sendiri).
+  void _openPrinterSettings() {
+    Navigator.push(context,
+        MaterialPageRoute(builder: (_) => const PrinterSettingsScreen()));
+  }
+
+  /// Cetak TAGIHAN (bill, belum bayar) order aktif ke printer LOKAL station.
+  Future<void> _printBill() async {
+    final orderId = _controller.currentOrder?['id'] as String?;
+    if (orderId == null) return;
+    try {
+      final full = await _controller.getOrderFull(orderId);
+      final order =
+          Order.fromMap((full['order'] as Map).cast<String, dynamic>());
+      final items = (full['items'] as List)
+          .map((m) => OrderItem.fromMap((m as Map).cast<String, dynamic>()))
+          .toList();
+      final charges = (full['charges'] as List)
+          .map((m) =>
+              OrderAdditionalCharge.fromMap((m as Map).cast<String, dynamic>()))
+          .toList();
+      final subtotal = items.fold<double>(0, (s, i) => s + i.subtotal);
+      final data = ReceiptData(
+        orderId: order.id,
+        receiptNumber: 'BILL-${order.id.substring(0, 8).toUpperCase()}',
+        tableNumber: order.tableNumber,
+        customerName: order.customerName,
+        cashierName: 'Station',
+        pax: order.pax,
+        items: items
+            .map((i) => ReceiptItem(
+                  name: i.productName,
+                  quantity: i.qty,
+                  price: i.price,
+                  total: i.subtotal,
+                  notes: i.notes.isNotEmpty ? i.notes : null,
+                  ordererName: i.waiterName,
+                ))
+            .toList(),
+        subtotal: subtotal,
+        charges: charges
+            .map((c) => ReceiptCharge(name: c.name, amount: c.appliedAmount))
+            .toList(),
+        chargesTotal: charges.fold<double>(0, (s, c) => s + c.appliedAmount),
+        total: order.totalAmount,
+        dateTime: DateTime.now(),
+        isBill: true,
+      );
+      await _sendToStationPrinter(
+          (cols) => ReceiptBuilder(paperWidth: cols).buildReceipt(data));
+      if (mounted) showAppSnack(context, 'Tagihan dicetak');
+    } catch (e) {
+      if (mounted) {
+        showAppSnack(context, 'Gagal cetak tagihan: $e', isError: true);
+      }
+    }
+  }
+
+  /// Kirim bytes ke printer kasir LOKAL station (fallback non-checker, lalu
+  /// pertama). Printer dikonfigurasi di perangkat station via Pengaturan Printer.
+  Future<void> _sendToStationPrinter(
+      List<int> Function(int cols) build) async {
+    final ps = PrinterService();
+    final saved = await ps.getSavedPrinters();
+    if (saved.isEmpty) {
+      if (mounted) {
+        showAppSnack(
+            context, 'Belum ada printer di perangkat ini (Pengaturan Printer)',
+            isError: true);
+      }
+      return;
+    }
+    final cps = saved.where((p) => p.hasRole(PrinterRole.cashier)).toList();
+    final printer = cps.isNotEmpty
+        ? cps.first
+        : saved.firstWhere((p) => !p.hasRole(PrinterRole.checker),
+            orElse: () => saved.first);
+    final bytes = build(printer.paperCols);
+    if (printer.type == PrinterType.bluetooth) {
+      await ps.sendBluetooth(printer.address, bytes);
+    } else {
+      await ps.sendLan(printer.address, bytes);
+    }
   }
 
   Color _statusColor(String status) {
