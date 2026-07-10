@@ -108,14 +108,20 @@ class _CashierStationScreenState extends State<CashierStationScreen> {
         cashierName: _cashierName,
       );
       await _sendToCashierPrinter(
-          (cols) => ReceiptBuilder(paperWidth: cols).buildReceipt(data));
+          (cols, isCopy) =>
+              ReceiptBuilder(paperWidth: cols).buildReceipt(data, isCopy: isCopy),
+          honorCopies: true);
     } catch (e) {
       debugPrint('Cetak struk station error: $e');
     }
   }
 
   /// Kirim bytes ke printer ber-role kasir (fallback non-checker, lalu pertama).
-  Future<void> _sendToCashierPrinter(List<int> Function(int cols) build) async {
+  /// [build] menerima (cols, isCopy). Bila [honorCopies] true, salinan ke-2..N
+  /// (sesuai printer.copies) dikirim dengan isCopy=true → bertanda "COPY".
+  Future<void> _sendToCashierPrinter(
+      List<int> Function(int cols, bool isCopy) build,
+      {bool honorCopies = false}) async {
     final ps = PrinterService();
     final saved = await ps.getSavedPrinters();
     if (saved.isEmpty) return;
@@ -124,11 +130,20 @@ class _CashierStationScreenState extends State<CashierStationScreen> {
         ? cps.first
         : saved.firstWhere((p) => !p.hasRole(PrinterRole.checker),
             orElse: () => saved.first);
-    final bytes = build(printer.paperCols);
-    if (printer.type == PrinterType.bluetooth) {
-      await ps.sendBluetooth(printer.address, bytes);
-    } else {
-      await ps.sendLan(printer.address, bytes);
+
+    Future<void> send(List<int> bytes) async {
+      if (printer.type == PrinterType.bluetooth) {
+        await ps.sendBluetooth(printer.address, bytes);
+      } else {
+        await ps.sendLan(printer.address, bytes);
+      }
+    }
+
+    await send(build(printer.paperCols, false));
+    if (honorCopies) {
+      for (var c = 2; c <= printer.copies; c++) {
+        await send(build(printer.paperCols, true));
+      }
     }
   }
 
@@ -161,7 +176,7 @@ class _CashierStationScreenState extends State<CashierStationScreen> {
 
   Future<void> _printSession(Map<String, dynamic> summary) async {
     try {
-      await _sendToCashierPrinter((cols) =>
+      await _sendToCashierPrinter((cols, _) =>
           ReceiptBuilder(paperWidth: cols).buildCashierSession(
             outletName: 'POS Resto',
             cashierName: _cashierName,

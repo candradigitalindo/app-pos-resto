@@ -787,6 +787,145 @@ class CashierController extends ChangeNotifier {
     }
   }
 
+  /// Order aktif di meja LAIN — tujuan "Pindah item" (reuse daftar gabung meja).
+  Future<List<Order>> getMoveTargets() async {
+    final cur = _state.currentOrder;
+    if (cur == null) return [];
+    return _orderRepo.getMergeableOrders(cur.tableNumber);
+  }
+
+  /// Pindahkan item terpilih ke order aktif [targetOrderId] (meja lain).
+  /// Item dipindah tanpa memicu cetak dapur ulang. Bila order saat ini jadi
+  /// kosong, keluar dari mode order. Return 'ok' | 'error'.
+  Future<String> moveItemsToTable({
+    required List<String> itemIds,
+    required String targetOrderId,
+  }) async {
+    if (_state.isProcessing) return 'error';
+    final order = _state.currentOrder;
+    if (order == null) return 'error';
+    _setState(_state.copyWith(isProcessing: true, clearError: true));
+    try {
+      await _orderRepo.transferItemsToOrder(
+        itemIds: itemIds,
+        targetOrderId: targetOrderId,
+        movedBy: await _currentCashierName(),
+      );
+      final remaining = await _orderRepo.getOrderItems(order.id);
+      if (remaining.isEmpty) {
+        // Semua item pindah → order saat ini kosong, keluar dari mode order.
+        _setState(_state.copyWith(
+          currentOrder: null,
+          clearCurrentOrder: true,
+          orderItems: [],
+          orderCharges: [],
+          clearSelectedTable: true,
+          isProcessing: false,
+        ));
+        await loadData();
+      } else {
+        await _loadOrderItems(order.id);
+        _setState(_state.copyWith(isProcessing: false));
+      }
+      return 'ok';
+    } catch (e) {
+      _setState(_state.copyWith(
+        isProcessing: false,
+        errorMessage: 'Gagal pindah item: '
+            '${e.toString().replaceFirst('Exception: ', '')}',
+      ));
+      return 'error';
+    }
+  }
+
+  /// Titipkan satu item ke Meja Titipan (parked check) — wajib PIN Manager/SVP.
+  /// Item dipindah tanpa cetak dapur ulang. Return 'ok' | 'invalid_pin' | 'error'.
+  Future<String> parkItem({required String itemId, required String pin}) async {
+    final authorizer = await _voidAuthorizer(pin);
+    if (authorizer == null) return 'invalid_pin';
+    if (_state.isProcessing) return 'error';
+    final order = _state.currentOrder;
+    if (order == null) return 'error';
+    _setState(_state.copyWith(isProcessing: true, clearError: true));
+    try {
+      await _orderRepo.parkItems(itemIds: [itemId], movedBy: authorizer);
+      final remaining = await _orderRepo.getOrderItems(order.id);
+      if (remaining.isEmpty) {
+        _setState(_state.copyWith(
+          currentOrder: null,
+          clearCurrentOrder: true,
+          orderItems: [],
+          orderCharges: [],
+          clearSelectedTable: true,
+          isProcessing: false,
+        ));
+        await loadData();
+      } else {
+        await _loadOrderItems(order.id);
+        _setState(_state.copyWith(isProcessing: false));
+      }
+      return 'ok';
+    } catch (e) {
+      _setState(_state.copyWith(
+        isProcessing: false,
+        errorMessage: 'Gagal titip item: '
+            '${e.toString().replaceFirst('Exception: ', '')}',
+      ));
+      return 'error';
+    }
+  }
+
+  /// Daftar item yang sedang dititip (Meja Titipan).
+  Future<List<OrderItem>> getHeldItems() => _orderRepo.getHeldItems();
+
+  /// Void (waste) satu item titipan yang sudah tidak layak — wajib PIN
+  /// Manager/SVP. Tercatat sebagai void item (auditable). Return
+  /// 'ok' | 'invalid_pin' | 'error'.
+  Future<String> voidHeldItem({
+    required String itemId,
+    required String pin,
+    String reason = '',
+  }) async {
+    final authorizer = await _voidAuthorizer(pin);
+    if (authorizer == null) return 'invalid_pin';
+    try {
+      await _orderRepo.voidOrderItem(
+        itemId: itemId,
+        voidedBy: authorizer,
+        reason: reason.isEmpty ? 'Titipan tidak terjual (waste)' : reason,
+      );
+      return 'ok';
+    } catch (e) {
+      return 'error';
+    }
+  }
+
+  /// Tarik satu item titipan ke order tamu SAAT INI. Perlu ada order aktif.
+  /// Return 'ok' | 'no_order' | 'error'.
+  Future<String> pullHeldItem(String itemId) async {
+    if (_state.isProcessing) return 'error';
+    final order = _state.currentOrder;
+    if (order == null) return 'no_order';
+    _setState(_state.copyWith(isProcessing: true, clearError: true));
+    try {
+      await _orderRepo.pullHeldItems(
+        itemIds: [itemId],
+        targetOrderId: order.id,
+        movedBy: await _currentCashierName(),
+      );
+      await _loadOrderItems(order.id);
+      _setState(_state.copyWith(isProcessing: false));
+      return 'ok';
+    } catch (e) {
+      _setState(_state.copyWith(
+        isProcessing: false,
+        errorMessage: 'Gagal tarik titipan: '
+            '${e.toString().replaceFirst('Exception: ', '')}',
+      ));
+      return 'error';
+    }
+  }
+
   /// Daftar order yang sudah di-void (Histori Void).
   Future<List<Order>> getVoidedOrders() => _orderRepo.getVoidedOrders();
 
@@ -923,14 +1062,19 @@ class CashierController extends ChangeNotifier {
               orElse: () => saved.first,
             );
 
-      final bytes = ReceiptBuilder(paperWidth: printer.paperCols)
-          .buildReceipt(data);
+      final builder = ReceiptBuilder(paperWidth: printer.paperCols);
       // Lewat ANTRIAN cetak (durable): retry otomatis + bila gagal tetap
       // tersimpan dan bisa "Cetak Ulang" dari layar Antrian Cetak.
       final label =
           '${data.isBill ? 'Tagihan' : 'Struk Bayar'} Meja ${data.tableNumber}';
-      await PrintQueueService.instance
-          .enqueueForPrinter(printer, bytes: bytes, label: label);
+      await PrintQueueService.instance.enqueueForPrinter(printer,
+          bytes: builder.buildReceipt(data), label: label);
+      // Rangkap: salinan ke-2..N ditandai "COPY" (printer.copies dari Pengaturan).
+      for (var c = 2; c <= printer.copies; c++) {
+        await PrintQueueService.instance.enqueueForPrinter(printer,
+            bytes: builder.buildReceipt(data, isCopy: true),
+            label: '$label (Copy)');
+      }
     } catch (e) {
       debugPrint('Cetak struk error: $e');
     }

@@ -259,6 +259,12 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen>
     await _loadSaved();
   }
 
+  /// Ubah rangkap cetak struk (1 = biasa, 2 = + salinan "COPY").
+  Future<void> _setCopies(PrinterDevice device, int copies) async {
+    await _service.savePrinter(device.copyWith(copies: copies));
+    await _loadSaved();
+  }
+
   Future<void> _remove(PrinterDevice device) async {
     final ok = await showAppConfirm(
       context,
@@ -362,6 +368,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen>
         categories: _categories,
         onCategoryToggle: (catId) => _toggleCategory(_saved[i], catId),
         onPaperChange: (cols) => _setPaper(_saved[i], cols),
+        onCopiesChange: (n) => _setCopies(_saved[i], n),
       ),
     );
   }
@@ -507,6 +514,7 @@ class _PrinterTile extends StatelessWidget {
   final List<Category> categories;
   final void Function(String categoryId)? onCategoryToggle;
   final void Function(int cols)? onPaperChange;
+  final void Function(int copies)? onCopiesChange;
 
   const _PrinterTile({
     required this.device,
@@ -518,6 +526,7 @@ class _PrinterTile extends StatelessWidget {
     this.categories = const [],
     this.onCategoryToggle,
     this.onPaperChange,
+    this.onCopiesChange,
   });
 
   @override
@@ -599,6 +608,8 @@ class _PrinterTile extends StatelessWidget {
             _buildRoleSelector(),
             const SizedBox(height: AppSpacing.sm),
             _buildPaperSelector(),
+            const SizedBox(height: AppSpacing.sm),
+            _buildCopiesSelector(),
           ],
         ],
       ),
@@ -638,6 +649,44 @@ class _PrinterTile extends StatelessWidget {
         chip('58mm', 32),
         const SizedBox(width: 6),
         chip('80mm', 48),
+      ],
+    );
+  }
+
+  /// Rangkap cetak struk: 1× (biasa) / 2× (salinan ke-2 bertanda "COPY").
+  /// Hanya berlaku untuk struk kasir (bill/pembayaran), bukan tiket dapur/bar.
+  Widget _buildCopiesSelector() {
+    Widget chip(String label, int n) {
+      final selected = device.copies == n;
+      return GestureDetector(
+        onTap: () => onCopiesChange?.call(n),
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md, vertical: 6),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.accent : AppColors.surfaceMuted,
+            borderRadius: AppRadius.rXs,
+          ),
+          child: Text(label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: selected ? Colors.white : AppColors.textTertiary,
+              )),
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        const Icon(Icons.content_copy_rounded,
+            size: 14, color: AppColors.moduleKasir),
+        const SizedBox(width: 5),
+        Text('Rangkap struk:', style: AppType.label),
+        const SizedBox(width: AppSpacing.xs),
+        chip('1×', 1),
+        const SizedBox(width: 6),
+        chip('2× (Copy)', 2),
       ],
     );
   }

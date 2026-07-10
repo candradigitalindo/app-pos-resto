@@ -1516,7 +1516,7 @@ class _CashierScreenState extends State<CashierScreen> {
               qty: item.qty,
               price: item.price,
               status: item.itemStatus,
-              onDelete: () => _showItemVoidDialog(item),
+              onDelete: () => _showItemDeleteOptions(item),
             )),
       ],
     ];
@@ -2096,6 +2096,17 @@ class _CashierScreenState extends State<CashierScreen> {
         SizedBox(
           width: double.infinity,
           child: _secondaryButton(
+            icon: Icons.inventory_2_outlined,
+            label: 'Tarik dari Titipan',
+            color: AppColors.accent,
+            borderColor: AppColors.soft(AppColors.accent, 0.40),
+            onTap: isLoading ? null : _showHeldItemsPicker,
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: _secondaryButton(
             icon: Icons.receipt_long_outlined,
             label: 'Cetak Tagihan',
             color: AppColors.moduleKasir,
@@ -2137,24 +2148,353 @@ class _CashierScreenState extends State<CashierScreen> {
     showAppSnack(context, msg, isError: res != 'ok');
   }
 
+  /// Aksi hapus item → pilihan: Pindah ke meja lain (transfer) atau Void (hapus).
+  /// Tampilkan modal di TENGAH layar (dialog), bukan meluncur dari bawah.
+  /// Konten [builder] sama seperti bottom-sheet; hanya posisinya dipusatkan.
+  Future<T?> _centeredModal<T>(
+      {required Widget Function(BuildContext) builder}) {
+    return showDialog<T>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: AppColors.surface,
+        insetPadding:
+            const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 460,
+            maxHeight: MediaQuery.of(ctx).size.height * 0.82,
+          ),
+          child: builder(ctx),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showItemDeleteOptions(OrderItem item) async {
+    final choice = await _centeredModal<String>(
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text('${item.qty}x ${item.productName}',
+                      style: const TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w700)),
+                ),
+                Text(CurrencyHelper.format(item.subtotal),
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.moduleKasir)),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.border),
+          ListTile(
+            leading: const Icon(Icons.swap_horiz_rounded,
+                color: AppColors.moduleKasir),
+            title: const Text('Pindah ke meja lain'),
+            subtitle: const Text(
+                'Item pindah ke order meja aktif lain (tanpa cetak ulang)'),
+            onTap: () => Navigator.pop(ctx, 'move'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.inventory_2_outlined,
+                color: AppColors.accent),
+            title: const Text('Titip ke Meja Titipan'),
+            subtitle: const Text(
+                'Simpan untuk tamu berikutnya — perlu PIN manajer'),
+            onTap: () => Navigator.pop(ctx, 'titip'),
+          ),
+          ListTile(
+            leading:
+                const Icon(Icons.delete_outline, color: AppColors.danger),
+            title: const Text('Void item (hapus)'),
+            subtitle: const Text('Batalkan item — perlu PIN manajer'),
+            onTap: () => Navigator.pop(ctx, 'void'),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+    if (!mounted || choice == null) return;
+    if (choice == 'void') {
+      await _showItemVoidDialog(item);
+    } else if (choice == 'move') {
+      await _showItemMovePicker(item);
+    } else if (choice == 'titip') {
+      await _titipItem(item);
+    }
+  }
+
+  /// Titip item ke Meja Titipan: peringatan keamanan pangan → PIN manajer → park.
+  Future<void> _titipItem(OrderItem item) async {
+    final proceed = await showAppConfirm(
+      context,
+      title: 'Titip ke Meja Titipan?',
+      message: '${item.qty}x ${item.productName} disimpan untuk dijual ke '
+          'tamu berikutnya.\n\n'
+          '⚠️ Pastikan item MASIH LAYAK & AMAN dikonsumsi. Untuk makanan '
+          'matang/minuman terbuka yang sudah lama, sebaiknya Void (waste), '
+          'bukan dititip.',
+      confirmText: 'Lanjut Titip',
+      icon: Icons.inventory_2_outlined,
+    );
+    if (proceed != true || !mounted) return;
+
+    final auth = await showPinAuthDialog(
+      context,
+      title: 'Titip Item',
+      actionLabel: 'Titip Item',
+      icon: Icons.inventory_2_outlined,
+      details: {
+        'Item': '${item.qty}x ${item.productName}',
+        'Harga': CurrencyHelper.format(item.subtotal),
+      },
+      reasonHint: 'Contoh: tamu batal, salah antar',
+    );
+    if (auth == null || !mounted) return;
+    final res = await _controller.parkItem(itemId: item.id, pin: auth.pin);
+    if (!mounted) return;
+    final msg = res == 'ok'
+        ? 'Item dititip ke Meja Titipan'
+        : res == 'invalid_pin'
+            ? 'PIN salah / tidak berwenang'
+            : (_controller.state.errorMessage ?? 'Gagal titip item');
+    showAppSnack(context, msg, isError: res != 'ok');
+  }
+
+  /// Meja Titipan: ketuk item → tarik ke pesanan saat ini; atau Void (waste)
+  /// item yang sudah tak layak. Menampilkan usia titip (item lama ditandai).
+  Future<void> _showHeldItemsPicker() async {
+    if (_controller.state.currentOrder == null) {
+      showAppSnack(context, 'Buka order/meja dulu untuk menarik titipan',
+          isError: true);
+      return;
+    }
+    var held = await _controller.getHeldItems();
+    if (!mounted) return;
+    if (held.isEmpty) {
+      showAppSnack(context, 'Tidak ada item di Meja Titipan');
+      return;
+    }
+
+    String ageStr(DateTime t) {
+      final d = DateTime.now().difference(t);
+      if (d.inHours >= 1) return '${d.inHours}j ${d.inMinutes % 60}m';
+      if (d.inMinutes >= 1) return '${d.inMinutes} menit';
+      return 'baru saja';
+    }
+
+    await _centeredModal<void>(
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) {
+          Future<void> reload() async {
+            final fresh = await _controller.getHeldItems();
+            if (ctx.mounted) setSheet(() => held = fresh);
+          }
+
+          return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(20, 16, 20, 4),
+                    child: Text('Meja Titipan',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold)),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+                    child: Text(
+                        'Ketuk untuk tarik ke pesanan. Item lama bisa di-Void (waste).',
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.textTertiary)),
+                  ),
+                  const Divider(height: 1, color: AppColors.border),
+                  if (held.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(28),
+                      child: Center(
+                        child: Text('Titipan kosong',
+                            style:
+                                TextStyle(color: AppColors.textTertiary)),
+                      ),
+                    )
+                  else
+                    Flexible(
+                      child: ListView.separated(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: held.length,
+                        separatorBuilder: (_, __) =>
+                            const SizedBox(height: 8),
+                        itemBuilder: (_, i) {
+                          final it = held[i];
+                          final stale = DateTime.now()
+                                  .difference(it.updatedAt)
+                                  .inHours >=
+                              4;
+                          return Material(
+                            color: AppColors.surfaceMuted,
+                            borderRadius: BorderRadius.circular(12),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(12),
+                                    onTap: () async {
+                                      final res = await _controller
+                                          .pullHeldItem(it.id);
+                                      if (!mounted) return;
+                                      showAppSnack(
+                                        context,
+                                        res == 'ok'
+                                            ? 'Titipan ditarik ke pesanan'
+                                            : (_controller
+                                                    .state.errorMessage ??
+                                                'Gagal tarik titipan'),
+                                        isError: res != 'ok',
+                                      );
+                                      if (res == 'ok') await reload();
+                                    },
+                                    child: Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                          12, 10, 4, 10),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text('${it.qty}x ${it.productName}',
+                                              style: const TextStyle(
+                                                  fontWeight:
+                                                      FontWeight.w600)),
+                                          const SizedBox(height: 3),
+                                          Row(children: [
+                                            Icon(
+                                                stale
+                                                    ? Icons
+                                                        .warning_amber_rounded
+                                                    : Icons.schedule_rounded,
+                                                size: 12,
+                                                color: stale
+                                                    ? AppColors.warning
+                                                    : AppColors.textTertiary),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                                'dititip ${ageStr(it.updatedAt)} lalu',
+                                                style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: stale
+                                                        ? AppColors.warning
+                                                        : AppColors
+                                                            .textTertiary)),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                                CurrencyHelper.format(
+                                                    it.subtotal),
+                                                style: const TextStyle(
+                                                    fontSize: 11,
+                                                    fontWeight:
+                                                        FontWeight.w700,
+                                                    color: AppColors
+                                                        .moduleKasir)),
+                                          ]),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Void (waste)',
+                                  icon: const Icon(Icons.delete_outline,
+                                      color: AppColors.danger),
+                                  onPressed: () async {
+                                    final auth = await showPinAuthDialog(
+                                      context,
+                                      title: 'Void Titipan',
+                                      actionLabel: 'Void (Waste)',
+                                      icon: Icons.delete_outline,
+                                      details: {
+                                        'Item':
+                                            '${it.qty}x ${it.productName}',
+                                        'Harga': CurrencyHelper.format(
+                                            it.subtotal),
+                                      },
+                                      reasonHint:
+                                          'Contoh: sudah tidak layak, kadaluarsa',
+                                    );
+                                    if (auth == null || !mounted) return;
+                                    final res = await _controller.voidHeldItem(
+                                        itemId: it.id,
+                                        pin: auth.pin,
+                                        reason: auth.reason);
+                                    if (!mounted) return;
+                                    showAppSnack(
+                                        context,
+                                        res == 'ok'
+                                            ? 'Titipan di-void (waste)'
+                                            : res == 'invalid_pin'
+                                                ? 'PIN salah / tidak berwenang'
+                                                : 'Gagal void titipan',
+                                        isError: res != 'ok');
+                                    if (res == 'ok') await reload();
+                                  },
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                ],
+              );
+        },
+      ),
+    );
+  }
+
+  /// Pindahkan satu item ke order aktif di meja lain (Fase 1).
+  Future<void> _showItemMovePicker(OrderItem item) async {
+    final order = _controller.state.currentOrder;
+    if (order == null) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => _MergePicker(
+        getOrders: _controller.getMoveTargets,
+        targetTable: order.tableNumber,
+        title: 'Pindah item ke Meja:',
+        headerIcon: Icons.swap_horiz_rounded,
+        onPick: (dest) async {
+          Navigator.pop(ctx);
+          final res = await _controller.moveItemsToTable(
+            itemIds: [item.id],
+            targetOrderId: dest.id,
+          );
+          if (!mounted) return;
+          showAppSnack(
+            context,
+            res == 'ok'
+                ? 'Item dipindah ke Meja ${dest.tableNumber}'
+                : (_controller.state.errorMessage ?? 'Gagal pindah item'),
+            isError: res != 'ok',
+          );
+        },
+      ),
+    );
+  }
+
   void _showMovePicker() {
     final order = _controller.state.currentOrder;
     if (order == null) return;
     final available = _controller.state.tables
         .where((t) => t.status == 'available')
         .toList();
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.surface,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => SafeArea(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(ctx).size.height * 0.7,
-          ),
-          child: Padding(
+    _centeredModal<void>(
+      builder: (ctx) => Padding(
             padding: const EdgeInsets.all(20),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -2210,8 +2550,6 @@ class _CashierScreenState extends State<CashierScreen> {
               ],
             ),
           ),
-        ),
-      ),
     );
   }
 
@@ -4084,7 +4422,9 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                   final kTot = (r['compliment_total'] as num?)?.toDouble() ?? 0;
                   final vCnt = (r['void_count'] as num?)?.toInt() ?? 0;
                   final vTot = (r['void_total'] as num?)?.toDouble() ?? 0;
-                  if (dCnt == 0 && kCnt == 0 && vCnt == 0) {
+                  final hCnt = (r['held_count'] as num?)?.toInt() ?? 0;
+                  final hTot = (r['held_total'] as num?)?.toDouble() ?? 0;
+                  if (dCnt == 0 && kCnt == 0 && vCnt == 0 && hCnt == 0) {
                     return const SizedBox.shrink();
                   }
                   return Padding(
@@ -4100,7 +4440,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('DISKON / KOMPLIMEN / VOID',
+                          const Text('DISKON / KOMPLIMEN / VOID / TITIPAN',
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w700,
@@ -4120,6 +4460,13 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                           _row('Void ($vCnt)', CurrencyHelper.format(vTot),
                               icon: Icons.block_outlined,
                               iconColor: AppColors.danger),
+                          if (hCnt > 0) ...[
+                            const SizedBox(height: 6),
+                            _row('Titipan blm terjual ($hCnt)',
+                                CurrencyHelper.format(hTot),
+                                icon: Icons.inventory_2_outlined,
+                                iconColor: AppColors.warning),
+                          ],
                         ],
                       ),
                     ),
@@ -4581,7 +4928,9 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                   final kTot = (r['compliment_total'] as num?)?.toDouble() ?? 0;
                   final vCnt = (r['void_count'] as num?)?.toInt() ?? 0;
                   final vTot = (r['void_total'] as num?)?.toDouble() ?? 0;
-                  if (dCnt == 0 && kCnt == 0 && vCnt == 0) {
+                  final hCnt = (r['held_count'] as num?)?.toInt() ?? 0;
+                  final hTot = (r['held_total'] as num?)?.toDouble() ?? 0;
+                  if (dCnt == 0 && kCnt == 0 && vCnt == 0 && hCnt == 0) {
                     return const SizedBox.shrink();
                   }
                   Widget line(
@@ -4614,7 +4963,7 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('DISKON / KOMPLIMEN / VOID',
+                          const Text('DISKON / KOMPLIMEN / VOID / TITIPAN',
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w700,
@@ -4627,6 +4976,9 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                               AppColors.moduleWaiter, 'Kompliment ($kCnt)', kTot),
                           line(Icons.block_outlined, AppColors.danger,
                               'Void ($vCnt)', vTot),
+                          if (hCnt > 0)
+                            line(Icons.inventory_2_outlined, AppColors.warning,
+                                'Titipan blm terjual ($hCnt)', hTot),
                         ],
                       ),
                     ),
@@ -5571,8 +5923,14 @@ class _MergePicker extends StatefulWidget {
   final Future<List<Order>> Function() getOrders;
   final String targetTable;
   final void Function(Order) onPick;
+  final String? title; // null → judul default "Gabung ke Meja X"
+  final IconData headerIcon;
   const _MergePicker(
-      {required this.getOrders, required this.targetTable, required this.onPick});
+      {required this.getOrders,
+      required this.targetTable,
+      required this.onPick,
+      this.title,
+      this.headerIcon = Icons.merge_type});
 
   @override
   State<_MergePicker> createState() => _MergePickerState();
@@ -5604,10 +5962,11 @@ class _MergePickerState extends State<_MergePicker> {
               padding: const EdgeInsets.fromLTRB(20, 18, 12, 8),
               child: Row(
                 children: [
-                  const Icon(Icons.merge_type, color: AppColors.info),
+                  Icon(widget.headerIcon, color: AppColors.info),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Text('Gabung ke Meja ${widget.targetTable}',
+                    child: Text(
+                        widget.title ?? 'Gabung ke Meja ${widget.targetTable}',
                         style: const TextStyle(
                             fontSize: 16, fontWeight: FontWeight.bold)),
                   ),

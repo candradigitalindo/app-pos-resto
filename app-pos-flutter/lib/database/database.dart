@@ -30,7 +30,7 @@ class AppDatabase {
 
     return openDatabase(
       path,
-      version: 8,
+      version: 9,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -91,6 +91,13 @@ class AppDatabase {
       await db.execute(
         'UPDATE outlet_config SET data_retention_days = 90 '
         'WHERE data_retention_days <= 0',
+      );
+    }
+    if (oldVersion < 9) {
+      // Penanda order "Meja Titipan" (parked check) — item yang dititip, bukan
+      // pesanan tamu aktif. Dikecualikan dari view meja/dapur/waiter.
+      await db.execute(
+        'ALTER TABLE orders ADD COLUMN is_holding INTEGER NOT NULL DEFAULT 0',
       );
     }
   }
@@ -268,6 +275,7 @@ class AppDatabase {
         payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK (payment_status IN ('unpaid', 'partial', 'paid')),
         merged_from TEXT,
         is_merged INTEGER NOT NULL DEFAULT 0,
+        is_holding INTEGER NOT NULL DEFAULT 0,
         voided_at DATETIME,
         voided_by TEXT,
         void_reason TEXT,

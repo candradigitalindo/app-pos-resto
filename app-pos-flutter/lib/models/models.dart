@@ -275,6 +275,7 @@ class Order {
   final String paymentStatus; // unpaid, partial, paid
   final String? mergedFrom;
   final int isMerged;
+  final int isHolding; // 1 = order "Meja Titipan" (parked check), bukan tamu aktif
   final DateTime? voidedAt;
   final String? voidedBy;
   final String? voidReason;
@@ -300,6 +301,7 @@ class Order {
     this.paymentStatus = 'unpaid',
     this.mergedFrom,
     this.isMerged = 0,
+    this.isHolding = 0,
     this.voidedAt,
     this.voidedBy,
     this.voidReason,
@@ -331,6 +333,7 @@ class Order {
         'payment_status': paymentStatus,
         'merged_from': mergedFrom,
         'is_merged': isMerged,
+        'is_holding': isHolding,
         'voided_at': voidedAt?.toIso8601String(),
         'voided_by': voidedBy,
         'void_reason': voidReason,
@@ -357,6 +360,7 @@ class Order {
         paymentStatus: map['payment_status'] as String,
         mergedFrom: map['merged_from'] as String?,
         isMerged: map['is_merged'] as int,
+        isHolding: (map['is_holding'] as int?) ?? 0,
         voidedAt: map['voided_at'] != null
             ? DateTime.parse(map['voided_at'] as String)
             : null,

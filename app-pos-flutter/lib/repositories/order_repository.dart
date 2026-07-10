@@ -191,7 +191,7 @@ class OrderRepository {
     final results = await _db.query(
       'orders',
       where:
-          "table_number = ? AND payment_status != 'paid' AND voided_at IS NULL",
+          "table_number = ? AND payment_status != 'paid' AND voided_at IS NULL AND is_holding = 0",
       whereArgs: [tableNumber],
       orderBy: 'created_at DESC',
       limit: 1,
@@ -205,7 +205,7 @@ class OrderRepository {
   Future<Map<String, Order>> getActiveOrdersByTable() async {
     final results = await _db.query(
       'orders',
-      where: "payment_status != 'paid' AND voided_at IS NULL",
+      where: "payment_status != 'paid' AND voided_at IS NULL AND is_holding = 0",
       orderBy: 'created_at DESC',
     );
     final map = <String, Order>{};
@@ -359,6 +359,7 @@ class OrderRepository {
         'pax': order.pax,
         'total_amount': order.totalAmount,
         'status': order.orderStatus,
+        if (order.isHolding == 1) 'is_holding': true, // order Meja Titipan
         'items': items
             .map((it) => {
                   'product_name': it.productName,
@@ -645,6 +646,9 @@ class OrderRepository {
       'paid_amount': paidAmount,
       'change': change,
       'payment_status': 'paid',
+      // Metode bayar terpilih — dipakai struk cetak pertama
+      // (ReceiptData.fromPaymentResult). Tanpa ini struk selalu tercetak 'Tunai'.
+      'payment_method': paymentMethod,
       'payment': payment,
       'transaction': transaction,
     };
@@ -1168,11 +1172,275 @@ class OrderRepository {
     final results = await _db.query(
       'orders',
       where:
-          "payment_status != 'paid' AND voided_at IS NULL AND is_merged = 0 AND table_number != ?",
+          "payment_status != 'paid' AND voided_at IS NULL AND is_merged = 0 AND is_holding = 0 AND table_number != ?",
       whereArgs: [excludeTableNumber],
       orderBy: 'CAST(table_number AS INTEGER) ASC, table_number ASC',
     );
     return results.map((m) => Order.fromMap(m)).toList();
+  }
+
+  /// Pindahkan item terpilih [itemIds] dari order asalnya ke order aktif
+  /// [targetOrderId] (meja lain). Item DIPINDAH (re-parent order_id), sehingga
+  /// status masak & tiket dapur TIDAK diulang. Bila order asal jadi kosong,
+  /// meja asal dibebaskan. Pajak/total kedua order dihitung ulang.
+  Future<void> transferItemsToOrder({
+    required List<String> itemIds,
+    required String targetOrderId,
+    String movedBy = '',
+  }) async {
+    if (itemIds.isEmpty) throw Exception('Tidak ada item dipilih');
+
+    final firstItem = await _getOrderItem(itemIds.first);
+    if (firstItem == null) throw Exception('Item tidak ditemukan');
+    final sourceOrderId = firstItem.orderId;
+    if (sourceOrderId == targetOrderId) {
+      throw Exception('Meja tujuan sama dengan meja asal');
+    }
+    final source = await getOrderById(sourceOrderId);
+    final target = await getOrderById(targetOrderId);
+    if (source == null || target == null) {
+      throw Exception('Order tidak ditemukan');
+    }
+    if (source.isPaid || source.isVoided) {
+      throw Exception('Order asal tidak aktif');
+    }
+    if (target.isPaid || target.isVoided) {
+      throw Exception('Meja tujuan tidak aktif');
+    }
+
+    final db = await _db.database;
+    final now = DateTime.now();
+    final placeholders = List.filled(itemIds.length, '?').join(',');
+
+    var sourceEmpty = false;
+    await db.transaction((txn) async {
+      // Re-parent HANYA item terpilih yang memang milik order asal.
+      await txn.update(
+        'order_items',
+        {'order_id': targetOrderId, 'updated_at': now.toIso8601String()},
+        where: 'id IN ($placeholders) AND order_id = ?',
+        whereArgs: [...itemIds, sourceOrderId],
+      );
+
+      final cntRows = await txn.rawQuery(
+        'SELECT COUNT(*) AS c FROM order_items WHERE order_id = ?',
+        [sourceOrderId],
+      );
+      sourceEmpty = ((cntRows.first['c'] as int?) ?? 0) == 0;
+
+      if (sourceEmpty) {
+        // Order asal kosong → keluarkan dari daftar aktif + bebaskan meja.
+        await txn.update(
+          'orders',
+          {
+            'total_amount': 0,
+            'basket_size': 0,
+            'is_merged': 1,
+            'merged_from': targetOrderId,
+            'payment_status': 'paid',
+            'order_status': 'served',
+            'updated_at': now.toIso8601String(),
+          },
+          where: 'id = ?',
+          whereArgs: [sourceOrderId],
+        );
+        await txn.update('tables',
+            {'status': 'available', 'updated_at': now.toIso8601String()},
+            where: 'table_number = ?', whereArgs: [source.tableNumber]);
+      }
+
+      // Pastikan meja tujuan occupied.
+      await txn.update('tables',
+          {'status': 'occupied', 'updated_at': now.toIso8601String()},
+          where: 'table_number = ?', whereArgs: [target.tableNumber]);
+    });
+
+    // Recalc pajak/total (pertahankan diskon manual). Source hanya bila tak kosong.
+    if (!sourceEmpty) await _reapplyAutoChargesAndRecalc(sourceOrderId);
+    await _reapplyAutoChargesAndRecalc(targetOrderId);
+
+    await _enqueueOrder(sourceOrderId, 'upsert');
+    await _enqueueOrder(targetOrderId, 'upsert');
+  }
+
+  // ==================== MEJA TITIPAN (parked check) ====================
+
+  static const String holdingTableLabel = 'Titipan';
+
+  /// Order "Meja Titipan" yang aktif (is_holding=1, belum bayar). Dibuat bila
+  /// belum ada — order KOSONG (tanpa item → tak memicu cetak dapur). Persisten:
+  /// tetap terbuka walau kosong, dipakai ulang untuk titipan berikutnya.
+  Future<Order> _getOrCreateHoldingOrder() async {
+    final existing = await _db.query(
+      'orders',
+      where: "is_holding = 1 AND payment_status != 'paid' AND voided_at IS NULL",
+      orderBy: 'created_at ASC',
+      limit: 1,
+    );
+    if (existing.isNotEmpty) return Order.fromMap(existing.first);
+
+    final now = DateTime.now();
+    final order = Order(
+      id: Ulid.generate(),
+      tableNumber: holdingTableLabel,
+      pax: 1,
+      basketSize: 0,
+      totalAmount: 0,
+      paidAmount: 0,
+      orderStatus: 'served', // CHECK hanya cooking/ready/served
+      paymentStatus: 'unpaid',
+      isHolding: 1,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final db = await _db.database;
+    await db.insert('orders', order.toMap());
+    return order;
+  }
+
+  /// Titipkan item terpilih ke Meja Titipan (parked check). Otorisasi manajer
+  /// dilakukan di UI. Item DIPINDAH (re-parent) → status masak terjaga, tak
+  /// cetak dapur ulang. Meja asal dibebaskan bila jadi kosong.
+  /// Audit aksi Titipan (park/pull) ke cloud — juga tersimpan lokal di
+  /// sync_queue sampai terkirim. entityType 'order_item_titipan'.
+  Future<void> _enqueueTitipanAudit({
+    required String action, // 'park' (dititip) | 'pull' (ditarik)
+    required OrderItem item,
+    required String sourceTable,
+    required String targetTable,
+    required String by,
+    required DateTime at,
+  }) async {
+    try {
+      await _sync.enqueue(
+        entityType: 'order_item_titipan',
+        entityId: item.id,
+        operation: 'create',
+        payload: {
+          'local_id': item.id,
+          'action': action,
+          'product_name': item.productName,
+          'qty': item.qty,
+          'price': item.price,
+          'subtotal': item.subtotal,
+          'category_id': item.categoryId,
+          'source_table': sourceTable,
+          'target_table': targetTable,
+          'by': by, // authorizer (park) / kasir (pull)
+          'at': _isoUtc(at),
+        },
+      );
+    } catch (e) {
+      debugPrint('enqueueTitipanAudit error: $e');
+    }
+  }
+
+  Future<void> parkItems({
+    required List<String> itemIds,
+    String movedBy = '',
+  }) async {
+    final holding = await _getOrCreateHoldingOrder();
+    // Detail item + meja asal SEBELUM transfer (untuk audit).
+    final details = <({OrderItem item, String src})>[];
+    for (final id in itemIds) {
+      final it = await _getOrderItem(id);
+      if (it == null) continue;
+      final o = await getOrderById(it.orderId);
+      details.add((item: it, src: o?.tableNumber ?? '-'));
+    }
+    await transferItemsToOrder(
+      itemIds: itemIds,
+      targetOrderId: holding.id,
+      movedBy: movedBy,
+    );
+    final now = DateTime.now();
+    for (final d in details) {
+      await _enqueueTitipanAudit(
+        action: 'park',
+        item: d.item,
+        sourceTable: d.src,
+        targetTable: holding.tableNumber,
+        by: movedBy,
+        at: now,
+      );
+    }
+  }
+
+  /// Item yang sedang dititip (di Meja Titipan). Kosong bila belum ada.
+  Future<List<OrderItem>> getHeldItems() async {
+    final existing = await _db.query(
+      'orders',
+      columns: ['id'],
+      where: "is_holding = 1 AND payment_status != 'paid' AND voided_at IS NULL",
+      limit: 1,
+    );
+    if (existing.isEmpty) return [];
+    return getOrderItems(existing.first['id'] as String);
+  }
+
+  /// Tarik item titipan [itemIds] ke order tamu [targetOrderId] — tanpa cetak
+  /// dapur ulang (item sudah dibuat). Order titipan TETAP terbuka walau kosong.
+  Future<void> pullHeldItems({
+    required List<String> itemIds,
+    required String targetOrderId,
+    String movedBy = '',
+  }) async {
+    if (itemIds.isEmpty) throw Exception('Tidak ada item dipilih');
+    final target = await getOrderById(targetOrderId);
+    if (target == null) throw Exception('Order tujuan tidak ditemukan');
+    if (target.isPaid || target.isVoided) {
+      throw Exception('Order tujuan tidak aktif');
+    }
+    final holdingRows = await _db.query(
+      'orders',
+      columns: ['id'],
+      where: "is_holding = 1 AND payment_status != 'paid' AND voided_at IS NULL",
+      limit: 1,
+    );
+    if (holdingRows.isEmpty) throw Exception('Tidak ada titipan');
+    final holdingId = holdingRows.first['id'] as String;
+
+    // Detail item SEBELUM re-parent (untuk audit tarik).
+    final details = <OrderItem>[];
+    for (final id in itemIds) {
+      final it = await _getOrderItem(id);
+      if (it != null) details.add(it);
+    }
+
+    final db = await _db.database;
+    final now = DateTime.now();
+    final ph = List.filled(itemIds.length, '?').join(',');
+    await db.transaction((txn) async {
+      // Re-parent HANYA item yang benar dari order titipan.
+      await txn.update(
+        'order_items',
+        {'order_id': targetOrderId, 'updated_at': now.toIso8601String()},
+        where: 'id IN ($ph) AND order_id = ?',
+        whereArgs: [...itemIds, holdingId],
+      );
+      // Pastikan meja tujuan occupied.
+      await txn.update('tables',
+          {'status': 'occupied', 'updated_at': now.toIso8601String()},
+          where: 'table_number = ?', whereArgs: [target.tableNumber]);
+    });
+
+    // Recalc: order titipan (tetap terbuka) + order tujuan.
+    await _reapplyAutoChargesAndRecalc(holdingId);
+    await _reapplyAutoChargesAndRecalc(targetOrderId);
+    await _enqueueOrder(holdingId, 'upsert');
+    await _enqueueOrder(targetOrderId, 'upsert');
+
+    // Audit tarik titipan (siapa & item apa) ke cloud.
+    for (final it in details) {
+      await _enqueueTitipanAudit(
+        action: 'pull',
+        item: it,
+        sourceTable: holdingTableLabel,
+        targetTable: target.tableNumber,
+        by: movedBy,
+        at: now,
+      );
+    }
   }
 
   // ==================== ACTIVE ORDERS WITH ITEMS (optimized) ====================
@@ -1182,7 +1450,7 @@ class OrderRepository {
   Future<Map<Order, List<OrderItem>>> getActiveOrdersWithItems() async {
     final orders = await _db.query(
       'orders',
-      where: "payment_status != 'paid' AND voided_at IS NULL",
+      where: "payment_status != 'paid' AND voided_at IS NULL AND is_holding = 0",
       orderBy: 'created_at ASC',
     );
     if (orders.isEmpty) return {};

@@ -45,6 +45,7 @@ class PrinterDevice {
   final Set<String> roles; // peran khusus: checker / cashier
   final Set<String> categoryIds; // kategori menu yang dicetak printer ini
   final int paperCols; // lebar kertas dalam kolom: 32 (58mm) / 48 (80mm)
+  final int copies; // rangkap cetak struk: 1 = sekali, 2 = + salinan "COPY"
 
   const PrinterDevice({
     required this.name,
@@ -53,6 +54,7 @@ class PrinterDevice {
     this.roles = const {},
     this.categoryIds = const {},
     this.paperCols = 48,
+    this.copies = 1,
   });
 
   bool hasRole(String role) => roles.contains(role);
@@ -72,7 +74,10 @@ class PrinterDevice {
   }
 
   PrinterDevice copyWith(
-          {Set<String>? roles, Set<String>? categoryIds, int? paperCols}) =>
+          {Set<String>? roles,
+          Set<String>? categoryIds,
+          int? paperCols,
+          int? copies}) =>
       PrinterDevice(
         name: name,
         address: address,
@@ -80,6 +85,7 @@ class PrinterDevice {
         roles: roles ?? this.roles,
         categoryIds: categoryIds ?? this.categoryIds,
         paperCols: paperCols ?? this.paperCols,
+        copies: copies ?? this.copies,
       );
 
   /// Aktif/nonaktifkan satu peran khusus, kembalikan instance baru.
@@ -103,6 +109,7 @@ class PrinterDevice {
         'roles': roles.toList(),
         'category_ids': categoryIds.toList(),
         'paper_cols': paperCols,
+        'copies': copies,
       };
 
   factory PrinterDevice.fromMap(Map<String, dynamic> m) => PrinterDevice(
@@ -115,6 +122,7 @@ class PrinterDevice {
         roles: _parseSet(m['roles'] ?? m['role']),
         categoryIds: _parseSet(m['category_ids']),
         paperCols: (m['paper_cols'] as num?)?.toInt() ?? 48,
+        copies: (m['copies'] as num?)?.toInt() ?? 1,
       );
 
   /// Toleran: terima List, String "a,b", atau tunggal — buang 'none'/kosong.

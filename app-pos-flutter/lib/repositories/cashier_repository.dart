@@ -360,6 +360,17 @@ class CashierRepository {
     final voidCount = (voidRows.first['cnt'] as num?)?.toInt() ?? 0;
     final voidTotal = (voidRows.first['total'] as num?)?.toDouble() ?? 0;
 
+    // Titipan: item yang SEDANG di Meja Titipan (snapshot saat tutup — kontrol).
+    // Bukan jendela waktu; menunjukkan barang menggantung yang belum terjual.
+    final heldRows = await db.rawQuery('''
+      SELECT COUNT(*) AS cnt, COALESCE(SUM(oi.qty * oi.price), 0) AS total
+      FROM order_items oi
+      JOIN orders o ON o.id = oi.order_id
+      WHERE o.is_holding = 1 AND o.payment_status != 'paid' AND o.voided_at IS NULL
+    ''');
+    final heldCount = (heldRows.first['cnt'] as num?)?.toInt() ?? 0;
+    final heldTotal = (heldRows.first['total'] as num?)?.toDouble() ?? 0;
+
     return {
       'shift_id': shiftId,
       'opening_cash': shift.openingCash,
@@ -379,6 +390,8 @@ class CashierRepository {
       'compliment_total': complimentTotal,
       'void_count': voidCount,
       'void_total': voidTotal,
+      'held_count': heldCount, // item di Meja Titipan (belum terjual)
+      'held_total': heldTotal,
     };
   }
 

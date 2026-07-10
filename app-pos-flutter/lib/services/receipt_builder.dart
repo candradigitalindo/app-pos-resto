@@ -168,9 +168,12 @@ class ReceiptBuilder {
   // ── Public API ──────────────────────────────────────────────────────────────
 
   /// Build ESC/POS bytes for a full receipt (after payment).
-  Uint8List buildReceipt(ReceiptData data) {
+  /// [isCopy] = true untuk rangkap ke-2 → diberi tanda "COPY / SALINAN" di
+  /// bawah header agar mudah dibedakan dari struk asli.
+  Uint8List buildReceipt(ReceiptData data, {bool isCopy = false}) {
     final buf = <int>[];
     _addHeader(buf, data);
+    if (isCopy) _addCopyBanner(buf);
     _addDivider(buf);
     _addOrderInfo(buf, data);
     _addDivider(buf);
@@ -182,6 +185,15 @@ class ReceiptBuilder {
     _addFooter(buf, data);
     buf.addAll(_Esc.cutPartial());
     return Uint8List.fromList(buf);
+  }
+
+  /// Penanda salinan (rangkap ke-2), dicetak tebal & di tengah.
+  void _addCopyBanner(List<int> buf) {
+    buf.addAll(_Esc.centerAlign());
+    buf.addAll(_Esc.boldOn());
+    buf.addAll(_Esc.line('*** COPY / SALINAN ***'));
+    buf.addAll(_Esc.boldOff());
+    buf.addAll(_Esc.leftAlign());
   }
 
   /// Laporan TUTUP KASIR / GANTI SHIFT untuk printer kasir.
@@ -254,9 +266,14 @@ class ReceiptBuilder {
         (report['compliment_total'] as num?)?.toDouble() ?? 0;
     final voidCount = (report['void_count'] as num?)?.toInt() ?? 0;
     final voidTotal = (report['void_total'] as num?)?.toDouble() ?? 0;
-    if (discountCount > 0 || complimentCount > 0 || voidCount > 0) {
+    final heldCount = (report['held_count'] as num?)?.toInt() ?? 0;
+    final heldTotal = (report['held_total'] as num?)?.toDouble() ?? 0;
+    if (discountCount > 0 ||
+        complimentCount > 0 ||
+        voidCount > 0 ||
+        heldCount > 0) {
       buf.addAll(_Esc.boldOn());
-      buf.addAll(_Esc.line('DISKON / KOMPLIMEN / VOID'));
+      buf.addAll(_Esc.line('DISKON / KOMPLIMEN / VOID / TITIPAN'));
       buf.addAll(_Esc.boldOff());
       buf.addAll(_Esc.line(_rightAlign(
           'Diskon ($discountCount)', _formatAmount(discountTotal))));
@@ -264,6 +281,10 @@ class ReceiptBuilder {
           'Kompliment ($complimentCount)', _formatAmount(complimentTotal))));
       buf.addAll(_Esc
           .line(_rightAlign('Void ($voidCount)', _formatAmount(voidTotal))));
+      if (heldCount > 0) {
+        buf.addAll(_Esc.line(_rightAlign(
+            'Titipan blm terjual ($heldCount)', _formatAmount(heldTotal))));
+      }
       buf.addAll(_Esc.line(_divider()));
     }
 

@@ -254,10 +254,16 @@ class TransactionsController extends ChangeNotifier {
           ? cps.first
           : saved.firstWhere((p) => !p.hasRole(PrinterRole.checker),
               orElse: () => saved.first);
-      final bytes =
-          ReceiptBuilder(paperWidth: printer.paperCols).buildReceipt(data);
+      final builder = ReceiptBuilder(paperWidth: printer.paperCols);
+      final label = 'Struk Bayar Meja ${order.tableNumber}';
       await PrintQueueService.instance.enqueueForPrinter(printer,
-          bytes: bytes, label: 'Struk Bayar Meja ${order.tableNumber}');
+          bytes: builder.buildReceipt(data), label: label);
+      // Rangkap: salinan ke-2..N ditandai "COPY".
+      for (var c = 2; c <= printer.copies; c++) {
+        await PrintQueueService.instance.enqueueForPrinter(printer,
+            bytes: builder.buildReceipt(data, isCopy: true),
+            label: '$label (Copy)');
+      }
     } catch (e) {
       debugPrint('Cetak struk (transaksi) error: $e');
     }
