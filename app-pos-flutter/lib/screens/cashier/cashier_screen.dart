@@ -31,6 +31,10 @@ class _CashierScreenState extends State<CashierScreen> {
       ValueNotifier(null);
   Timer? _syncTimer;
 
+  // Aksi sekunder keranjang (Diskon/Split/Pindah/dll) disembunyikan default agar
+  // tak menutup daftar item di layar kecil; dibuka via toggle "Aksi Lainnya".
+  bool _showMoreActions = false;
+
   @override
   void initState() {
     super.initState();
@@ -1958,7 +1962,7 @@ class _CashierScreenState extends State<CashierScreen> {
                 onTap: _showPaymentDialog,
               ),
               const SizedBox(height: 8),
-              _buildSecondaryActions(state.isProcessing),
+              _buildCollapsibleActions(state.isProcessing),
             ] else if (state.currentOrder != null &&
                 !state.currentOrder!.isPaid) ...[
               _buildActionButton(
@@ -1967,7 +1971,7 @@ class _CashierScreenState extends State<CashierScreen> {
                 onTap: _showPaymentDialog,
               ),
               const SizedBox(height: 8),
-              _buildSecondaryActions(state.isProcessing),
+              _buildCollapsibleActions(state.isProcessing),
             ] else if (state.currentOrder == null && state.cart.isNotEmpty)
               _buildActionButton(
                 label: 'BUAT ORDER',
@@ -2014,6 +2018,49 @@ class _CashierScreenState extends State<CashierScreen> {
       onPressed: onTap,
       accent: AppColors.moduleKasir,
       size: AppButtonSize.medium,
+    );
+  }
+
+  /// Toggle "Aksi Lainnya": sembunyikan/tampilkan aksi sekunder agar daftar
+  /// item tak tertutup di layar kecil. TAMBAH & BAYAR tetap selalu terlihat.
+  Widget _buildCollapsibleActions(bool isLoading) {
+    return Column(
+      children: [
+        Material(
+          color: AppColors.soft(AppColors.accent, 0.10),
+          borderRadius: AppRadius.rMd,
+          child: InkWell(
+            borderRadius: AppRadius.rMd,
+            onTap: () =>
+                setState(() => _showMoreActions = !_showMoreActions),
+            child: Container(
+              height: 44,
+              alignment: Alignment.center,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                      _showMoreActions
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      size: 20,
+                      color: AppColors.accentDark),
+                  const SizedBox(width: 6),
+                  Text(_showMoreActions ? 'Sembunyikan aksi' : 'Aksi Lainnya',
+                      style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.accentDark)),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (_showMoreActions) ...[
+          const SizedBox(height: 8),
+          _buildSecondaryActions(isLoading),
+        ],
+      ],
     );
   }
 

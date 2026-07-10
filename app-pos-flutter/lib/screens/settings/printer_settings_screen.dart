@@ -640,14 +640,18 @@ class _PrinterTile extends StatelessWidget {
       );
     }
 
-    return Row(
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 6,
+      runSpacing: 6,
       children: [
-        const Icon(Icons.straighten_rounded, size: 14, color: AppColors.moduleKasir),
-        const SizedBox(width: 5),
-        Text('Lebar kertas:', style: AppType.label),
-        const SizedBox(width: AppSpacing.xs),
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.straighten_rounded,
+              size: 14, color: AppColors.moduleKasir),
+          const SizedBox(width: 5),
+          Text('Lebar kertas:', style: AppType.label),
+        ]),
         chip('58mm', 32),
-        const SizedBox(width: 6),
         chip('80mm', 48),
       ],
     );
@@ -677,15 +681,19 @@ class _PrinterTile extends StatelessWidget {
       );
     }
 
-    return Row(
+    // Wrap agar chip tak terpotong keluar kartu saat sempit (bisa di-tap).
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 6,
+      runSpacing: 6,
       children: [
-        const Icon(Icons.content_copy_rounded,
-            size: 14, color: AppColors.moduleKasir),
-        const SizedBox(width: 5),
-        Text('Rangkap struk:', style: AppType.label),
-        const SizedBox(width: AppSpacing.xs),
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.content_copy_rounded,
+              size: 14, color: AppColors.moduleKasir),
+          const SizedBox(width: 5),
+          Text('Rangkap struk:', style: AppType.label),
+        ]),
         chip('1×', 1),
-        const SizedBox(width: 6),
         chip('2× (Copy)', 2),
       ],
     );
