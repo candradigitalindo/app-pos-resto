@@ -50,6 +50,10 @@ class LocalApiServer {
       ..get('/api/orders/<id>', _getOrder)
       ..post('/api/orders', _createOrder)
       ..post('/api/orders/<id>/items', _addItems)
+      // Operasi item terkirim dari station: void / titip / pindah (per-unit)
+      ..post('/api/order-items/<itemId>/void', _voidItem)
+      ..post('/api/order-items/<itemId>/park', _parkItem)
+      ..post('/api/order-items/<itemId>/move', _moveItem)
       // ── Kasir station (klien tipis): operasi kasir di DB perangkat utama ──
       ..get('/api/orders/<id>/full', _getOrderFull)
       ..post('/api/orders/<id>/pay', _payOrder)
@@ -319,6 +323,79 @@ class LocalApiServer {
 
       final order = await _orderRepo.getOrderById(id);
       if (order != null) broadcast('order_items_added', order.toMap());
+      return _ok({'success': true});
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  // ── POST /api/order-items/<itemId>/void {qty?, voided_by, reason} ──────────
+  // Void item terkirim (per-unit). Otorisasi manajer diverifikasi di station
+  // via /api/auth sebelum memanggil ini.
+  Future<Response> _voidItem(Request req, String itemId) async {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _badRequest('Body JSON tidak valid');
+    }
+    try {
+      await _orderRepo.voidOrderItem(
+        itemId: itemId,
+        voidedBy: body['voided_by'] as String? ?? '',
+        reason: body['reason'] as String? ?? 'Void (station)',
+        qty: _asInt(body['qty']),
+      );
+      broadcast('order_items_added', {'item_id': itemId});
+      return _ok({'success': true});
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  // ── POST /api/order-items/<itemId>/park {qty?, by} ────────────────────────
+  // Titipkan item ke Meja Titipan (per-unit).
+  Future<Response> _parkItem(Request req, String itemId) async {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _badRequest('Body JSON tidak valid');
+    }
+    try {
+      await _orderRepo.parkItem(
+        itemId: itemId,
+        qty: _asInt(body['qty']),
+        movedBy: body['by'] as String? ?? '',
+      );
+      broadcast('order_items_added', {'item_id': itemId});
+      return _ok({'success': true});
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  // ── POST /api/order-items/<itemId>/move {qty?, target_order_id, by} ────────
+  // Pindahkan item ke order aktif meja lain (per-unit).
+  Future<Response> _moveItem(Request req, String itemId) async {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _badRequest('Body JSON tidak valid');
+    }
+    final targetOrderId = (body['target_order_id'] as String?)?.trim();
+    if (targetOrderId == null || targetOrderId.isEmpty) {
+      return _badRequest('target_order_id wajib diisi');
+    }
+    try {
+      await _orderRepo.transferItemQty(
+        itemId: itemId,
+        qty: _asInt(body['qty']),
+        targetOrderId: targetOrderId,
+        movedBy: body['by'] as String? ?? '',
+      );
+      broadcast('order_items_added', {'item_id': itemId});
       return _ok({'success': true});
     } catch (e) {
       return _serverError('$e');

@@ -331,6 +331,41 @@ class StationApiClient {
     });
   }
 
+  /// Void item terkirim (per-unit). [qty] null → seluruh baris.
+  Future<void> voidItem(String itemId,
+      {int? qty, required String voidedBy, String reason = ''}) async {
+    return _withRetry(() async {
+      await _dio.post('$_base/api/order-items/$itemId/void', data: {
+        if (qty != null) 'qty': qty,
+        'voided_by': voidedBy,
+        'reason': reason,
+      });
+    });
+  }
+
+  /// Titipkan item ke Meja Titipan (per-unit).
+  Future<void> parkItem(String itemId,
+      {int? qty, required String by}) async {
+    return _withRetry(() async {
+      await _dio.post('$_base/api/order-items/$itemId/park', data: {
+        if (qty != null) 'qty': qty,
+        'by': by,
+      });
+    });
+  }
+
+  /// Pindahkan item ke order aktif meja lain (per-unit).
+  Future<void> moveItem(String itemId,
+      {int? qty, required String targetOrderId, required String by}) async {
+    return _withRetry(() async {
+      await _dio.post('$_base/api/order-items/$itemId/move', data: {
+        if (qty != null) 'qty': qty,
+        'target_order_id': targetOrderId,
+        'by': by,
+      });
+    });
+  }
+
   // ── Kasir station (operasi kasir di Main POS) ─────────────────────────────────
 
   Map<String, dynamic> _data(dynamic resp) {

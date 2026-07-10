@@ -138,6 +138,69 @@ class StationController extends ChangeNotifier {
     }
   }
 
+  // ── Operasi item terkirim (void / titip / pindah) via Main POS ──────────────
+
+  /// Order aktif di meja LAIN (untuk target pindah item).
+  Future<List<Map<String, dynamic>>> activeOrdersExcept(String orderId) async {
+    final all = await _api.getActiveOrders();
+    return all.where((o) => o['id'] != orderId).toList();
+  }
+
+  Future<bool> voidDetailItem(
+      {required String itemId,
+      int? qty,
+      required String by,
+      String reason = ''}) {
+    return _itemOp(
+        () => _api.voidItem(itemId, qty: qty, voidedBy: by, reason: reason));
+  }
+
+  Future<bool> parkDetailItem(
+      {required String itemId, int? qty, required String by}) {
+    return _itemOp(() => _api.parkItem(itemId, qty: qty, by: by));
+  }
+
+  Future<bool> moveDetailItem(
+      {required String itemId,
+      int? qty,
+      required String targetOrderId,
+      required String by}) {
+    return _itemOp(() =>
+        _api.moveItem(itemId, qty: qty, targetOrderId: targetOrderId, by: by));
+  }
+
+  Future<bool> _itemOp(Future<void> Function() op) async {
+    try {
+      await op();
+      await _refreshDetail();
+      return true;
+    } catch (e) {
+      errorMessage = 'Gagal: ${e.toString().replaceFirst('Exception: ', '')}';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Muat ulang detail order + daftar meja. Bila order habis (semua item
+  /// pindah/void), kembali ke daftar meja.
+  Future<void> _refreshDetail() async {
+    final o = currentOrder;
+    if (o != null) {
+      try {
+        final fresh = await _api.getOrder(o['id'] as String);
+        final items = fresh?['items'];
+        if (fresh == null || (items is List && items.isEmpty)) {
+          currentOrder = null;
+          viewMode = 'tables';
+        } else {
+          currentOrder = fresh;
+        }
+      } catch (_) {}
+    }
+    await loadTables();
+    notifyListeners();
+  }
+
   Future<void> loadProducts() async {
     isLoading = true;
     notifyListeners();

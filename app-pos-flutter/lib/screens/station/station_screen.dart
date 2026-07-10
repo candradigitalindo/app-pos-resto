@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../app.dart';
 import '../../controllers/station_controller.dart';
+import '../../services/auth_service.dart';
 import '../../services/device_role_service.dart';
 import '../../services/station_api_client.dart';
 import '../../theme/theme.dart';
@@ -879,6 +880,12 @@ class _StationScreenState extends State<StationScreen> {
                           const SizedBox(width: AppSpacing.xs),
                           StatusPill(label: status, color: _statusColor(status)),
                         ],
+                        IconButton(
+                          icon: const Icon(Icons.more_vert, size: 20),
+                          color: AppColors.textTertiary,
+                          tooltip: 'Aksi item',
+                          onPressed: () => _showDetailItemActions(m),
+                        ),
                       ],
                     ),
                   ),
@@ -904,6 +911,204 @@ class _StationScreenState extends State<StationScreen> {
         ),
       ],
     );
+  }
+
+  // ── Aksi item terkirim: Pindah / Titip / Void (per-unit) ────────────────────
+
+  /// Tanya jumlah unit (1..[maxQty]). null = batal. maxQty ≤ 1 → 1 tanpa dialog.
+  Future<int?> _askUnitQty(int maxQty, {String title = 'Berapa unit?'}) async {
+    if (maxQty <= 1) return 1;
+    int qty = maxQty;
+    return showDialog<int>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          title: Text(title, style: const TextStyle(fontSize: 16)),
+          content: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                iconSize: 36,
+                color: _accent,
+                icon: const Icon(Icons.remove_circle_outline),
+                onPressed: qty > 1 ? () => setD(() => qty--) : null,
+              ),
+              SizedBox(
+                width: 64,
+                child: Text('$qty',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontSize: 30, fontWeight: FontWeight.bold)),
+              ),
+              IconButton(
+                iconSize: 36,
+                color: _accent,
+                icon: const Icon(Icons.add_circle_outline),
+                onPressed: qty < maxQty ? () => setD(() => qty++) : null,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Batal')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, qty),
+                child: Text('Pilih $qty dari $maxQty')),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Otorisasi manajer: PIN → verifikasi ke Main POS → cek role. Return nama
+  /// authorizer, atau null bila batal/gagal/tak berwenang.
+  Future<String?> _managerAuth() async {
+    final ctrl = TextEditingController();
+    final pin = await showAppModal<String>(
+      context,
+      title: 'Otorisasi Manajer',
+      subtitle: 'Masukkan PIN Manager / SVP / Admin',
+      icon: Icons.lock_outline,
+      accent: _accent,
+      scrollable: false,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: ctrl,
+            autofocus: true,
+            obscureText: true,
+            keyboardType: TextInputType.number,
+            maxLength: 6,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+            decoration: const InputDecoration(
+                hintText: 'PIN', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          AppButton(
+            label: 'Verifikasi',
+            accent: _accent,
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+          ),
+        ],
+      ),
+    );
+    if (pin == null || pin.isEmpty || !mounted) return null;
+    final user = await _controller.authPin(pin);
+    if (!mounted) return null;
+    if (user == null) {
+      showAppSnack(context, 'PIN salah', isError: true);
+      return null;
+    }
+    final role = (user['role'] as String?) ?? '';
+    if (!AuthService.voidAuthorizedRoles.contains(role)) {
+      showAppSnack(context, 'Tidak berwenang (butuh Manager/SVP/Admin)',
+          isError: true);
+      return null;
+    }
+    return user['full_name'] as String? ?? 'Manager';
+  }
+
+  Future<void> _showDetailItemActions(Map m) async {
+    final itemId = m['id'] as String?;
+    if (itemId == null) return;
+    final maxQty = (m['qty'] as num?)?.toInt() ?? 1;
+    final name = m['product_name'] as String? ?? '';
+    final choice = await showAppModal<String>(
+      context,
+      title: '${maxQty}x $name',
+      icon: Icons.more_horiz_rounded,
+      accent: _accent,
+      scrollable: false,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.swap_horiz_rounded, color: _accent),
+            title: const Text('Pindah ke meja lain'),
+            subtitle: const Text('Tanpa cetak dapur ulang'),
+            onTap: () => Navigator.pop(ctx, 'move'),
+          ),
+          ListTile(
+            leading:
+                const Icon(Icons.inventory_2_outlined, color: AppColors.accent),
+            title: const Text('Titip ke Meja Titipan'),
+            subtitle: const Text('Perlu PIN manajer'),
+            onTap: () => Navigator.pop(ctx, 'titip'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete_outline, color: AppColors.danger),
+            title: const Text('Void item'),
+            subtitle: const Text('Perlu PIN manajer'),
+            onTap: () => Navigator.pop(ctx, 'void'),
+          ),
+        ],
+      ),
+    );
+    if (choice == null || !mounted) return;
+
+    final n = await _askUnitQty(maxQty, title: 'Berapa unit?');
+    if (n == null || !mounted) return;
+
+    if (choice == 'void') {
+      final by = await _managerAuth();
+      if (by == null || !mounted) return;
+      final ok = await _controller.voidDetailItem(itemId: itemId, qty: n, by: by);
+      _snackResult(ok, 'Item di-void');
+    } else if (choice == 'titip') {
+      final by = await _managerAuth();
+      if (by == null || !mounted) return;
+      final ok = await _controller.parkDetailItem(itemId: itemId, qty: n, by: by);
+      _snackResult(ok, 'Item dititip ke Meja Titipan');
+    } else if (choice == 'move') {
+      final target = await _moveTargetPicker();
+      if (target == null || !mounted) return;
+      final ok = await _controller.moveDetailItem(
+          itemId: itemId, qty: n, targetOrderId: target, by: 'Station');
+      _snackResult(ok, 'Item dipindah');
+    }
+  }
+
+  /// Picker order aktif meja lain untuk tujuan pindah item.
+  Future<String?> _moveTargetPicker() async {
+    final orderId = _controller.currentOrder?['id'] as String?;
+    if (orderId == null) return null;
+    final orders = await _controller.activeOrdersExcept(orderId);
+    if (!mounted) return null;
+    if (orders.isEmpty) {
+      showAppSnack(context, 'Tidak ada meja lain dengan order aktif',
+          isError: true);
+      return null;
+    }
+    return showAppModal<String>(
+      context,
+      title: 'Pindah ke meja:',
+      icon: Icons.swap_horiz_rounded,
+      accent: _accent,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: orders
+            .map((o) => ListTile(
+                  leading: const Icon(Icons.table_restaurant_rounded),
+                  title: Text('Meja ${o['table_number']}'),
+                  subtitle: Text(CurrencyHelper.format(
+                      (o['total_amount'] as num?)?.toDouble() ?? 0)),
+                  onTap: () => Navigator.pop(ctx, o['id'] as String),
+                ))
+            .toList(),
+      ),
+    );
+  }
+
+  void _snackResult(bool ok, String okMsg) {
+    if (!mounted) return;
+    showAppSnack(context, ok ? okMsg : (_controller.errorMessage ?? 'Gagal'),
+        isError: !ok);
   }
 
   Color _statusColor(String status) {
