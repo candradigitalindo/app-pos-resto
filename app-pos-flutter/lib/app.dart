@@ -140,6 +140,13 @@ class _RootGateState extends State<RootGate> {
     });
   }
 
+  /// Kembali ke halaman pemilihan peran (mis. Station salah pilih / pindah
+  /// perangkat). Peran dibersihkan lalu RootGate memuat ulang → RoleSelector.
+  Future<void> _resetRole() async {
+    await DeviceRoleService.instance.clear();
+    await _load();
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -151,7 +158,7 @@ class _RootGateState extends State<RootGate> {
       return RoleSelectorScreen(onSelected: _load);
     }
     if (_role == DeviceRole.station) {
-      return const StationGate();
+      return StationGate(onExitRole: _resetRole);
     }
     return const AuthWrapper();
   }
@@ -160,7 +167,9 @@ class _RootGateState extends State<RootGate> {
 /// Gerbang mode Station: kalau sudah ada Main POS tersimpan & hidup → langsung
 /// ordering; kalau belum → layar setup koneksi.
 class StationGate extends StatefulWidget {
-  const StationGate({super.key});
+  /// Kembali ke pemilihan peran perangkat (dipicu dari setup/login station).
+  final VoidCallback onExitRole;
+  const StationGate({super.key, required this.onExitRole});
 
   @override
   State<StationGate> createState() => _StationGateState();
@@ -204,11 +213,14 @@ class _StationGateState extends State<StationGate> {
     if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    if (!_connected) return const StationSetupScreen();
+    if (!_connected) {
+      return StationSetupScreen(onBackToRole: widget.onExitRole);
+    }
     // Belum login → minta PIN; peran menentukan tampilan berikutnya.
     if (_user == null) {
       return StationLoginScreen(
         onLoggedIn: (u) => setState(() => _user = u),
+        onBackToRole: widget.onExitRole,
       );
     }
     final role = (_user!['role'] as String? ?? 'waiter').toLowerCase();

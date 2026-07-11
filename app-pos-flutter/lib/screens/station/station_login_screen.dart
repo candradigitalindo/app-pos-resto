@@ -2,13 +2,21 @@ import 'package:flutter/material.dart';
 
 import '../../services/station_api_client.dart';
 import '../../theme/theme.dart';
+import '../../widgets/ui/ui.dart';
 
 /// Login PIN di perangkat Station. Memverifikasi ke Main POS lalu menyerahkan
 /// data user {id, full_name, username, role} ke [onLoggedIn]. Role menentukan
 /// tampilan berikutnya (kasir vs waiter).
 class StationLoginScreen extends StatefulWidget {
   final void Function(Map<String, dynamic> user) onLoggedIn;
-  const StationLoginScreen({super.key, required this.onLoggedIn});
+
+  /// Kembali ke halaman pemilihan peran perangkat (opsional).
+  final VoidCallback? onBackToRole;
+  const StationLoginScreen({
+    super.key,
+    required this.onLoggedIn,
+    this.onBackToRole,
+  });
 
   @override
   State<StationLoginScreen> createState() => _StationLoginScreenState();
@@ -64,6 +72,19 @@ class _StationLoginScreenState extends State<StationLoginScreen> {
     }
   }
 
+  /// Konfirmasi lalu kembali ke halaman pemilihan peran perangkat.
+  Future<void> _confirmBackToRole() async {
+    final ok = await showAppConfirm(
+      context,
+      title: 'Ganti peran perangkat?',
+      message: 'Perangkat akan kembali ke halaman pemilihan peran '
+          '(Kasir Utama / Station). Koneksi ke Main POS saat ini dilepas.',
+      confirmText: 'Ganti Peran',
+      icon: Icons.swap_horiz_rounded,
+    );
+    if (ok) widget.onBackToRole?.call();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -86,6 +107,17 @@ class _StationLoginScreenState extends State<StationLoginScreen> {
                   _buildBranding(context),
                   const SizedBox(height: AppSpacing.xl),
                   _buildLoginCard(),
+                  if (widget.onBackToRole != null) ...[
+                    const SizedBox(height: AppSpacing.lg),
+                    TextButton.icon(
+                      onPressed: _busy ? null : _confirmBackToRole,
+                      icon: const Icon(Icons.swap_horiz_rounded, size: 18),
+                      label: const Text('Ganti peran perangkat'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.soft(Colors.white, 0.7),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

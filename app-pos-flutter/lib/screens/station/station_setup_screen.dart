@@ -7,7 +7,9 @@ import 'station_screen.dart';
 
 /// Layar setup mode Station: temukan Main POS di jaringan lalu hubungkan.
 class StationSetupScreen extends StatefulWidget {
-  const StationSetupScreen({super.key});
+  /// Kembali ke halaman pemilihan peran perangkat (opsional).
+  final VoidCallback? onBackToRole;
+  const StationSetupScreen({super.key, this.onBackToRole});
 
   @override
   State<StationSetupScreen> createState() => _StationSetupScreenState();
@@ -158,9 +160,33 @@ class _StationSetupScreenState extends State<StationSetupScreen> {
               ],
             ),
           ),
+          if (widget.onBackToRole != null) ...[
+            const SizedBox(width: AppSpacing.sm),
+            AppIconButton(
+              icon: Icons.swap_horiz_rounded,
+              onPressed: _confirmBackToRole,
+              color: Colors.white,
+              filled: true,
+              size: 44,
+              tooltip: 'Ganti peran perangkat',
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  /// Konfirmasi lalu kembali ke halaman pemilihan peran perangkat.
+  Future<void> _confirmBackToRole() async {
+    final ok = await showAppConfirm(
+      context,
+      title: 'Ganti peran perangkat?',
+      message: 'Perangkat akan kembali ke halaman pemilihan peran '
+          '(Kasir Utama / Station). Koneksi ke Main POS saat ini dilepas.',
+      confirmText: 'Ganti Peran',
+      icon: Icons.swap_horiz_rounded,
+    );
+    if (ok) widget.onBackToRole?.call();
   }
 
   Widget _buildControls() {
