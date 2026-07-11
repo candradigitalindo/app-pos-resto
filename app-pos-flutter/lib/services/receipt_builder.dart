@@ -536,11 +536,9 @@ class ReceiptBuilder {
     bool isAdditional = false,
     String? customerName,
     int pax = 0,
-    bool isCopy = false,
   }) {
     final buf = <int>[];
     buf.addAll(_Esc.init());
-    if (isCopy) _addCopyBanner(buf); // rangkap ke-2+ ditandai COPY
     buf.addAll(_Esc.centerAlign());
     buf.addAll(_Esc.boldOn());
     buf.addAll(_Esc.line('CHECKER'));

@@ -1701,22 +1701,23 @@ class OrderRepository {
       for (final p in printers) {
         final builder = ReceiptBuilder(paperWidth: p.paperCols);
         if (p.hasRole(PrinterRole.checker)) {
-          // Checker: salinan seluruh pesanan (semua item).
-          await enqueueCopies(
+          // Checker: tiket ekspeditor, SELALU 1 lembar (tak ikut rangkap —
+          // fungsinya merakit pesanan, bukan tiket kerja per-stasiun).
+          final bytes = builder.buildCheckerOrder(
+            orderId: order.id,
+            tableNumber: order.tableNumber,
+            waiterName: waiterName,
+            items: items,
+            dateTime: now,
+            categoryNames: categoryNames,
+            isAdditional: isAdditional,
+            customerName: order.customerName,
+            pax: order.pax,
+          );
+          await PrintQueueService.instance.enqueueForPrinter(
             p,
-            (isCopy) => builder.buildCheckerOrder(
-              orderId: order.id,
-              tableNumber: order.tableNumber,
-              waiterName: waiterName,
-              items: items,
-              dateTime: now,
-              categoryNames: categoryNames,
-              isAdditional: isAdditional,
-              customerName: order.customerName,
-              pax: order.pax,
-              isCopy: isCopy,
-            ),
-            'Meja ${order.tableNumber} (CHECKER)',
+            bytes: bytes,
+            label: 'Meja ${order.tableNumber} (CHECKER)',
           );
           continue;
         }
