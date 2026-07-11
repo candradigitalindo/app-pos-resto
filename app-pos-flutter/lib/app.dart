@@ -183,7 +183,18 @@ class _StationGateState extends State<StationGate> {
   @override
   void initState() {
     super.initState();
+    // Sesi ditolak Main POS (401, mis. Main POS restart) → paksa kembali ke
+    // LOGIN otomatis, jadi station tak pernah nyangkut di pemesanan.
+    StationApiClient.instance.onUnauthorized = () {
+      if (mounted && _user != null) setState(() => _user = null);
+    };
     _check();
+  }
+
+  @override
+  void dispose() {
+    StationApiClient.instance.onUnauthorized = null;
+    super.dispose();
   }
 
   Future<void> _check() async {
@@ -214,12 +225,19 @@ class _StationGateState extends State<StationGate> {
 
   /// Ganti Main POS: lepas koneksi & sesi, kembali ke setup → login.
   Future<void> _changeServer() async {
+    StationApiClient.instance.clearToken();
     await StationApiClient.instance.clear();
     if (!mounted) return;
     setState(() {
       _connected = false;
       _user = null;
     });
+  }
+
+  /// Logout station → kembali ke LOGIN PIN (token dibuang).
+  void _logout() {
+    StationApiClient.instance.clearToken();
+    setState(() => _user = null);
   }
 
   @override
@@ -246,13 +264,12 @@ class _StationGateState extends State<StationGate> {
         role == 'admin' ||
         role == 'manager' ||
         role == 'svp';
-    void onLogout() => setState(() => _user = null);
     if (isCashier) {
-      return CashierStationScreen(user: _user!, onLogout: onLogout);
+      return CashierStationScreen(user: _user!, onLogout: _logout);
     }
     return StationScreen(
       user: _user!,
-      onLogout: onLogout,
+      onLogout: _logout,
       onChangeServer: _changeServer,
     );
   }

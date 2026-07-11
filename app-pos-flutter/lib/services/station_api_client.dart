@@ -44,8 +44,16 @@ class StationApiClient {
   String? _outletCode; // identitas Main POS untuk auto-rediscovery
   bool _rediscovering = false;
 
+  /// Dipanggil saat Main POS menolak sesi (401) — mis. Main POS restart →
+  /// token hangus. StationGate memakainya untuk otomatis kembali ke LOGIN
+  /// (tanpa ini station bisa nyangkut di pemesanan dengan error terus).
+  void Function()? onUnauthorized;
+
   String? get baseUrl => _baseUrl;
   bool get isConnected => _baseUrl != null;
+
+  /// Bersihkan token sesi (dipakai saat logout / sesi ditolak).
+  void clearToken() => _dio.options.headers.remove('X-Station-Token');
 
   void setBaseUrl(String url) {
     _baseUrl = url.endsWith('/') ? url.substring(0, url.length - 1) : url;
@@ -121,8 +129,11 @@ class StationApiClient {
       return await call();
     } on DioException catch (e) {
       // Sesi ditolak Main POS (mis. Main POS restart → token hangus).
+      // Bersihkan token & minta StationGate kembali ke LOGIN otomatis.
       if (e.response?.statusCode == 401) {
-        throw Exception('Sesi station kadaluarsa — logout lalu login ulang');
+        clearToken();
+        onUnauthorized?.call();
+        throw Exception('Sesi station berakhir — silakan login ulang');
       }
       if (_isConnError(e) && await rediscover()) {
         return await call(); // ulangi sekali setelah pindah IP
