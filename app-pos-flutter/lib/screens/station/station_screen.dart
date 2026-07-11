@@ -1193,8 +1193,8 @@ class _StationScreenState extends State<StationScreen> {
         dateTime: DateTime.now(),
         isBill: true,
       );
-      await _sendToStationPrinter(
-          (cols) => ReceiptBuilder(paperWidth: cols).buildReceipt(data));
+      await _sendToStationPrinter((cols, isCopy) =>
+          ReceiptBuilder(paperWidth: cols).buildReceipt(data, isCopy: isCopy));
       if (mounted) showAppSnack(context, 'Tagihan dicetak');
     } catch (e) {
       if (mounted) {
@@ -1206,7 +1206,7 @@ class _StationScreenState extends State<StationScreen> {
   /// Kirim bytes ke printer kasir LOKAL station (fallback non-checker, lalu
   /// pertama). Printer dikonfigurasi di perangkat station via Pengaturan Printer.
   Future<void> _sendToStationPrinter(
-      List<int> Function(int cols) build) async {
+      List<int> Function(int cols, bool isCopy) build) async {
     final ps = PrinterService();
     final saved = await ps.getSavedPrinters();
     if (saved.isEmpty) {
@@ -1222,11 +1222,19 @@ class _StationScreenState extends State<StationScreen> {
         ? cps.first
         : saved.firstWhere((p) => !p.hasRole(PrinterRole.checker),
             orElse: () => saved.first);
-    final bytes = build(printer.paperCols);
-    if (printer.type == PrinterType.bluetooth) {
-      await ps.sendBluetooth(printer.address, bytes);
-    } else {
-      await ps.sendLan(printer.address, bytes);
+
+    Future<void> send(List<int> bytes) async {
+      if (printer.type == PrinterType.bluetooth) {
+        await ps.sendBluetooth(printer.address, bytes);
+      } else {
+        await ps.sendLan(printer.address, bytes);
+      }
+    }
+
+    await send(build(printer.paperCols, false));
+    // Rangkap: salinan ke-2..N bertanda "COPY" (printer.copies dari Pengaturan).
+    for (var c = 2; c <= printer.copies; c++) {
+      await send(build(printer.paperCols, true));
     }
   }
 

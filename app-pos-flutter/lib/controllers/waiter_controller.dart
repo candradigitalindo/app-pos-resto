@@ -557,12 +557,19 @@ class WaiterController extends ChangeNotifier {
             );
 
       final builder = ReceiptBuilder(paperWidth: printer.paperCols);
-      final bytes = builder.buildReceipt(receiptData);
 
-      if (printer.type == PrinterType.bluetooth) {
-        await printerService.sendBluetooth(printer.address, bytes);
-      } else {
-        await printerService.sendLan(printer.address, bytes);
+      Future<void> send(List<int> bytes) async {
+        if (printer.type == PrinterType.bluetooth) {
+          await printerService.sendBluetooth(printer.address, bytes);
+        } else {
+          await printerService.sendLan(printer.address, bytes);
+        }
+      }
+
+      await send(builder.buildReceipt(receiptData));
+      // Rangkap: salinan ke-2..N bertanda "COPY" (printer.copies dari Pengaturan).
+      for (var c = 2; c <= printer.copies; c++) {
+        await send(builder.buildReceipt(receiptData, isCopy: true));
       }
 
       _setState(_state.copyWith(
