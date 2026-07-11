@@ -14,7 +14,6 @@ import '../../theme/theme.dart';
 import '../../utils/currency.dart';
 import '../../widgets/ui/ui.dart';
 import '../settings/printer_settings_screen.dart';
-import 'station_setup_screen.dart';
 
 /// Layar utama mode Station: pilih meja → menu → kirim order ke Main POS.
 class StationScreen extends StatefulWidget {
@@ -113,17 +112,7 @@ class _StationScreenState extends State<StationScreen> {
 
   Future<void> _changeServer() async {
     // Serahkan ke StationGate: lepas koneksi & sesi, kembali ke setup → login.
-    if (widget.onChangeServer != null) {
-      widget.onChangeServer!.call();
-      return;
-    }
-    // Fallback (tak di bawah gate): clear lalu buka setup langsung.
-    await StationApiClient.instance.clear();
-    if (!mounted) return;
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const StationSetupScreen()),
-    );
+    widget.onChangeServer?.call();
   }
 
   Future<void> _exitStationMode() async {

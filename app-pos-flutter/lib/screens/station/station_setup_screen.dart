@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../../services/station_api_client.dart';
 import '../../theme/theme.dart';
 import '../../widgets/ui/ui.dart';
-import 'station_screen.dart';
 
 /// Layar setup mode Station: temukan Main POS di jaringan lalu hubungkan.
 class StationSetupScreen extends StatefulWidget {
@@ -11,9 +10,11 @@ class StationSetupScreen extends StatefulWidget {
   final VoidCallback? onBackToRole;
 
   /// Dipanggil saat berhasil terhubung ke Main POS. StationGate memakainya
-  /// untuk lanjut ke LOGIN PIN (bukan langsung ke pemesanan).
-  final VoidCallback? onConnected;
-  const StationSetupScreen({super.key, this.onBackToRole, this.onConnected});
+  /// untuk lanjut ke LOGIN PIN (bukan langsung ke pemesanan). WAJIB — layar ini
+  /// selalu di bawah StationGate; tak boleh ada jalur yang melewati login.
+  final VoidCallback onConnected;
+  const StationSetupScreen(
+      {super.key, this.onBackToRole, required this.onConnected});
 
   @override
   State<StationSetupScreen> createState() => _StationSetupScreenState();
@@ -70,16 +71,7 @@ class _StationSetupScreenState extends State<StationSetupScreen> {
     await _api.save(server.baseUrl, outletCode: server.outletCode);
     if (!mounted) return;
     // Terhubung → serahkan ke StationGate untuk lanjut ke LOGIN PIN.
-    // Fallback (bila dipush lepas dari gate): buka setup ulang tak relevan,
-    // langsung ke StationScreen hanya jika tak ada callback.
-    if (widget.onConnected != null) {
-      widget.onConnected!.call();
-    } else {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const StationScreen()),
-      );
-    }
+    widget.onConnected();
   }
 
   Future<void> _connectManual() async {
