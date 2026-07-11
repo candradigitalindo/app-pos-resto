@@ -1670,16 +1670,15 @@ class OrderRepository {
       final now = DateTime.now();
       var routedStation = false; // ada printer kategori yang kebagian item?
 
-      // Rangkap tiket dapur/bar sesuai printer.copies (Pengaturan Printer).
-      // Tiket duplikat identik (keduanya tiket kerja, mis. lini masak + expo);
-      // penanda hanya di label antrian, bukan di badan tiket.
-      Future<void> enqueueCopies(
-          PrinterDevice pr, List<int> bytes, String label) async {
+      // Rangkap tiket dapur/bar/checker sesuai printer.copies (Pengaturan).
+      // Salinan ke-2..N dibangun dengan isCopy=true → bertanda "COPY".
+      Future<void> enqueueCopies(PrinterDevice pr,
+          List<int> Function(bool isCopy) build, String label) async {
         for (var c = 1; c <= pr.copies; c++) {
           await PrintQueueService.instance.enqueueForPrinter(
             pr,
-            bytes: bytes,
-            label: c == 1 ? label : '$label (Rangkap $c)',
+            bytes: build(c > 1),
+            label: c == 1 ? label : '$label (Copy $c)',
           );
         }
       }
@@ -1703,19 +1702,22 @@ class OrderRepository {
         final builder = ReceiptBuilder(paperWidth: p.paperCols);
         if (p.hasRole(PrinterRole.checker)) {
           // Checker: salinan seluruh pesanan (semua item).
-          final bytes = builder.buildCheckerOrder(
-            orderId: order.id,
-            tableNumber: order.tableNumber,
-            waiterName: waiterName,
-            items: items,
-            dateTime: now,
-            categoryNames: categoryNames,
-            isAdditional: isAdditional,
-            customerName: order.customerName,
-            pax: order.pax,
-          );
           await enqueueCopies(
-              p, bytes, 'Meja ${order.tableNumber} (CHECKER)');
+            p,
+            (isCopy) => builder.buildCheckerOrder(
+              orderId: order.id,
+              tableNumber: order.tableNumber,
+              waiterName: waiterName,
+              items: items,
+              dateTime: now,
+              categoryNames: categoryNames,
+              isAdditional: isAdditional,
+              customerName: order.customerName,
+              pax: order.pax,
+              isCopy: isCopy,
+            ),
+            'Meja ${order.tableNumber} (CHECKER)',
+          );
           continue;
         }
 
@@ -1723,20 +1725,23 @@ class OrderRepository {
         final mine =
             items.where((it) => p.printsCategory(it.categoryId)).toList();
         if (mine.isEmpty) continue;
-        final bytes = builder.buildKitchenOrder(
-          orderId: order.id,
-          tableNumber: order.tableNumber,
-          waiterName: waiterName,
-          items: mine,
-          dateTime: now,
-          printerLabel: p.name.toUpperCase(),
-          isAdditional: isAdditional,
-          placedBy: placedBy,
-          customerName: order.customerName,
-          pax: order.pax,
-        );
         await enqueueCopies(
-            p, bytes, 'Meja ${order.tableNumber} (${p.name})');
+          p,
+          (isCopy) => builder.buildKitchenOrder(
+            orderId: order.id,
+            tableNumber: order.tableNumber,
+            waiterName: waiterName,
+            items: mine,
+            dateTime: now,
+            printerLabel: p.name.toUpperCase(),
+            isAdditional: isAdditional,
+            placedBy: placedBy,
+            customerName: order.customerName,
+            pax: order.pax,
+            isCopy: isCopy,
+          ),
+          'Meja ${order.tableNumber} (${p.name})',
+        );
         routedStation = true;
       }
 
@@ -1749,19 +1754,23 @@ class OrderRepository {
         );
         if (!fb.hasRole(PrinterRole.checker)) {
           final builder = ReceiptBuilder(paperWidth: fb.paperCols);
-          final bytes = builder.buildKitchenOrder(
-            orderId: order.id,
-            tableNumber: order.tableNumber,
-            waiterName: waiterName,
-            items: items,
-            dateTime: now,
-            printerLabel: fb.name.toUpperCase(),
-            isAdditional: isAdditional,
-            placedBy: placedBy,
-            customerName: order.customerName,
-            pax: order.pax,
+          await enqueueCopies(
+            fb,
+            (isCopy) => builder.buildKitchenOrder(
+              orderId: order.id,
+              tableNumber: order.tableNumber,
+              waiterName: waiterName,
+              items: items,
+              dateTime: now,
+              printerLabel: fb.name.toUpperCase(),
+              isAdditional: isAdditional,
+              placedBy: placedBy,
+              customerName: order.customerName,
+              pax: order.pax,
+              isCopy: isCopy,
+            ),
+            'Meja ${order.tableNumber}',
           );
-          await enqueueCopies(fb, bytes, 'Meja ${order.tableNumber}');
           debugPrint(
               'enqueueKitchenPrints: belum ada kategori yang di-assign — semua item dikirim ke "${fb.name}". Atur kategori printer di Pengaturan untuk routing tepat.');
         }
