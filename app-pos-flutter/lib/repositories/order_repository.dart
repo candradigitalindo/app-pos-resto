@@ -619,8 +619,13 @@ class OrderRepository {
         throw Exception('Tagihan sudah lunas');
       }
 
-      // Insert payment
-      await txn.insert('payments', payment.toMap());
+      // Insert payment — HANYA bila ada nominal (>0). Order total 0 (mis.
+      // diskon 100%) tak punya pembayaran; tabel payments meng-CHECK amount>0.
+      // Transaksi tetap dicatat (total 0) & order ditandai lunas, konsisten
+      // dengan alur Kompliment (order gratis tanpa baris payment).
+      if (remaining > 0) {
+        await txn.insert('payments', payment.toMap());
+      }
 
       // Insert transaction
       await txn.insert('transactions', transaction.toMap());
@@ -825,15 +830,20 @@ class OrderRepository {
       newPaidAmount = curPaid + effAmount;
       newPaymentStatus = newPaidAmount >= total ? 'paid' : 'partial';
 
-      await txn.insert('payments', {
-        'id': Ulid.generate(),
-        'order_id': orderId,
-        'amount': effAmount,
-        'payment_method': paymentMethod,
-        'payment_note': note,
-        'created_by': createdBy ?? '',
-        'created_at': now.toIso8601String(),
-      });
+      // Catat pembayaran HANYA bila ada nominal (>0). Order total 0 (diskon
+      // 100%) → effAmount 0; tabel payments meng-CHECK amount>0. Order tetap
+      // ditandai lunas & transaksi tetap dicatat di bawah.
+      if (effAmount > 0) {
+        await txn.insert('payments', {
+          'id': Ulid.generate(),
+          'order_id': orderId,
+          'amount': effAmount,
+          'payment_method': paymentMethod,
+          'payment_note': note,
+          'created_by': createdBy ?? '',
+          'created_at': now.toIso8601String(),
+        });
+      }
 
       await txn.update(
         'orders',
