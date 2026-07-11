@@ -21,13 +21,14 @@ void main() async {
   // System UI will temporarily appear on edge swipe, then auto-hide again
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
-  // Semua orientasi didukung: tablet biasanya landscape, HP bisa portrait.
+  // JANGAN mengunci orientasi di sini. Orientasi diatur native:
+  // - Android: manifest `screenOrientation="fullSensor"` → rotasi bebas ke
+  //   semua sisi, MENGABAIKAN kunci auto-rotate perangkat (penting: tablet POS
+  //   sering terkunci landscape). Memanggil setPreferredOrientations dengan
+  //   kombinasi portrait+landscape justru dipetakan Flutter ke UNSPECIFIED
+  //   yang kembali tunduk pada kunci perangkat → tetap landscape.
+  // - iOS: Info.plist mendaftarkan portrait + landscape.
   // Layout menyesuaikan otomatis via helper responsif (context.isPhone dll).
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.landscapeLeft,
-    DeviceOrientation.landscapeRight,
-  ]);
 
   runApp(const PosRestoApp());
 }
