@@ -9,7 +9,11 @@ import 'station_screen.dart';
 class StationSetupScreen extends StatefulWidget {
   /// Kembali ke halaman pemilihan peran perangkat (opsional).
   final VoidCallback? onBackToRole;
-  const StationSetupScreen({super.key, this.onBackToRole});
+
+  /// Dipanggil saat berhasil terhubung ke Main POS. StationGate memakainya
+  /// untuk lanjut ke LOGIN PIN (bukan langsung ke pemesanan).
+  final VoidCallback? onConnected;
+  const StationSetupScreen({super.key, this.onBackToRole, this.onConnected});
 
   @override
   State<StationSetupScreen> createState() => _StationSetupScreenState();
@@ -65,10 +69,17 @@ class _StationSetupScreenState extends State<StationSetupScreen> {
     }
     await _api.save(server.baseUrl, outletCode: server.outletCode);
     if (!mounted) return;
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const StationScreen()),
-    );
+    // Terhubung → serahkan ke StationGate untuk lanjut ke LOGIN PIN.
+    // Fallback (bila dipush lepas dari gate): buka setup ulang tak relevan,
+    // langsung ke StationScreen hanya jika tak ada callback.
+    if (widget.onConnected != null) {
+      widget.onConnected!.call();
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const StationScreen()),
+      );
+    }
   }
 
   Future<void> _connectManual() async {

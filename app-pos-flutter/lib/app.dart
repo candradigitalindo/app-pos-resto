@@ -208,15 +208,33 @@ class _StationGateState extends State<StationGate> {
     });
   }
 
+  /// Setup berhasil terhubung → tampilkan LOGIN (bukan langsung ke pemesanan).
+  /// Token baru diperoleh saat login PIN; tanpa itu API Main POS menolak.
+  void _onConnected() => setState(() => _connected = true);
+
+  /// Ganti Main POS: lepas koneksi & sesi, kembali ke setup → login.
+  Future<void> _changeServer() async {
+    await StationApiClient.instance.clear();
+    if (!mounted) return;
+    setState(() {
+      _connected = false;
+      _user = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    // Alur wajib: (1) belum terhubung → setup, (2) terhubung tapi belum login
+    // → login PIN (dapat token), (3) sudah login → tampilan sesuai peran.
     if (!_connected) {
-      return StationSetupScreen(onBackToRole: widget.onExitRole);
+      return StationSetupScreen(
+        onConnected: _onConnected,
+        onBackToRole: widget.onExitRole,
+      );
     }
-    // Belum login → minta PIN; peran menentukan tampilan berikutnya.
     if (_user == null) {
       return StationLoginScreen(
         onLoggedIn: (u) => setState(() => _user = u),
@@ -232,7 +250,11 @@ class _StationGateState extends State<StationGate> {
     if (isCashier) {
       return CashierStationScreen(user: _user!, onLogout: onLogout);
     }
-    return StationScreen(user: _user!, onLogout: onLogout);
+    return StationScreen(
+      user: _user!,
+      onLogout: onLogout,
+      onChangeServer: _changeServer,
+    );
   }
 }
 

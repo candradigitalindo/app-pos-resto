@@ -22,7 +22,11 @@ class StationScreen extends StatefulWidget {
   /// StationGate berdasar peran; null bila dibuka langsung.
   final Map<String, dynamic>? user;
   final VoidCallback? onLogout;
-  const StationScreen({super.key, this.user, this.onLogout});
+
+  /// Ganti Main POS: dikelola StationGate (lepas koneksi → setup → login).
+  final VoidCallback? onChangeServer;
+  const StationScreen(
+      {super.key, this.user, this.onLogout, this.onChangeServer});
 
   @override
   State<StationScreen> createState() => _StationScreenState();
@@ -108,6 +112,12 @@ class _StationScreenState extends State<StationScreen> {
   }
 
   Future<void> _changeServer() async {
+    // Serahkan ke StationGate: lepas koneksi & sesi, kembali ke setup → login.
+    if (widget.onChangeServer != null) {
+      widget.onChangeServer!.call();
+      return;
+    }
+    // Fallback (tak di bawah gate): clear lalu buka setup langsung.
     await StationApiClient.instance.clear();
     if (!mounted) return;
     Navigator.pushReplacement(
