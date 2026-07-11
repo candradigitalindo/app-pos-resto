@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../repositories/sync_queue_repository.dart';
 import '../../services/cloud_sync_service.dart';
 import '../../theme/theme.dart';
+import '../../utils/currency.dart';
 import '../../widgets/ui/ui.dart';
 
 /// Monitor outbox sinkronisasi cloud: lihat pending/sukses/gagal + sync ulang.
@@ -22,6 +23,7 @@ class _SyncStatusScreenState extends State<SyncStatusScreen> {
 
   Map<String, int> _stats = const {'pending': 0, 'success': 0, 'failed': 0};
   List<Map<String, dynamic>> _jobs = [];
+  Map<String, dynamic> _recon = const {};
   bool _loading = true;
   bool _syncing = false;
   Timer? _auto;
@@ -43,10 +45,12 @@ class _SyncStatusScreenState extends State<SyncStatusScreen> {
     if (!silent) setState(() => _loading = true);
     final stats = await _queue.stats();
     final jobs = await _queue.recentJobs();
+    final recon = await _queue.reconciliation();
     if (!mounted) return;
     setState(() {
       _stats = stats;
       _jobs = jobs;
+      _recon = recon;
       _loading = false;
     });
   }
@@ -109,6 +113,7 @@ class _SyncStatusScreenState extends State<SyncStatusScreen> {
               ],
             ),
             _buildStatsBar(),
+            _buildReconCard(),
             if (failed > 0) _buildRetryBanner(failed),
             Expanded(
               child: _loading
@@ -169,6 +174,78 @@ class _SyncStatusScreenState extends State<SyncStatusScreen> {
               expanded: false,
               onPressed: (_stats['success'] ?? 0) > 0 ? _clearSuccess : null,
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Kartu rekonsiliasi: berapa transaksi (uang) yang BELUM pasti terkirim ke
+  /// cloud dalam jendela terakhir. Deteksi dini selisih per outlet.
+  Widget _buildReconCard() {
+    if (_recon.isEmpty) return const SizedBox.shrink();
+    final days = _recon['window_days'] as int? ?? 30;
+    final atRiskCount = _recon['at_risk_count'] as int? ?? 0;
+    final atRiskAmount = _recon['at_risk_amount'] as double? ?? 0;
+    final syncedCount = _recon['synced_count'] as int? ?? 0;
+    final pending = _recon['pending_count'] as int? ?? 0;
+    final failed = _recon['failed_count'] as int? ?? 0;
+    final missing = _recon['missing_count'] as int? ?? 0;
+    final clean = atRiskCount == 0;
+    final color = clean ? AppColors.success : AppColors.danger;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, AppSpacing.xs, AppSpacing.md, 0),
+      child: AppCard(
+        color: AppColors.soft(color, 0.08),
+        border: Border.all(color: AppColors.soft(color, 0.3)),
+        shadow: const [],
+        padding: const EdgeInsets.all(AppSpacing.sm),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(clean ? Icons.verified_rounded : Icons.warning_amber_rounded,
+                    color: color, size: 20),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    'Rekonsiliasi transaksi · $days hari',
+                    style: AppType.bodySm.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                Text('$syncedCount terkirim',
+                    style: AppType.caption.copyWith(color: AppColors.success)),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            if (clean)
+              Text('Semua transaksi terkonfirmasi terkirim (lokal).',
+                  style: AppType.caption.copyWith(color: AppColors.success))
+            else ...[
+              Text(
+                'Belum pasti terkirim: $atRiskCount transaksi · ${CurrencyHelper.format(atRiskAmount)}',
+                style: AppType.bodySm
+                    .copyWith(color: color, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Antri $pending · Gagal $failed · Tanpa entri $missing',
+                style: AppType.caption.copyWith(color: AppColors.textSecondary),
+              ),
+              if (missing > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    '⚠ "Tanpa entri" = transaksi lunas tanpa jejak antrian sync — '
+                    'perlu diperiksa (kemungkinan ditandai terkirim keliru).',
+                    style:
+                        AppType.caption.copyWith(color: AppColors.warning),
+                  ),
+                ),
+            ],
           ],
         ),
       ),

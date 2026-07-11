@@ -90,6 +90,76 @@ class SyncQueueRepository {
     return out;
   }
 
+  /// Rekonsiliasi lokal: bandingkan transaksi (uang) vs status sinkronisasinya.
+  /// READ-ONLY — tidak mengubah apa pun. Tujuannya mendeteksi dini transaksi
+  /// yang BELUM terkonfirmasi terkirim ke cloud (pending/gagal/tanpa entri).
+  ///
+  /// Status per transaksi diturunkan dari sync_queue (entity_type='transaction'):
+  ///  - synced  : ada baris status='success'
+  ///  - pending : ada baris status='pending' (belum sukses)
+  ///  - failed  : ada baris status='failed'
+  ///  - missing : tak ada baris sama sekali (dalam jendela retensi = mencurigakan;
+  ///              di luar jendela biasanya karena riwayat sukses sudah dipurge —
+  ///              maka jendela dibatasi [days] hari agar tak salah tuduh).
+  ///
+  /// Catatan: "synced" hanya berarti App menandainya sukses secara LOKAL; untuk
+  /// memastikan benar-benar tersimpan di cloud diperlukan rekonsiliasi cloud.
+  Future<Map<String, dynamic>> reconciliation({int days = 30}) async {
+    final db = await _db.database;
+    final cutoff = DateTime.now()
+        .subtract(Duration(days: days))
+        .toIso8601String();
+    final rows = await db.rawQuery(
+      '''
+      SELECT sync_state, COUNT(*) AS c, COALESCE(SUM(total_amount), 0) AS amt
+      FROM (
+        SELECT t.total_amount,
+          CASE
+            WHEN EXISTS (SELECT 1 FROM sync_queue q
+                         WHERE q.entity_type='transaction' AND q.entity_id=t.id
+                           AND q.status='success') THEN 'synced'
+            WHEN EXISTS (SELECT 1 FROM sync_queue q
+                         WHERE q.entity_type='transaction' AND q.entity_id=t.id
+                           AND q.status='pending') THEN 'pending'
+            WHEN EXISTS (SELECT 1 FROM sync_queue q
+                         WHERE q.entity_type='transaction' AND q.entity_id=t.id
+                           AND q.status='failed') THEN 'failed'
+            ELSE 'missing'
+          END AS sync_state
+        FROM transactions t
+        WHERE t.cancelled_at IS NULL AND t.transaction_date >= ?
+      )
+      GROUP BY sync_state
+      ''',
+      [cutoff],
+    );
+
+    final out = {
+      'window_days': days,
+      'synced_count': 0, 'synced_amount': 0.0,
+      'pending_count': 0, 'pending_amount': 0.0,
+      'failed_count': 0, 'failed_amount': 0.0,
+      'missing_count': 0, 'missing_amount': 0.0,
+    };
+    for (final r in rows) {
+      final s = r['sync_state'] as String;
+      out['${s}_count'] = (r['c'] as num).toInt();
+      out['${s}_amount'] = (r['amt'] as num).toDouble();
+    }
+    // Belum pasti terkirim = pending + gagal + tanpa entri.
+    out['at_risk_count'] = (out['pending_count'] as int) +
+        (out['failed_count'] as int) +
+        (out['missing_count'] as int);
+    out['at_risk_amount'] = (out['pending_amount'] as double) +
+        (out['failed_amount'] as double) +
+        (out['missing_amount'] as double);
+    out['total_count'] =
+        (out['synced_count'] as int) + (out['at_risk_count'] as int);
+    out['total_amount'] =
+        (out['synced_amount'] as double) + (out['at_risk_amount'] as double);
+    return out;
+  }
+
   /// Job terbaru untuk layar monitor (tanpa payload besar).
   Future<List<Map<String, dynamic>>> recentJobs({int limit = 50}) async {
     final db = await _db.database;
