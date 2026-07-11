@@ -33,14 +33,17 @@ class RoleSelectorScreen extends StatelessWidget {
         child: SafeArea(
           child: Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(AppSpacing.xl),
+              padding: EdgeInsets.all(
+                  context.isPhone ? AppSpacing.lg : AppSpacing.xl),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 760),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _buildBranding(context),
-                    const SizedBox(height: AppSpacing.xxl),
+                    SizedBox(
+                        height:
+                            context.isPhone ? AppSpacing.lg : AppSpacing.xxl),
                     LayoutBuilder(
                       builder: (context, c) {
                         final wide = c.maxWidth > 560;
@@ -163,29 +166,32 @@ class _RoleCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = context.isPhone;
     return AppCard(
       onTap: onTap,
       accent: accent,
-      padding: const EdgeInsets.all(AppSpacing.xl),
+      padding: EdgeInsets.all(compact ? AppSpacing.lg : AppSpacing.xl),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
-              IconBadge(icon: icon, color: accent, size: 60, filled: true),
+              IconBadge(
+                  icon: icon, color: accent, size: compact ? 48 : 60,
+                  filled: true),
               const Spacer(),
               StatusPill(label: badge, color: accent),
             ],
           ),
-          const SizedBox(height: AppSpacing.lg),
+          SizedBox(height: compact ? AppSpacing.md : AppSpacing.lg),
           Text(title, style: AppType.h2),
           const SizedBox(height: AppSpacing.xs),
           Text(
             subtitle,
             style: AppType.body.copyWith(color: AppColors.textSecondary),
           ),
-          const SizedBox(height: AppSpacing.lg),
+          SizedBox(height: compact ? AppSpacing.md : AppSpacing.lg),
           Row(
             children: [
               Text('Pilih', style: AppType.label.copyWith(color: accent)),
