@@ -30,7 +30,7 @@ class AppDatabase {
 
     return openDatabase(
       path,
-      version: 9,
+      version: 10,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -98,6 +98,17 @@ class AppDatabase {
       // pesanan tamu aktif. Dikecualikan dari view meja/dapur/waiter.
       await db.execute(
         'ALTER TABLE orders ADD COLUMN is_holding INTEGER NOT NULL DEFAULT 0',
+      );
+    }
+    if (oldVersion < 10) {
+      // KEAMANAN: tutup backdoor 'dummyhash' (menerima PIN 1234 tanpa hash).
+      // Akun seed dimigrasi ke hash SHA-256 asli dari '1234' — PIN default
+      // tetap 1234 tapi lewat jalur verifikasi normal & bisa diganti di
+      // Manajemen User. SANGAT disarankan langsung mengganti PIN default.
+      await db.execute(
+        "UPDATE users SET password_hash = "
+        "'03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4' "
+        "WHERE password_hash LIKE '%dummyhash%'",
       );
     }
   }
@@ -553,10 +564,11 @@ class AppDatabase {
       'CREATE INDEX IF NOT EXISTS idx_kpj_status ON kitchen_print_jobs(status, created_at)',
     );
 
-    // Seed default manager user (PIN: 1234)
+    // Seed default manager user (PIN: 1234 — hash SHA-256 asli, GANTI segera
+    // lewat Manajemen User; tidak ada lagi jalur backdoor dummyhash).
     await db.execute('''
       INSERT OR IGNORE INTO users (id, username, password_hash, full_name, role)
-      VALUES ('01HZ0000000000000000000000', 'admin', '\$2a\$10\$dummyhashforcandradigitalpos', 'Manager', 'manager')
+      VALUES ('01HZ0000000000000000000000', 'admin', '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4', 'Manager', 'manager')
     ''');
 
     // Seed default outlet config (data_retention_days = 90 = 3 bulan)

@@ -85,11 +85,6 @@ class OutletService {
     final prefs = await _prefs;
     return prefs.getString(_keyVoidPin) ?? '1234';
   }
-
-  Future<void> saveVoidPin(String pin) async {
-    final prefs = await _prefs;
-    await prefs.setString(_keyVoidPin, pin);
-  }
 }
 
 class OutletInfo {

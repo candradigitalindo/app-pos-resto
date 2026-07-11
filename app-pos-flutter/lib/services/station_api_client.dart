@@ -120,6 +120,10 @@ class StationApiClient {
     try {
       return await call();
     } on DioException catch (e) {
+      // Sesi ditolak Main POS (mis. Main POS restart → token hangus).
+      if (e.response?.statusCode == 401) {
+        throw Exception('Sesi station kadaluarsa — logout lalu login ulang');
+      }
       if (_isConnError(e) && await rediscover()) {
         return await call(); // ulangi sekali setelah pindah IP
       }
@@ -283,14 +287,25 @@ class StationApiClient {
   // ── Auth (verifikasi PIN waiter di Main POS) ──────────────────────────────────
 
   /// Verifikasi PIN ke Main POS. Mengembalikan data waiter {id, full_name,
-  /// role}, atau null jika PIN salah.
+  /// role}, atau null jika PIN salah. Token sesi dari respons otomatis
+  /// dipasang sebagai header default untuk SEMUA request berikutnya
+  /// (Main POS kini menolak request tanpa token — anti perangkat asing).
   Future<Map<String, dynamic>?> authPin(String pin) async {
     try {
       final resp = await _dio.post('$_base/api/auth', data: {'pin': pin});
       final data = resp.data is Map ? resp.data['data'] : null;
-      return data is Map ? data.cast<String, dynamic>() : null;
+      final map = data is Map ? data.cast<String, dynamic>() : null;
+      final token = map?['token'] as String?;
+      if (token != null && token.isNotEmpty) {
+        _dio.options.headers['X-Station-Token'] = token;
+      }
+      return map;
     } on DioException catch (e) {
-      if (e.response?.statusCode == 401) return null; // PIN salah
+      final code = e.response?.statusCode;
+      if (code == 401) return null; // PIN salah
+      if (code == 429) {
+        throw Exception('Terlalu banyak percobaan PIN — tunggu 5 menit');
+      }
       rethrow;
     }
   }

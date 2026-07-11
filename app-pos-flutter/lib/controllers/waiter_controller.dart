@@ -406,10 +406,6 @@ class WaiterController extends ChangeNotifier {
     }
   }
 
-  void clearCart() {
-    _setState(_state.copyWith(cart: {}, cartNotes: {}));
-  }
-
   void updateCartNote(String productId, String note) {
     final notes = Map<String, String>.from(_state.cartNotes);
     if (note.isEmpty) {
@@ -497,42 +493,6 @@ class WaiterController extends ChangeNotifier {
       _setState(_state.copyWith(
         isProcessing: false,
         errorMessage: 'Gagal membuat order: $e',
-      ));
-      return false;
-    }
-  }
-
-  // ── Add Items to Existing Order ──────────────────────────────────────────
-
-  Future<bool> addItemsToExistingOrder({
-    required String orderId,
-    required List<OrderItemInput> items,
-  }) async {
-    _setState(_state.copyWith(isProcessing: true, clearError: true));
-    try {
-      await _orderRepo.addItemToOrder(
-        orderId: orderId,
-        items: items,
-      );
-
-      // Broadcast ke waiter stations yang terhubung
-      final updated = await _orderRepo.getOrderById(orderId);
-      if (updated != null) {
-        LocalApiServer.instance.broadcast('order_items_added', updated.toMap());
-      }
-
-      // Cetak tiket dapur/bar ditangani oleh OrderRepository (print queue).
-
-      _setState(_state.copyWith(
-        isProcessing: false,
-        successMessage: 'Item berhasil ditambahkan',
-      ));
-      await loadTables();
-      return true;
-    } catch (e) {
-      _setState(_state.copyWith(
-        isProcessing: false,
-        errorMessage: 'Gagal menambah item: $e',
       ));
       return false;
     }

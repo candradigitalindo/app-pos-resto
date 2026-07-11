@@ -445,27 +445,6 @@ class OrderRepository {
     }
   }
 
-  Future<void> updateItemQty(String itemId, int qty) async {
-    if (qty <= 0) throw Exception('qty tidak valid');
-
-    final item = await _getOrderItem(itemId);
-    if (item == null) throw Exception('Item tidak ditemukan');
-    if (item.itemStatus != 'pending') {
-      throw Exception('Item sudah diproses');
-    }
-
-    final now = DateTime.now();
-    await _db.update(
-      'order_items',
-      {'qty': qty, 'updated_at': now.toIso8601String()},
-      where: 'id = ?',
-      whereArgs: [itemId],
-    );
-
-    // Subtotal berubah → pajak otomatis ikut dihitung ulang.
-    await _reapplyAutoChargesAndRecalc(item.orderId);
-  }
-
   /// VOID (hapus) satu item dari order yang belum lunas. Otorisasi manager/SVP
   /// dicek di controller. Item dihapus lokal + total dihitung ulang; event
   /// void item dikirim ke cloud untuk audit (siapa & alasan).
@@ -1127,6 +1106,15 @@ class OrderRepository {
     final now = DateTime.now();
     final order = await getOrderById(orderId);
     if (order == null) throw Exception('Order tidak ditemukan');
+
+    // Meja tujuan tidak boleh punya order aktif lain: dua order pada satu
+    // meja membuat order lama TERSEMBUNYI dari tampilan meja (view hanya
+    // menampilkan satu order per meja) → tagihannya bisa tak pernah ditagih.
+    final existing = await getOrderByTable(newTableNumber);
+    if (existing != null && existing.id != orderId) {
+      throw Exception(
+          'Meja $newTableNumber sudah ada pesanan aktif — gunakan Gabung Meja');
+    }
 
     final db = await _db.database;
     await db.transaction((txn) async {
@@ -1899,19 +1887,5 @@ class OrderItemInput {
     required this.qty,
     this.notes,
     this.addons,
-  });
-}
-
-class SplitBillInput {
-  final String orderId;
-  final double amount;
-  final String paymentMethod;
-  final String? note;
-
-  const SplitBillInput({
-    required this.orderId,
-    required this.amount,
-    required this.paymentMethod,
-    this.note,
   });
 }

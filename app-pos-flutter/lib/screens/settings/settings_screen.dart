@@ -148,6 +148,7 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   void _populate() {
+    if (!mounted) return; // dipanggil dari .then() async — State bisa sudah dibuang
     final info = _controller.state.outletInfo;
     _nameCtrl.text = info.name;
     _codeCtrl.text = info.code;

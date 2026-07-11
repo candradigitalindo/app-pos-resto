@@ -14,6 +14,7 @@ import '../repositories/cashier_repository.dart';
 import '../repositories/order_repository.dart';
 import '../repositories/product_repository.dart';
 import '../repositories/table_repository.dart';
+import '../utils/ulid.dart';
 
 /// HTTP + WebSocket server yang berjalan di Main POS.
 /// Waiter station terhubung ke server ini via WiFi lokal cafe.
@@ -67,6 +68,7 @@ class LocalApiServer {
 
     final handler = const Pipeline()
         .addMiddleware(_corsMiddleware())
+        .addMiddleware(_sessionMiddleware())
         .addHandler(router.call);
 
     _httpServer = await shelf_io.serve(
@@ -146,6 +148,20 @@ class LocalApiServer {
   // Verifikasi PIN waiter (mode station). Kembalikan nama untuk atribusi order.
 
   Future<Response> _auth(Request req) async {
+    // Rate-limit per-IP: PIN hanya 4 digit — tanpa throttle, seluruh ruang
+    // 10.000 PIN bisa di-brute-force dari LAN dalam hitungan menit.
+    final ip = _clientIp(req);
+    if (_isLockedOut(ip)) {
+      return Response(
+        429,
+        body: jsonEncode({
+          'success': false,
+          'error': 'Terlalu banyak percobaan PIN — coba lagi 5 menit lagi',
+        }),
+        headers: _jsonHeader,
+      );
+    }
+
     Map<String, dynamic> body;
     try {
       body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
@@ -161,18 +177,23 @@ class LocalApiServer {
       final pinHash = sha256.convert(utf8.encode(pin)).toString();
 
       for (final u in users) {
-        final hash = u['password_hash'] as String? ?? '';
-        final ok =
-            hash == pinHash || (hash.contains('dummyhash') && pin == '1234');
-        if (ok) {
+        // Hanya hash asli — jalur backdoor 'dummyhash'/1234 DIHAPUS
+        // (akun seed dimigrasi ke hash sungguhan di DB v10).
+        if ((u['password_hash'] as String? ?? '') == pinHash) {
+          _authFails.remove(ip);
+          // Terbitkan token sesi: wajib disertakan station pada semua
+          // request berikutnya (header X-Station-Token).
+          final token = _issueSessionToken();
           return _ok({
             'id': u['id'],
             'full_name': u['full_name'],
             'username': u['username'],
             'role': u['role'],
+            'token': token,
           });
         }
       }
+      _recordAuthFail(ip);
       return Response(
         401,
         body: jsonEncode({'success': false, 'error': 'PIN salah'}),
@@ -182,6 +203,71 @@ class LocalApiServer {
       return _serverError('$e');
     }
   }
+
+  // ── Sesi & rate-limit ────────────────────────────────────────────────────
+
+  /// Token sesi station yang masih berlaku (token → kedaluwarsa, sliding).
+  final Map<String, DateTime> _sessions = {};
+  static const _sessionTtl = Duration(hours: 12);
+
+  /// Riwayat gagal PIN per-IP untuk lockout brute-force.
+  final Map<String, List<DateTime>> _authFails = {};
+  static const _maxAuthFails = 5;
+  static const _authFailWindow = Duration(minutes: 10);
+  static const _lockoutFor = Duration(minutes: 5);
+
+  String _clientIp(Request req) {
+    final info = req.context['shelf.io.connection_info'];
+    if (info is HttpConnectionInfo) return info.remoteAddress.address;
+    return 'unknown';
+  }
+
+  bool _isLockedOut(String ip) {
+    final fails = _authFails[ip];
+    if (fails == null) return false;
+    final now = DateTime.now();
+    fails.removeWhere((t) => now.difference(t) > _authFailWindow);
+    if (fails.length < _maxAuthFails) return false;
+    return now.difference(fails.last) < _lockoutFor;
+  }
+
+  void _recordAuthFail(String ip) {
+    (_authFails[ip] ??= []).add(DateTime.now());
+  }
+
+  String _issueSessionToken() {
+    // 2× ULID ≈ 160 bit acak — cukup untuk token sesi LAN.
+    final token = '${Ulid.generate()}${Ulid.generate()}';
+    _sessions[token] = DateTime.now().add(_sessionTtl);
+    // Housekeeping: buang token kedaluwarsa.
+    _sessions.removeWhere((_, exp) => DateTime.now().isAfter(exp));
+    return token;
+  }
+
+  /// Middleware: semua route (selain ping/auth/ws & preflight) wajib membawa
+  /// token sesi yang valid. Tanpa ini, siapa pun di WiFi bisa memanggil
+  /// endpoint pembayaran/void/diskon/shift.
+  Middleware _sessionMiddleware() => (inner) => (req) {
+        if (req.method == 'OPTIONS') return inner(req);
+        final path = req.url.path; // tanpa leading slash
+        if (path == 'api/ping' || path == 'api/auth' || path == 'ws') {
+          return inner(req);
+        }
+        final token = req.headers['x-station-token'];
+        final exp = token == null ? null : _sessions[token];
+        if (exp == null || DateTime.now().isAfter(exp)) {
+          return Response(
+            401,
+            body: jsonEncode({
+              'success': false,
+              'error': 'Sesi tidak valid — login ulang di station',
+            }),
+            headers: _jsonHeader,
+          );
+        }
+        _sessions[token!] = DateTime.now().add(_sessionTtl); // sliding TTL
+        return inner(req);
+      };
 
   // ── GET /api/tables ───────────────────────────────────────────────────────
 

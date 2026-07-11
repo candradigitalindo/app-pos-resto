@@ -13,16 +13,6 @@ class TableRepository {
     return results.map((m) => RestaurantTable.fromMap(m)).toList();
   }
 
-  Future<RestaurantTable?> getTableByNumber(String tableNumber) async {
-    final results = await _db.query(
-      'tables',
-      where: 'table_number = ?',
-      whereArgs: [tableNumber],
-    );
-    if (results.isEmpty) return null;
-    return RestaurantTable.fromMap(results.first);
-  }
-
   Future<RestaurantTable> createTable({
     required String tableNumber,
     int capacity = 4,

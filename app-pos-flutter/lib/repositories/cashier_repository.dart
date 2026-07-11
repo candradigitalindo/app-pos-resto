@@ -68,7 +68,12 @@ class CashierRepository {
 
     final totals = await _calculateShiftTotals(shiftId);
 
-    final carryOverCash = (closingCash ?? 0) + totals['cash']!;
+    // Kas laci = hitung fisik (closingCash) bila diberikan; selain itu pakai
+    // ekspektasi teoritis modal awal + tunai + kas masuk − kas keluar.
+    // Formula lama `(closingCash ?? 0) + cash` men-double-count penjualan
+    // tunai bila closingCash sudah termasuk penjualan.
+    final carryOverCash =
+        closingCash ?? await _expectedDrawerCash(shift, totals);
 
     await db.update(
       'cashier_shifts',
@@ -113,7 +118,9 @@ class CashierRepository {
 
     final totals = await _calculateShiftTotals(currentShiftId);
     // Saldo kas fisik yang diserahterimakan ke kasir berikutnya
-    final carryOverCash = countedCash ?? (current.openingCash + totals['cash']!);
+    // (hitung fisik bila ada; selain itu modal + tunai + kas masuk − keluar).
+    final carryOverCash =
+        countedCash ?? await _expectedDrawerCash(current, totals);
 
     // 1. Tutup shift lama, tandai handover_to
     await db.update(
@@ -154,15 +161,6 @@ class CashierRepository {
     await _enqueueShift(newShift, 'create');
 
     return newShift;
-  }
-
-  Future<List<CashierShift>> getShiftHistory({int limit = 20}) async {
-    final results = await _db.query(
-      'cashier_shifts',
-      orderBy: 'opened_at DESC',
-      limit: limit,
-    );
-    return results.map((m) => CashierShift.fromMap(m)).toList();
   }
 
   // ==================== CASH MOVEMENTS ====================
@@ -235,16 +233,23 @@ class CashierRepository {
     if (shift == null) return {};
     final db = await _db.database;
 
+    // Jendela shift [opened_at, closed_at). Tanpa batas atas, cetak ulang
+    // laporan shift LAMA ikut menghitung pembayaran shift berikutnya.
+    // .toLocal() menormalkan shift hasil restore cloud (tersimpan UTC+Z).
+    final since = shift.openedAt.toLocal().toIso8601String();
+    final until =
+        (shift.closedAt ?? DateTime.now()).toLocal().toIso8601String();
+
     // Breakdown per metode: count + total
     final payRows = await db.rawQuery(
       '''
       SELECT p.payment_method, COUNT(*) AS cnt, SUM(p.amount) AS total
       FROM payments p
       JOIN orders o ON o.id = p.order_id
-      WHERE p.created_at >= ? AND o.voided_at IS NULL
+      WHERE p.created_at >= ? AND p.created_at < ? AND o.voided_at IS NULL
       GROUP BY p.payment_method
     ''',
-      [shift.openedAt.toIso8601String()],
+      [since, until],
     );
 
     final methods = <String, Map<String, num>>{
@@ -300,11 +305,11 @@ class CashierRepository {
       SELECT p.created_by, COUNT(*) AS cnt, SUM(p.amount) AS total
       FROM payments p
       JOIN orders o ON o.id = p.order_id
-      WHERE p.created_at >= ? AND p.created_by != '' AND o.voided_at IS NULL
+      WHERE p.created_at >= ? AND p.created_at < ? AND p.created_by != '' AND o.voided_at IS NULL
       GROUP BY p.created_by
       ORDER BY total DESC
     ''',
-      [shift.openedAt.toIso8601String()],
+      [since, until],
     );
     final byCashier = cashierRows
         .map((r) => {
@@ -315,7 +320,6 @@ class CashierRepository {
         .toList();
 
     // ── Metrik pengawasan: diskon, kompliment, void selama shift ────────────
-    final since = shift.openedAt.toIso8601String();
 
     // Diskon: charge 'Diskon' pada order yang DIBAYAR di shift ini & tidak
     // di-void. Di-agregat per order dulu agar split-payment tidak menggandakan.
@@ -325,12 +329,13 @@ class CashierRepository {
         SELECT c.order_id, SUM(-c.applied_amount) AS disc
         FROM order_additional_charges c
         WHERE c.name = 'Diskon'
-          AND c.order_id IN (SELECT DISTINCT order_id FROM payments WHERE created_at >= ?)
+          AND c.order_id IN (SELECT DISTINCT order_id FROM payments
+                             WHERE created_at >= ? AND created_at < ?)
           AND c.order_id NOT IN (SELECT id FROM orders WHERE voided_at IS NOT NULL)
         GROUP BY c.order_id
       ) t
     ''',
-      [since],
+      [since, until],
     );
     final discountCount = (discRows.first['cnt'] as num?)?.toInt() ?? 0;
     final discountTotal = (discRows.first['total'] as num?)?.toDouble() ?? 0;
@@ -341,9 +346,10 @@ class CashierRepository {
       SELECT COUNT(*) AS cnt, COALESCE(SUM(-c.applied_amount), 0) AS total
       FROM order_additional_charges c
       JOIN orders o ON o.id = c.order_id
-      WHERE c.name = 'Kompliment' AND o.complimented_at >= ?
+      WHERE c.name = 'Kompliment'
+        AND o.complimented_at >= ? AND o.complimented_at < ?
     ''',
-      [since],
+      [since, until],
     );
     final complimentCount = (compRows.first['cnt'] as num?)?.toInt() ?? 0;
     final complimentTotal = (compRows.first['total'] as num?)?.toDouble() ?? 0;
@@ -353,9 +359,9 @@ class CashierRepository {
       '''
       SELECT COUNT(*) AS cnt, COALESCE(SUM(total_amount), 0) AS total
       FROM orders
-      WHERE voided_at >= ?
+      WHERE voided_at >= ? AND voided_at < ?
     ''',
-      [since],
+      [since, until],
     );
     final voidCount = (voidRows.first['cnt'] as num?)?.toInt() ?? 0;
     final voidTotal = (voidRows.first['total'] as num?)?.toDouble() ?? 0;
@@ -478,21 +484,50 @@ class CashierRepository {
     return results.map((m) => User.fromMap(m)).toList();
   }
 
+  /// Ekspektasi kas fisik laci sebuah shift:
+  /// modal awal + penjualan tunai + kas masuk − kas keluar.
+  /// Selaras dengan `expected_cash` di getShiftReport.
+  Future<double> _expectedDrawerCash(
+      CashierShift shift, Map<String, double> totals) async {
+    final db = await _db.database;
+    final rows = await db.rawQuery(
+      '''
+      SELECT movement_type, COALESCE(SUM(amount), 0) AS total
+      FROM cashier_cash_movements
+      WHERE shift_id = ?
+      GROUP BY movement_type
+    ''',
+      [shift.id],
+    );
+    double cashIn = 0, cashOut = 0;
+    for (final r in rows) {
+      final total = (r['total'] as num).toDouble();
+      if (r['movement_type'] == 'in') cashIn = total;
+      if (r['movement_type'] == 'out') cashOut = total;
+    }
+    return shift.openingCash + (totals['cash'] ?? 0) + cashIn - cashOut;
+  }
+
   Future<Map<String, double>> _calculateShiftTotals(String shiftId) async {
     // Get shift to know when it was opened
     final shift = await _getShiftById(shiftId);
     if (shift == null) return {};
 
     final db = await _db.database;
+    // Jendela [opened_at, closed_at) — tanpa batas atas, menghitung ulang
+    // total shift LAMA akan menyerap pembayaran shift berikutnya.
     final results = await db.rawQuery(
       '''
       SELECT p.payment_method, SUM(p.amount) as total
       FROM payments p
       JOIN orders o ON o.id = p.order_id
-      WHERE p.created_at >= ? AND o.voided_at IS NULL
+      WHERE p.created_at >= ? AND p.created_at < ? AND o.voided_at IS NULL
       GROUP BY p.payment_method
     ''',
-      [shift.openedAt.toIso8601String()],
+      [
+        shift.openedAt.toLocal().toIso8601String(),
+        (shift.closedAt ?? DateTime.now()).toLocal().toIso8601String(),
+      ],
     );
 
     final totals = <String, double>{};

@@ -141,9 +141,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     setState(() {});
   }
 
+  bool _navigating = false;
+
   void _push(Widget screen) {
+    // Guard anti dobel-tap: tap cepat kedua jangan push route ganda.
+    if (_navigating) return;
+    _navigating = true;
     Navigator.push(context, MaterialPageRoute(builder: (_) => screen))
-        .then((_) => _controller.refresh());
+        .then((_) {
+      _navigating = false;
+      _controller.refresh();
+    });
   }
 
   Widget _screenFor(String key) {

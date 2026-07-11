@@ -230,6 +230,28 @@ class CloudSyncService {
           }),
         );
 
+        // Validasi BENTUK respons sebelum menandai sukses. Dio hanya melempar
+        // untuk non-2xx; respons 200 dengan envelope error/bentuk asing TIDAK
+        // boleh membuat outbox ditandai terkirim (data uang bisa hilang diam2).
+        final root = resp.data;
+        final rootMap = root is Map ? root : null;
+        final dataPart = rootMap?['data'];
+        final hasResults = dataPart is Map && dataPart['results'] is List;
+        final okShape =
+            rootMap != null && (rootMap['success'] == true || hasResults);
+        if (!okShape) {
+          _consecutiveFails++;
+          for (final r in rows) {
+            await _queue.markFailed(
+              r['id'] as int,
+              'Respons cloud tidak dikenal (bukan envelope BatchSync)',
+              r['retry_count'] as int,
+              r['max_retries'] as int,
+            );
+          }
+          return {'sent': rows.length, 'success': 0, 'failed': rows.length};
+        }
+
         final failedIds = _extractFailedLocalIds(resp.data);
 
         var success = 0;
@@ -528,6 +550,16 @@ class CloudSyncService {
     }
   }
 
+  /// Konversi timestamp cloud (UTC, akhiran Z) ke ISO waktu LOKAL tanpa zona —
+  /// konsisten dengan seluruh timestamp lokal (created_at pembayaran dll).
+  /// Tanpa ini, batas shift/laporan bergeser sebesar offset zona (mis. +7 WIB)
+  /// karena perbandingan string mencampur dua zona.
+  String _toLocalIso(String raw, String fallback) {
+    final t = DateTime.tryParse(raw);
+    if (t == null) return fallback;
+    return t.toLocal().toIso8601String();
+  }
+
   Future<void> _restoreShift(dynamic txn, Map s) async {
     final id = _pick(s, ['id', 'local_id']);
     if (id.isEmpty) return;
@@ -537,7 +569,7 @@ class CloudSyncService {
       {
         'id': id,
         'opened_by': _pick(s, ['opened_by', 'opened_by_name'], 'Kasir'),
-        'opened_at': _pick(s, ['opened_at'], now),
+        'opened_at': _toLocalIso(_pick(s, ['opened_at'], now), now),
         'opening_cash': _numOf(s, ['opening_cash']),
         'status': 'open',
         'created_at': now,
@@ -568,7 +600,7 @@ class CloudSyncService {
             _oneOf(_pick(o, ['order_status', 'status']), const ['cooking', 'ready', 'served'], 'cooking'),
         'payment_status': _oneOf(_pick(pay, ['payment_status']),
             const ['unpaid', 'partial', 'paid'], 'unpaid'),
-        'created_at': _pick(o, ['created_at'], now),
+        'created_at': _toLocalIso(_pick(o, ['created_at'], now), now),
         'updated_at': now,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
@@ -609,7 +641,7 @@ class CloudSyncService {
         'counterpart_name':
             _pick(m, ['counterpart_name', 'name'], '-'),
         'note': _pick(m, ['note']),
-        'created_at': _pick(m, ['created_at'], now),
+        'created_at': _toLocalIso(_pick(m, ['created_at'], now), now),
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );

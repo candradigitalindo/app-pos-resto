@@ -27,12 +27,10 @@ class AuthService {
 
     final user = User.fromMap(results.first);
 
-    // Verify PIN hash using bcrypt-style comparison
-    // For now using simple hash comparison
-    // TODO: Implement proper bcrypt verification
+    // Verifikasi hash PIN. Jalur backdoor 'dummyhash' (menerima 1234 tanpa
+    // hash sungguhan) DIHAPUS — akun seed dimigrasi ke hash asli di DB v10.
     final pinHash = _hashPin(pin);
-    if (user.passwordHash != pinHash &&
-        !_verifyBcrypt(pin, user.passwordHash)) {
+    if (user.passwordHash != pinHash) {
       throw Exception('PIN salah');
     }
 
@@ -46,7 +44,6 @@ class AuthService {
   Future<User> loginByPin(String pin) async {
     final pinHash = _hashPin(pin);
     final rows = await _db.query('users', where: 'is_active = 1');
-    // 1) Cocok hash persis (paling tepat).
     for (final m in rows) {
       if ((m['password_hash'] as String) == pinHash) {
         final u = User.fromMap(m);
@@ -55,46 +52,7 @@ class AuthService {
         return u;
       }
     }
-    // 2) Fallback akun seed (hash 'dummyhash' menerima 1234).
-    for (final m in rows) {
-      if (_verifyBcrypt(pin, m['password_hash'] as String)) {
-        final u = User.fromMap(m);
-        _currentUser = u;
-        await _saveSession(u);
-        return u;
-      }
-    }
     throw Exception('PIN salah');
-  }
-
-  /// Quick login with PIN only (for returning users)
-  Future<User> quickLogin(String pin) async {
-    final session = await _loadSession();
-    if (session == null) {
-      throw Exception('Sesi habis, silakan login ulang');
-    }
-
-    final results = await _db.query(
-      'users',
-      where: 'id = ? AND is_active = 1',
-      whereArgs: [session],
-    );
-
-    if (results.isEmpty) {
-      throw Exception('User tidak ditemukan');
-    }
-
-    final user = User.fromMap(results.first);
-
-    final pinHash = _hashPin(pin);
-    if (user.passwordHash != pinHash &&
-        !_verifyBcrypt(pin, user.passwordHash)) {
-      throw Exception('PIN salah');
-    }
-
-    _currentUser = user;
-    await _saveSession(user);
-    return user;
   }
 
   /// Logout
@@ -149,7 +107,7 @@ class AuthService {
   /// Apakah [pin] akan membuka akun ber-hash [existingHash]?
   /// Dipakai untuk menjaga PIN unik antar user (login berbasis PIN).
   bool _pinMatches(String pin, String existingHash) =>
-      existingHash == _hashPin(pin) || _verifyBcrypt(pin, existingHash);
+      existingHash == _hashPin(pin);
 
   /// Lempar error bila [pin] sudah dipakai user lain (selain [exceptId]).
   Future<void> _ensurePinUnique(String pin, {String? exceptId}) async {
@@ -270,15 +228,6 @@ class AuthService {
     final bytes = utf8.encode(pin);
     final digest = sha256.convert(bytes);
     return digest.toString();
-  }
-
-  bool _verifyBcrypt(String pin, String hash) {
-    // TODO: Implement proper bcrypt verification
-    // For development, accept known default PIN
-    if (hash.contains('dummyhash')) {
-      return pin == '1234';
-    }
-    return false;
   }
 
   Future<void> _saveSession(User user) async {

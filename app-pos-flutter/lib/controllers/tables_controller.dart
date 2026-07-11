@@ -190,29 +190,6 @@ class TablesController extends ChangeNotifier {
     }
   }
 
-  Future<void> moveOrder({
-    required String orderId,
-    required String newTableNumber,
-  }) async {
-    _setState(_state.copyWith(isProcessing: true, clearError: true));
-    try {
-      await _orderRepo.moveOrderToTable(
-        orderId: orderId,
-        newTableNumber: newTableNumber,
-      );
-      _setState(_state.copyWith(
-        isProcessing: false,
-        successMessage: 'Order berhasil dipindah ke meja $newTableNumber',
-      ));
-      await loadTables();
-    } catch (e) {
-      _setState(_state.copyWith(
-        isProcessing: false,
-        errorMessage: 'Gagal pindah meja: $e',
-      ));
-    }
-  }
-
   Future<void> seedTables({int count = 10}) async {
     _setState(_state.copyWith(isProcessing: true, clearError: true));
     try {

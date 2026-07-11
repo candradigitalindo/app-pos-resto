@@ -30,7 +30,6 @@ class AppColors {
   // ── Chrome forest (sidebar & login — cocokkan dgn Cloud POS) ───────────────
   static const Color green = brand; // ikon logo di tile putih
   static const Color greenDark = brandDark;
-  static const Color greenLight = brandLight;
 
   /// Gradasi sidebar & header chrome — forest hijau gelap premium.
   static const List<Color> sidebarGradient = [
@@ -55,7 +54,6 @@ class AppColors {
   static const Color borderStrong = Color(0xFFD4DCD7);
 
   /// Warna kaca (frosted glass) — dipakai dengan BackdropFilter.
-  static const Color glassLight = Color(0xCCFFFFFF); // putih 80%
   static const Color glassOnDark = Color(0x1FFFFFFF); // putih 12% di atas gelap
 
   // ── Teks ───────────────────────────────────────────────────────────────────

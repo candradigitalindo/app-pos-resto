@@ -82,26 +82,6 @@ class ProductRepository {
     );
   }
 
-  Future<void> deleteCategory(String id) async {
-    // Cloud DeleteCategory mengidentifikasi via NAME, jadi sertakan name.
-    final rows = await _db.query('categories',
-        where: 'id = ?', whereArgs: [id], limit: 1);
-    final name = rows.isNotEmpty ? (rows.first['name'] as String? ?? '') : '';
-
-    await _db.update(
-      'categories',
-      {'is_deleted': 1},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
-    await _sync.enqueue(
-      entityType: 'category',
-      entityId: id,
-      operation: 'delete',
-      payload: {'local_id': id, 'id': id, 'name': name},
-    );
-  }
-
   // ==================== PRODUCTS ====================
 
   Future<List<Product>> getProducts({String? categoryId}) async {
@@ -132,16 +112,6 @@ class ProductRepository {
       orderBy: 'name ASC',
     );
     return results.map((m) => Product.fromMap(m)).toList();
-  }
-
-  Future<Product?> getProductById(String id) async {
-    final results = await _db.query(
-      'products',
-      where: 'id = ? AND is_deleted = 0',
-      whereArgs: [id],
-    );
-    if (results.isEmpty) return null;
-    return Product.fromMap(results.first);
   }
 
   Future<Product> createProduct({
@@ -202,52 +172,6 @@ class ProductRepository {
       operation: 'delete',
       payload: {'local_id': id, 'id': id},
     );
-  }
-
-  // ==================== PRODUCT NOTES ====================
-
-  Future<List<ProductNote>> getProductNotes(String productId) async {
-    final results = await _db.query(
-      'product_notes',
-      where: 'product_id = ?',
-      whereArgs: [productId],
-    );
-    return results.map((m) => ProductNote.fromMap(m)).toList();
-  }
-
-  Future<void> addProductNote(String productId, String note) async {
-    await _db.insert('product_notes', {
-      'product_id': productId,
-      'note': note,
-      'created_at': DateTime.now().toIso8601String(),
-    });
-  }
-
-  // ==================== PRODUCT ADDONS ====================
-
-  Future<List<ProductAddon>> getProductAddons(String productId) async {
-    final results = await _db.query(
-      'product_addons',
-      where: 'product_id = ? AND is_active = 1',
-      whereArgs: [productId],
-    );
-    return results.map((m) => ProductAddon.fromMap(m)).toList();
-  }
-
-  Future<void> addProductAddon({
-    required String productId,
-    required String name,
-    required double price,
-  }) async {
-    final now = DateTime.now();
-    await _db.insert('product_addons', {
-      'product_id': productId,
-      'name': name,
-      'price': price,
-      'is_active': 1,
-      'created_at': now.toIso8601String(),
-      'updated_at': now.toIso8601String(),
-    });
   }
 
   // ==================== SEED DATA ====================

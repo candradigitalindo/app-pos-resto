@@ -493,7 +493,7 @@ class _BillSheetState extends State<_BillSheet> {
       maxWidth: 440,
       builder: (_) => const _DiscountForm(),
     );
-    if (res == null) return;
+    if (res == null || !mounted) return;
     setState(() => _busy = true);
     try {
       await widget.api.applyDiscount(
@@ -540,6 +540,7 @@ class _BillSheetState extends State<_BillSheet> {
         await widget.onPaid(_full, {'paid_amount': _total, 'change': 0}, _method);
         return;
       }
+      if (!mounted) return;
       setState(() {
         _hasPartial = true;
         _log.add('${_methods[_method]}: ${CurrencyHelper.format(amount)}');

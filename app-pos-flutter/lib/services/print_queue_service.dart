@@ -23,9 +23,16 @@ class PrintQueueService {
   bool _draining = false;
 
   static const _pollInterval = Duration(milliseconds: 1500);
-  static const _maxRetries = 3;
+  static const _maxRetries = 5;
   static const _staleLockSeconds = 120;
   static const _batchLimit = 20;
+  // Backoff antar-retry: 5s, 10s, 20s, 40s (dulu 3 retry beruntun dalam ~5
+  // detik → printer yang sekejap reboot langsung 'failed' permanen).
+  static const _retryBaseDelay = Duration(seconds: 5);
+  // Auto-recover: job 'failed' yang masih muda di-requeue otomatis berkala
+  // (dulu hanya lewat tombol manual "Cetak Ulang").
+  static const _autoRecoverWindow = Duration(minutes: 30);
+  static const _autoRecoverEvery = Duration(minutes: 5);
 
   bool get isRunning => _timer != null;
 
@@ -90,6 +97,23 @@ class PrintQueueService {
         [nowIso, staleBefore],
       );
 
+      // Auto-recover: requeue job 'failed' yang masih muda (created dalam
+      // _autoRecoverWindow) dan sudah "diam" >= _autoRecoverEvery sejak
+      // percobaan terakhir. Bounded: setelah window lewat, tetap failed
+      // (butuh tombol manual) — tak ada loop abadi untuk printer yang mati.
+      final recoverCreatedAfter =
+          DateTime.now().subtract(_autoRecoverWindow).toIso8601String();
+      final recoverIdleBefore =
+          DateTime.now().subtract(_autoRecoverEvery).toIso8601String();
+      await db.rawUpdate(
+        '''
+        UPDATE kitchen_print_jobs
+        SET status = 'pending', retry_count = 0, locked_at = NULL, updated_at = ?
+        WHERE status = 'failed' AND created_at >= ? AND updated_at <= ?
+        ''',
+        [nowIso, recoverCreatedAfter, recoverIdleBefore],
+      );
+
       final jobs = await db.query(
         'kitchen_print_jobs',
         where: "status = 'pending' AND locked_at IS NULL",
@@ -99,8 +123,19 @@ class PrintQueueService {
       if (jobs.isEmpty) return;
 
       // Serial: satu job selesai dulu sebelum job berikutnya (aman untuk BT).
+      final now = DateTime.now();
       for (final job in jobs) {
         final id = job['id'] as String;
+
+        // Backoff: job retry ke-N menunggu 5s·2^(N-1) sejak percobaan
+        // terakhir sebelum dicoba lagi (jangan 3x beruntun dalam satu drain).
+        final retryCount = job['retry_count'] as int? ?? 0;
+        if (retryCount > 0) {
+          final last =
+              DateTime.tryParse(job['updated_at'] as String? ?? '') ?? now;
+          final wait = _retryBaseDelay * (1 << (retryCount - 1));
+          if (now.isBefore(last.add(wait))) continue; // belum waktunya
+        }
         final claimed = await db.rawUpdate(
           '''
           UPDATE kitchen_print_jobs

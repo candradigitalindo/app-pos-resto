@@ -309,18 +309,6 @@ class PrinterService {
         .toList();
   }
 
-  /// Printer dengan peran khusus [role] (checker/cashier).
-  Future<List<PrinterDevice>> getPrintersByRole(String role) async {
-    final all = await getSavedPrinters();
-    return all.where((p) => p.hasRole(role)).toList();
-  }
-
-  /// Printer yang mencetak kategori [categoryId].
-  Future<List<PrinterDevice>> getPrintersByCategory(String categoryId) async {
-    final all = await getSavedPrinters();
-    return all.where((p) => p.printsCategory(categoryId)).toList();
-  }
-
   Future<void> savePrinter(PrinterDevice device) async {
     final prefs = await SharedPreferences.getInstance();
     final existing = await getSavedPrinters();

@@ -22,13 +22,26 @@ class DataRetentionService {
     int totalDeleted = 0;
 
     await db.transaction((txn) async {
-      // 1. Cari order IDs yang sudah tua (completed/paid/voided dan di atas retention)
-      final oldOrders = await txn.query(
-        'orders',
-        columns: ['id'],
-        where:
-            "created_at < ? AND (payment_status = 'paid' OR voided_at IS NOT NULL)",
-        whereArgs: [cutoffStr],
+      // 1. Cari order IDs yang sudah tua (completed/paid/voided dan di atas
+      // retention). PENGAMAN SYNC: jangan hapus order yang datanya (order itu
+      // sendiri ATAU transaksinya) masih pending/failed di outbox cloud —
+      // menghapusnya berarti kehilangan data uang yang belum sampai cloud.
+      final oldOrders = await txn.rawQuery(
+        '''
+        SELECT id FROM orders
+        WHERE created_at < ?
+          AND (payment_status = 'paid' OR voided_at IS NOT NULL)
+          AND id NOT IN (
+            SELECT entity_id FROM sync_queue
+            WHERE status IN ('pending', 'failed')
+          )
+          AND id NOT IN (
+            SELECT t.order_id FROM transactions t
+            JOIN sync_queue q ON q.entity_id = t.id
+            WHERE q.status IN ('pending', 'failed')
+          )
+        ''',
+        [cutoffStr],
       );
 
       if (oldOrders.isEmpty) return;
@@ -100,10 +113,12 @@ class DataRetentionService {
         whereArgs: [cutoffStr],
       );
 
-      // 9. Hapus sync_queue lama yang sudah sukses
+      // 9. Hapus sync_queue lama yang sudah SUKSES saja. Entri 'failed'
+      // dipertahankan: itu data yang BELUM pernah sampai cloud (retry habis)
+      // dan bisa dikirim ulang oleh retryFailed() pada siklus sync.
       totalDeleted += await txn.delete(
         'sync_queue',
-        where: "created_at < ? AND status IN ('success', 'failed')",
+        where: "created_at < ? AND status = 'success'",
         whereArgs: [cutoffStr],
       );
 

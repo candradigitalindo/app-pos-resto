@@ -377,10 +377,6 @@ class CashierController extends ChangeNotifier {
     }
   }
 
-  void clearCart() {
-    _setState(_state.copyWith(cart: {}, cartNotes: {}));
-  }
-
   void updateCartNote(String productId, String note) {
     final notes = Map<String, String>.from(_state.cartNotes);
     if (note.isEmpty) {
@@ -418,10 +414,6 @@ class CashierController extends ChangeNotifier {
     if (table.status == 'occupied') {
       loadOrderForTable(table.tableNumber);
     }
-  }
-
-  void clearTable() {
-    _setState(_state.copyWith(clearSelectedTable: true));
   }
 
   void clearError() {

@@ -11,15 +11,6 @@ class AppSpacing {
   static const double lg = 20;
   static const double xl = 24;
   static const double xxl = 32;
-  static const double xxxl = 40;
-
-  // Gap siap pakai (SizedBox) — mengurangi boilerplate.
-  static const Widget gapXxs = SizedBox(width: xxs, height: xxs);
-  static const Widget gapXs = SizedBox(width: xs, height: xs);
-  static const Widget gapSm = SizedBox(width: sm, height: sm);
-  static const Widget gapMd = SizedBox(width: md, height: md);
-  static const Widget gapLg = SizedBox(width: lg, height: lg);
-  static const Widget gapXl = SizedBox(width: xl, height: xl);
 
   static Widget h(double v) => SizedBox(height: v);
   static Widget w(double v) => SizedBox(width: v);
@@ -52,9 +43,7 @@ class AppMotion {
 
   static const Duration fast = Duration(milliseconds: 150);
   static const Duration normal = Duration(milliseconds: 240);
-  static const Duration slow = Duration(milliseconds: 360);
 
   static const Curve easeOut = Curves.easeOutCubic;
-  static const Curve spring = Curves.easeOutBack;
   static const Curve emphasized = Curves.easeInOutCubicEmphasized;
 }
