@@ -1082,6 +1082,11 @@ class _CashierScreenState extends State<CashierScreen> {
   static const double _headerBtnW = 84;
   static const double _headerBtnH = 60;
 
+  // Ukuran efektif tombol header — dikecilkan di HP agar header tak overflow.
+  // Diset di awal [_buildHeader] berdasar lebar layar; default = ukuran tablet.
+  double _hbW = _headerBtnW;
+  double _hbH = _headerBtnH;
+
   Widget _headerBtn({
     required IconData icon,
     required String label,
@@ -1092,8 +1097,8 @@ class _CashierScreenState extends State<CashierScreen> {
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
       child: SizedBox(
-        width: _headerBtnW,
-        height: _headerBtnH,
+        width: _hbW,
+        height: _hbH,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
@@ -1131,6 +1136,8 @@ class _CashierScreenState extends State<CashierScreen> {
           syncing: syncing,
           status: s,
           onTap: _doSync,
+          width: _hbW,
+          height: _hbH,
         ),
       ),
     );
@@ -1527,6 +1534,15 @@ class _CashierScreenState extends State<CashierScreen> {
   }
 
   Widget _buildHeader(CashierState state) {
+    // Di HP (portrait sempit) kecilkan tombol/jarak header agar tak overflow;
+    // di tablet nilai tetap seperti semula.
+    final phone = context.isPhone;
+    _hbW = phone ? 62.0 : _headerBtnW;
+    _hbH = phone ? 54.0 : _headerBtnH;
+    final backSize = phone ? 46.0 : 60.0;
+    final edgeGap = phone ? 6.0 : 10.0;
+    final headerH = phone ? 66.0 : 76.0;
+    final padX = phone ? 10.0 : 16.0;
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -1539,9 +1555,9 @@ class _CashierScreenState extends State<CashierScreen> {
       child: SafeArea(
         bottom: false,
         child: SizedBox(
-          height: 76,
+          height: headerH,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: EdgeInsets.symmetric(horizontal: padX),
             child: Row(
               children: [
                 Material(
@@ -1551,15 +1567,15 @@ class _CashierScreenState extends State<CashierScreen> {
                     borderRadius: BorderRadius.circular(12),
                     onTap: () => Navigator.pop(context),
                     child: Container(
-                      width: 60,
-                      height: 60,
+                      width: backSize,
+                      height: backSize,
                       alignment: Alignment.center,
                       child: const Icon(Icons.arrow_back,
                           color: Colors.white, size: 24),
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: edgeGap),
 
                 // ── Tombol Sinkron: status + tap untuk sinkron ke cloud ──
                 _syncButton(),
@@ -1622,19 +1638,19 @@ class _CashierScreenState extends State<CashierScreen> {
                   ),
                 ),
 
-                const SizedBox(width: 10),
+                SizedBox(width: edgeGap),
 
-                // ── Refresh (ukuran seragam 84×60) ──
+                // ── Refresh (ukuran seragam, mengecil di HP) ──
                 Material(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(12),
                     onTap: () => _controller.loadData(),
-                    child: const SizedBox(
-                      width: _headerBtnW,
-                      height: _headerBtnH,
-                      child: Column(
+                    child: SizedBox(
+                      width: _hbW,
+                      height: _hbH,
+                      child: const Column(
                         mainAxisSize: MainAxisSize.min,
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -1656,19 +1672,19 @@ class _CashierScreenState extends State<CashierScreen> {
                   ),
                 ),
 
-                const SizedBox(width: 10),
+                SizedBox(width: edgeGap),
 
-                // ── Tutup Kasir (paling ujung, merah) — ukuran seragam 84×60 ──
+                // ── Tutup Kasir (paling ujung, merah) — mengecil di HP ──
                 Material(
                   color: AppColors.danger,
                   borderRadius: BorderRadius.circular(12),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(12),
                     onTap: _showCloseShiftDialog,
-                    child: const SizedBox(
-                      width: _headerBtnW,
-                      height: _headerBtnH,
-                      child: Column(
+                    child: SizedBox(
+                      width: _hbW,
+                      height: _hbH,
+                      child: const Column(
                         mainAxisSize: MainAxisSize.min,
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -1726,14 +1742,17 @@ class _CashierScreenState extends State<CashierScreen> {
     return LayoutBuilder(
       builder: (context, c) {
         final w = c.maxWidth;
-        // Kartu lebih besar di layar lebar, lebih ringkas di layar kecil.
-        final maxExtent = w >= 1100
-            ? 200.0
-            : w >= 850
-                ? 185.0
-                : w >= 600
-                    ? 170.0
-                    : 150.0;
+        // Di HP portrait (layar penuh, ~360–430) tampilkan 2 kolom agar kartu
+        // tak terlalu kecil; di tablet ladder ukuran lama dipertahankan.
+        final maxExtent = context.isPhone
+            ? (w / 2)
+            : w >= 1100
+                ? 200.0
+                : w >= 850
+                    ? 185.0
+                    : w >= 600
+                        ? 170.0
+                        : 150.0;
         final pad = w >= 850 ? 18.0 : 12.0;
         final gap = w >= 850 ? 14.0 : 10.0;
         return GridView.builder(
@@ -2758,11 +2777,15 @@ class _SyncButton extends StatefulWidget {
   final bool syncing;
   final ({bool enabled, int pending, bool online})? status;
   final VoidCallback onTap;
+  final double width;
+  final double height;
 
   const _SyncButton({
     required this.syncing,
     required this.status,
     required this.onTap,
+    this.width = 84,
+    this.height = 60,
   });
 
   @override
@@ -2844,8 +2867,8 @@ class _SyncButtonState extends State<_SyncButton>
           // tapi tampil redup. Saat sedang sinkron → tidak bisa ditekan.
           onTap: widget.syncing ? null : widget.onTap,
           child: SizedBox(
-            width: 84,
-            height: 60,
+            width: widget.width,
+            height: widget.height,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
@@ -5967,10 +5990,11 @@ class _TablePickerDialogState extends State<_TablePickerDialog> {
                             style: TextStyle(color: AppColors.textTertiary)))
                     : GridView.builder(
                         padding: EdgeInsets.zero,
-                        // 5 kolom mengisi lebar; lebih dari muat → scroll ke bawah.
+                        // Kolom mengisi lebar; di HP lebih sedikit agar tak
+                        // sempit, sisanya scroll ke bawah.
                         gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 5,
+                            SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: context.isPhone ? 3 : 5,
                           mainAxisSpacing: 12,
                           crossAxisSpacing: 12,
                           childAspectRatio: 1.25,

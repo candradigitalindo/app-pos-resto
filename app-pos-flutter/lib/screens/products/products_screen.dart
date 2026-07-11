@@ -525,7 +525,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                           gridDelegate:
                               SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: context.gridColumns(
-                                minTileWidth: 160, gap: AppSpacing.sm),
+                                minTileWidth: 150, gap: AppSpacing.sm),
                             mainAxisSpacing: AppSpacing.sm,
                             crossAxisSpacing: AppSpacing.sm,
                             childAspectRatio: 0.76,

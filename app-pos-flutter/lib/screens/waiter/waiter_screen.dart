@@ -207,7 +207,9 @@ class _WaiterScreenState extends State<WaiterScreen> {
               ? () => Navigator.pop(context)
               : _controller.goBackToTables,
           actions: [
-            if (inTableView) ...[
+            // Di ponsel: pindahkan pill hitungan ke bawah (search bar) agar
+            // header tak overflow. Di tablet: tetap tampil di header.
+            if (inTableView && !context.isPhone) ...[
               StatusPill(
                 label: '${state.availableCount} Tersedia',
                 color: AppColors.success,
@@ -256,41 +258,80 @@ class _WaiterScreenState extends State<WaiterScreen> {
                   ),
           ],
         ),
-        if (inTableView) _buildTableSearchBar(),
+        if (inTableView) _buildTableSearchBar(state),
       ],
     );
   }
 
-  Widget _buildTableSearchBar() {
+  Widget _buildTableSearchBar(WaiterState state) {
+    final searchField = Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: AppRadius.rMd,
+        border: Border.all(color: AppColors.border),
+      ),
+      child: TextField(
+        onChanged: (v) => setState(() => _searchQuery = v),
+        style: AppType.body,
+        decoration: InputDecoration(
+          hintText: 'Cari meja...',
+          hintStyle: AppType.body.copyWith(color: AppColors.textTertiary),
+          prefixIcon: const Icon(Icons.search_rounded,
+              color: AppColors.textTertiary, size: 20),
+          border: InputBorder.none,
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(
+              vertical: 12, horizontal: AppSpacing.xs),
+        ),
+      ),
+    );
+
+    // Ponsel portrait: search penuh selebar layar, lalu baris hitungan +
+    // filter yang bisa digeser horizontal (hindari Row sempit yang overflow).
+    if (context.isPhone) {
+      return Padding(
+        padding: EdgeInsets.fromLTRB(
+            context.pagePadX, AppSpacing.sm, context.pagePadX, 0),
+        child: Column(
+          children: [
+            searchField,
+            const SizedBox(height: AppSpacing.sm),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  StatusPill(
+                    label: '${state.availableCount} Tersedia',
+                    color: AppColors.success,
+                    icon: Icons.event_available_rounded,
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  StatusPill(
+                    label: '${state.occupiedCount} Terisi',
+                    color: AppColors.warning,
+                    icon: Icons.chair_rounded,
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  _filterPill('Semua', 'all'),
+                  const SizedBox(width: AppSpacing.xxs),
+                  _filterPill('Tersedia', 'available'),
+                  const SizedBox(width: AppSpacing.xxs),
+                  _filterPill('Terisi', 'occupied'),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Tablet / landscape: tata letak asli — search melebar + filter sejajar.
     return Padding(
       padding: EdgeInsets.fromLTRB(
           context.pagePadX, AppSpacing.sm, context.pagePadX, 0),
       child: Row(
         children: [
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: AppRadius.rMd,
-                border: Border.all(color: AppColors.border),
-              ),
-              child: TextField(
-                onChanged: (v) => setState(() => _searchQuery = v),
-                style: AppType.body,
-                decoration: InputDecoration(
-                  hintText: 'Cari meja...',
-                  hintStyle:
-                      AppType.body.copyWith(color: AppColors.textTertiary),
-                  prefixIcon: const Icon(Icons.search_rounded,
-                      color: AppColors.textTertiary, size: 20),
-                  border: InputBorder.none,
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(
-                      vertical: 12, horizontal: AppSpacing.xs),
-                ),
-              ),
-            ),
-          ),
+          Expanded(child: searchField),
           const SizedBox(width: AppSpacing.xs),
           _filterPill('Semua', 'all'),
           const SizedBox(width: AppSpacing.xxs),

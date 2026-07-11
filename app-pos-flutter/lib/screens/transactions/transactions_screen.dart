@@ -529,6 +529,8 @@ class _RevenueCard extends StatelessWidget {
           Text(
             CurrencyHelper.format(state.totalRevenue),
             style: AppType.amountLg.copyWith(color: Colors.white),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: AppSpacing.md),
           Row(

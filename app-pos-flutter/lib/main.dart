@@ -21,8 +21,10 @@ void main() async {
   // System UI will temporarily appear on edge swipe, then auto-hide again
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
-  // Lock orientation to landscape for POS tablet use
+  // Semua orientasi didukung: tablet biasanya landscape, HP bisa portrait.
+  // Layout menyesuaikan otomatis via helper responsif (context.isPhone dll).
   SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);

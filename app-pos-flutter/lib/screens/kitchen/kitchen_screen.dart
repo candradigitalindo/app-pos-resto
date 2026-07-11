@@ -564,12 +564,27 @@ class _TableSection extends StatelessWidget {
                 const Icon(Icons.table_restaurant_rounded,
                     size: 18, color: AppColors.moduleMeja),
                 const SizedBox(width: AppSpacing.xs),
-                Text('Meja ${order.tableNumber}',
-                    style: AppType.title.copyWith(color: _textHi)),
-                const SizedBox(width: AppSpacing.xs),
-                Text('· ${items.length} item · $timeAgo',
-                    style: AppType.caption.copyWith(color: _textLo)),
-                const Spacer(),
+                // Fleksibel + ellipsis: nama meja / meta panjang tak overflow di
+                // portrait sempit; tombol "Siap Semua" tetap terdorong ke kanan.
+                Expanded(
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Text('Meja ${order.tableNumber}',
+                            style: AppType.title.copyWith(color: _textHi),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                      const SizedBox(width: AppSpacing.xs),
+                      Flexible(
+                        child: Text('· ${items.length} item · $timeAgo',
+                            style: AppType.caption.copyWith(color: _textLo),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                    ],
+                  ),
+                ),
                 if (anyActive)
                   TextButton.icon(
                     onPressed: onReadyAll,

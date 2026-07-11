@@ -869,13 +869,15 @@ class _StatsGrid extends StatelessWidget {
     if (state.isLoading) {
       return const SizedBox(height: 60, child: AppLoader());
     }
+    // 2 kolom di HP; aspect lebih tinggi (2.4) memberi ruang vertikal agar
+    // kartu tak overflow di portrait sempit (~360px).
     return GridView.count(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 2,
+      crossAxisCount: context.gridColumns(minTileWidth: 150).clamp(1, 2),
       mainAxisSpacing: AppSpacing.xs,
       crossAxisSpacing: AppSpacing.xs,
-      childAspectRatio: 2.7,
+      childAspectRatio: 2.4,
       children: _statCards(state, compact: true),
     );
   }

@@ -298,7 +298,12 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                 const SizedBox(height: 3),
                 Row(
                   children: [
-                    Text('@${u.username}', style: AppType.caption),
+                    Flexible(
+                      child: Text('@${u.username}',
+                          style: AppType.caption,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                    ),
                     const SizedBox(width: AppSpacing.xs),
                     StatusPill(
                       label: _roleLabels[u.role] ?? u.role,

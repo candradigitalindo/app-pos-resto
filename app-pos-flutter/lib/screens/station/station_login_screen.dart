@@ -83,7 +83,7 @@ class _StationLoginScreenState extends State<StationLoginScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildBranding(),
+                  _buildBranding(context),
                   const SizedBox(height: AppSpacing.xl),
                   _buildLoginCard(),
                 ],
@@ -95,26 +95,27 @@ class _StationLoginScreenState extends State<StationLoginScreen> {
     );
   }
 
-  Widget _buildBranding() {
+  Widget _buildBranding(BuildContext context) {
+    final compact = context.isPhone;
     return Column(
       children: [
         Container(
-          width: 72,
-          height: 72,
+          width: compact ? 64 : 72,
+          height: compact ? 64 : 72,
           decoration: BoxDecoration(
             color: AppColors.soft(Colors.white, 0.95),
             borderRadius: AppRadius.rXl,
             border: Border.all(color: AppColors.soft(Colors.white, 0.6)),
             boxShadow: AppShadows.glow(AppColors.greenDark, strength: 0.4),
           ),
-          child:
-              const Icon(Icons.point_of_sale_rounded, color: AppColors.green, size: 36),
+          child: Icon(Icons.point_of_sale_rounded,
+              color: AppColors.green, size: compact ? 32 : 36),
         ),
         const SizedBox(height: AppSpacing.md),
-        const Text(
+        Text(
           'Login Station',
           style: TextStyle(
-            fontSize: 26,
+            fontSize: compact ? 22 : 26,
             fontWeight: FontWeight.w800,
             color: Colors.white,
             letterSpacing: -0.5,

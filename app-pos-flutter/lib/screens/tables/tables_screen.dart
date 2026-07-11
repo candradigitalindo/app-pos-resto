@@ -357,7 +357,7 @@ class _TablesScreenState extends State<TablesScreen> {
                             gridDelegate:
                                 SliverGridDelegateWithFixedCrossAxisCount(
                               crossAxisCount:
-                                  context.gridColumns(minTileWidth: 170),
+                                  context.gridColumns(minTileWidth: 150),
                               mainAxisSpacing: AppSpacing.md,
                               crossAxisSpacing: AppSpacing.md,
                               childAspectRatio: 0.88,
@@ -420,17 +420,32 @@ class _TablesScreenState extends State<TablesScreen> {
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
-          Row(
-            children: [
-              Expanded(child: _searchField()),
-              const SizedBox(width: AppSpacing.xs),
-              _filterPill('Semua', ''),
-              const SizedBox(width: AppSpacing.xxs),
-              _filterPill('Tersedia', 'available'),
-              const SizedBox(width: AppSpacing.xxs),
-              _filterPill('Terisi', 'occupied'),
-            ],
-          ),
+          // Portrait sempit: search penuh di atas, pill filter di baris sendiri
+          // (hindari search terlalu mepet). Tablet/landscape tetap satu baris.
+          if (context.isPhone) ...[
+            _searchField(),
+            const SizedBox(height: AppSpacing.xs),
+            Row(
+              children: [
+                _filterPill('Semua', ''),
+                const SizedBox(width: AppSpacing.xxs),
+                _filterPill('Tersedia', 'available'),
+                const SizedBox(width: AppSpacing.xxs),
+                _filterPill('Terisi', 'occupied'),
+              ],
+            ),
+          ] else
+            Row(
+              children: [
+                Expanded(child: _searchField()),
+                const SizedBox(width: AppSpacing.xs),
+                _filterPill('Semua', ''),
+                const SizedBox(width: AppSpacing.xxs),
+                _filterPill('Tersedia', 'available'),
+                const SizedBox(width: AppSpacing.xxs),
+                _filterPill('Terisi', 'occupied'),
+              ],
+            ),
         ],
       ),
     );

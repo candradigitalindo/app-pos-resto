@@ -39,7 +39,7 @@ class RoleSelectorScreen extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _buildBranding(),
+                    _buildBranding(context),
                     const SizedBox(height: AppSpacing.xxl),
                     LayoutBuilder(
                       builder: (context, c) {
@@ -103,27 +103,28 @@ class RoleSelectorScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildBranding() {
+  Widget _buildBranding(BuildContext context) {
+    final compact = context.isPhone;
     return Column(
       children: [
         Container(
-          width: 76,
-          height: 76,
+          width: compact ? 64 : 76,
+          height: compact ? 64 : 76,
           decoration: BoxDecoration(
             color: AppColors.soft(Colors.white, 0.95),
             borderRadius: AppRadius.rXl,
             border: Border.all(color: AppColors.soft(Colors.white, 0.6)),
             boxShadow: AppShadows.glow(AppColors.greenDark, strength: 0.4),
           ),
-          child: const Icon(Icons.devices_other_rounded,
-              color: AppColors.green, size: 38),
+          child: Icon(Icons.devices_other_rounded,
+              color: AppColors.green, size: compact ? 32 : 38),
         ),
         const SizedBox(height: AppSpacing.md),
-        const Text(
+        Text(
           'Perangkat ini sebagai?',
           textAlign: TextAlign.center,
           style: TextStyle(
-            fontSize: 26,
+            fontSize: compact ? 22 : 26,
             fontWeight: FontWeight.w800,
             color: Colors.white,
             letterSpacing: -0.5,

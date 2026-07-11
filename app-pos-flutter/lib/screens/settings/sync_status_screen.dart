@@ -145,12 +145,20 @@ class _SyncStatusScreenState extends State<SyncStatusScreen> {
         padding: const EdgeInsets.all(AppSpacing.sm),
         child: Row(
           children: [
-            _statChip('Antri', _stats['pending'] ?? 0, AppColors.warning),
-            const SizedBox(width: AppSpacing.xs),
-            _statChip('Terkirim', _stats['success'] ?? 0, AppColors.success),
-            const SizedBox(width: AppSpacing.xs),
-            _statChip('Gagal', _stats['failed'] ?? 0, AppColors.danger),
-            const Spacer(),
+            // Wrap agar chip melipat (bukan overflow) saat sempit / angka besar.
+            Expanded(
+              child: Wrap(
+                spacing: AppSpacing.xs,
+                runSpacing: AppSpacing.xs,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  _statChip('Antri', _stats['pending'] ?? 0, AppColors.warning),
+                  _statChip('Terkirim', _stats['success'] ?? 0, AppColors.success),
+                  _statChip('Gagal', _stats['failed'] ?? 0, AppColors.danger),
+                ],
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
             // Aksi sekunder (bukan CTA utama) → aksen GOLD tonal.
             AppButton(
               label: 'Bersihkan',

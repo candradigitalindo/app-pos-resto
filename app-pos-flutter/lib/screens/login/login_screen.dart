@@ -144,10 +144,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
               color: AppColors.green, size: compact ? 32 : 38),
         ),
         const SizedBox(height: AppSpacing.md),
-        const Text(
+        Text(
           'Nusantara POS',
           style: TextStyle(
-            fontSize: 28,
+            fontSize: compact ? 24 : 28,
             fontWeight: FontWeight.w800,
             color: Colors.white,
             letterSpacing: -0.5,
