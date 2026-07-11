@@ -230,21 +230,31 @@ class CloudSyncService {
           }),
         );
 
-        // Validasi BENTUK respons sebelum menandai sukses. Dio hanya melempar
-        // untuk non-2xx; respons 200 dengan envelope error/bentuk asing TIDAK
-        // boleh membuat outbox ditandai terkirim (data uang bisa hilang diam2).
+        // PENANDAAN BERBASIS KONFIRMASI PER-ITEM (whitelist).
+        //
+        // Kontrak cloud: `success:true` di level atas HARDCODED — cloud selalu
+        // balas 200 + success:true asalkan request valid, MESKI ada item yang
+        // gagal tersimpan. Keandalan sebenarnya ada di `data.results[]`:
+        // tiap item sukses punya {local_id, status:"success"}.
+        //
+        // Maka: tandai "synced" HANYA untuk local_id yang cloud konfirmasi
+        // status=="success". Item ber-status "failed" ATAU yang TIDAK muncul di
+        // results[] harus TETAP di outbox & di-retry (jangan pernah andalkan
+        // success:true level atas → kalau tidak, transaksi gagal tersimpan di
+        // cloud akan ditandai terkirim di tablet dan HILANG permanen).
         final root = resp.data;
-        final rootMap = root is Map ? root : null;
-        final dataPart = rootMap?['data'];
-        final hasResults = dataPart is Map && dataPart['results'] is List;
-        final okShape =
-            rootMap != null && (rootMap['success'] == true || hasResults);
-        if (!okShape) {
+        final dataPart = root is Map ? root['data'] : null;
+        final results = dataPart is Map ? dataPart['results'] : null;
+
+        // Tanpa results[] yang valid, respons TIDAK bisa dipercaya (success:true
+        // level atas bukan sinyal). Perlakukan seluruh batch sebagai gagal →
+        // tetap pending untuk dicoba lagi.
+        if (results is! List) {
           _consecutiveFails++;
           for (final r in rows) {
             await _queue.markFailed(
               r['id'] as int,
-              'Respons cloud tidak dikenal (bukan envelope BatchSync)',
+              'Respons cloud tanpa data.results[] — tak bisa konfirmasi per-item',
               r['retry_count'] as int,
               r['max_retries'] as int,
             );
@@ -252,7 +262,13 @@ class CloudSyncService {
           return {'sent': rows.length, 'success': 0, 'failed': rows.length};
         }
 
-        final failedIds = _extractFailedLocalIds(resp.data);
+        final syncedIds = <String>{};
+        for (final it in results) {
+          if (it is Map && it['status'] == 'success') {
+            final lid = it['local_id'];
+            if (lid is String) syncedIds.add(lid);
+          }
+        }
 
         var success = 0;
         var failed = 0;
@@ -261,15 +277,18 @@ class CloudSyncService {
           final entityId = r['entity_id'] as String;
           final retry = r['retry_count'] as int;
           final maxRetries = r['max_retries'] as int;
-          if (failedIds.contains(entityId)) {
-            await _queue.markFailed(id, 'Cloud menolak item', retry, maxRetries);
-            failed++;
-          } else {
+          if (syncedIds.contains(entityId)) {
             await _queue.markSuccess(id);
             success++;
+          } else {
+            // status "failed" atau tak dikonfirmasi cloud → tetap di outbox.
+            await _queue.markFailed(
+                id, 'Belum dikonfirmasi cloud (results status ≠ success)',
+                retry, maxRetries);
+            failed++;
           }
         }
-        _consecutiveFails = 0;
+        _consecutiveFails = failed > 0 ? _consecutiveFails + 1 : 0;
         return {'sent': rows.length, 'success': success, 'failed': failed};
       } on DioException catch (e) {
         // Gagal jaringan → biarkan tetap pending, naikkan backoff
@@ -996,24 +1015,6 @@ class CloudSyncService {
       url = url.substring(0, url.length - '/api/v1'.length);
     }
     return url;
-  }
-
-  /// Ambil daftar local_id yang gagal dari respons BatchSync (kalau ada).
-  Set<String> _extractFailedLocalIds(dynamic respData) {
-    final failed = <String>{};
-    try {
-      final data = respData is Map ? respData['data'] : null;
-      final results = data is Map ? data['results'] : null;
-      if (results is List) {
-        for (final r in results) {
-          if (r is Map && r['status'] == 'failed') {
-            final lid = r['local_id'];
-            if (lid is String) failed.add(lid);
-          }
-        }
-      }
-    } catch (_) {}
-    return failed;
   }
 
   String _errMessage(DioException e) {
