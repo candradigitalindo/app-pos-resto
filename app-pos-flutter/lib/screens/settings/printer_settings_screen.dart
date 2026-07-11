@@ -657,8 +657,9 @@ class _PrinterTile extends StatelessWidget {
     );
   }
 
-  /// Rangkap cetak struk: 1× (biasa) / 2× (salinan ke-2 bertanda "COPY").
-  /// Hanya berlaku untuk struk kasir (bill/pembayaran), bukan tiket dapur/bar.
+  /// Rangkap cetak: 1× (biasa) / 2× (rangkap). Berlaku untuk struk kasir
+  /// (salinan ke-2 bertanda "COPY") MAUPUN tiket dapur/bar (tiket kerja
+  /// identik, mis. lini masak + expo).
   Widget _buildCopiesSelector() {
     Widget chip(String label, int n) {
       final selected = device.copies == n;
@@ -691,7 +692,7 @@ class _PrinterTile extends StatelessWidget {
           const Icon(Icons.content_copy_rounded,
               size: 14, color: AppColors.moduleKasir),
           const SizedBox(width: 5),
-          Text('Rangkap struk:', style: AppType.label),
+          Text('Rangkap cetak:', style: AppType.label),
         ]),
         chip('1×', 1),
         chip('2× (Copy)', 2),

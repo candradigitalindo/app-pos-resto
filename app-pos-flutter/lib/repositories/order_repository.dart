@@ -1670,6 +1670,20 @@ class OrderRepository {
       final now = DateTime.now();
       var routedStation = false; // ada printer kategori yang kebagian item?
 
+      // Rangkap tiket dapur/bar sesuai printer.copies (Pengaturan Printer).
+      // Tiket duplikat identik (keduanya tiket kerja, mis. lini masak + expo);
+      // penanda hanya di label antrian, bukan di badan tiket.
+      Future<void> enqueueCopies(
+          PrinterDevice pr, List<int> bytes, String label) async {
+        for (var c = 1; c <= pr.copies; c++) {
+          await PrintQueueService.instance.enqueueForPrinter(
+            pr,
+            bytes: bytes,
+            label: c == 1 ? label : '$label (Rangkap $c)',
+          );
+        }
+      }
+
       // Pemesan: nama waiter bila ada, jika tidak kasir pembuat order.
       final placedBy = waiterName.isNotEmpty
           ? waiterName
@@ -1700,11 +1714,8 @@ class OrderRepository {
             customerName: order.customerName,
             pax: order.pax,
           );
-          await PrintQueueService.instance.enqueueForPrinter(
-            p,
-            bytes: bytes,
-            label: 'Meja ${order.tableNumber} (CHECKER)',
-          );
+          await enqueueCopies(
+              p, bytes, 'Meja ${order.tableNumber} (CHECKER)');
           continue;
         }
 
@@ -1724,11 +1735,8 @@ class OrderRepository {
           customerName: order.customerName,
           pax: order.pax,
         );
-        await PrintQueueService.instance.enqueueForPrinter(
-          p,
-          bytes: bytes,
-          label: 'Meja ${order.tableNumber} (${p.name})',
-        );
+        await enqueueCopies(
+            p, bytes, 'Meja ${order.tableNumber} (${p.name})');
         routedStation = true;
       }
 
@@ -1753,11 +1761,7 @@ class OrderRepository {
             customerName: order.customerName,
             pax: order.pax,
           );
-          await PrintQueueService.instance.enqueueForPrinter(
-            fb,
-            bytes: bytes,
-            label: 'Meja ${order.tableNumber}',
-          );
+          await enqueueCopies(fb, bytes, 'Meja ${order.tableNumber}');
           debugPrint(
               'enqueueKitchenPrints: belum ada kategori yang di-assign — semua item dikirim ke "${fb.name}". Atur kategori printer di Pengaturan untuk routing tepat.');
         }
