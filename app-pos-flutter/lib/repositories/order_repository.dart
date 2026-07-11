@@ -993,7 +993,10 @@ class OrderRepository {
       whereArgs: [orderId],
     );
 
-    await _recalculateOrderTotal(orderId);
+    // Hitung ULANG pajak/charge otomatis atas basis SETELAH diskon (bukan
+    // sekadar recalc total). Tanpa ini pajak tetap atas subtotal kotor →
+    // diskon penuh menyisakan pajak. Diskon manual (charge_id NULL) dipertahankan.
+    await _reapplyAutoChargesAndRecalc(orderId);
 
     // Sync order (total kini sudah didiskon) ke cloud — selaras app-pos
     // yang memanggil enqueueOrderSync setelah diskon diterapkan.
@@ -1821,12 +1824,23 @@ class OrderRepository {
       final items = await getOrderItems(orderId);
       final subtotal = items.fold(0.0, (sum, item) => sum + item.subtotal);
 
+      // Basis pajak/charge = subtotal SETELAH diskon manual (DPP sesuai PB1/
+      // PPN F&B). Diskon disimpan sebagai charge negatif (charge_id NULL) yang
+      // TIDAK dihapus saat auto-charge di-reapply, jadi selalu terbaca di sini.
+      // Contoh: subtotal 200rb − diskon 200rb → basis 0 → pajak 0 → total 0.
+      final existing = await getOrderCharges(orderId);
+      final discountAbs = existing
+          .where((c) =>
+              c.isManual && c.name == 'Diskon' && c.appliedAmount < 0)
+          .fold(0.0, (s, c) => s + (-c.appliedAmount));
+      final netBase = (subtotal - discountAbs).clamp(0.0, double.infinity);
+
       for (final chargeMap in charges) {
         final charge = AdditionalCharge.fromMap(chargeMap);
         double applied = 0;
-        if (subtotal > 0) {
+        if (netBase > 0) {
           if (charge.chargeType == 'percentage') {
-            applied = subtotal * charge.value / 100;
+            applied = netBase * charge.value / 100;
           } else {
             applied = charge.value;
           }
