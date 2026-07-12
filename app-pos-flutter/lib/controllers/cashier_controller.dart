@@ -301,12 +301,16 @@ class CashierController extends ChangeNotifier {
     if (shift == null) return;
     _setState(_state.copyWith(isProcessing: true, clearError: true));
     try {
-      // Cetak laporan TUTUP KASIR ke printer kasir sebelum shift ditutup.
-      await _printShiftReport(shift, title: 'TUTUP KASIR');
+      // Tutup dulu (set closed_at + kirim laporan ke cloud), BARU cetak — agar
+      // angka struk == angka yang dikirim ke cloud (jendela [buka, closed_at)
+      // yang sama). Kalau dibalik, cetak pakai jendela [buka, now) sedangkan
+      // cloud pakai [buka, closed_at) → bisa beda bila ada transaksi di sela.
+      // Cetak lewat antrian durable, jadi tetap tercetak walau printer sesaat off.
       await _cashierRepo.closeShift(
         shiftId: shift.id,
         closedBy: shift.openedBy,
       );
+      await _printShiftReport(shift, title: 'TUTUP KASIR');
       _setState(_state.copyWith(
         isProcessing: false,
         clearActiveShift: true,
@@ -328,21 +332,23 @@ class CashierController extends ChangeNotifier {
     if (shift == null) return;
     _setState(_state.copyWith(isProcessing: true, clearError: true));
     try {
-      // Cetak laporan GANTI SHIFT ke printer kasir sebelum handover.
       final handoverName = await _resolveUserName(handoverTo);
-      await _printShiftReport(
-        shift,
-        title: 'GANTI SHIFT',
-        handoverToName: handoverName,
-        countedCash: newOpeningCash,
-      );
       // Tutup shift lama + buka shift baru terhubung (carry-over, handover_to,
       // previous_shift_id) lewat satu operasi; keduanya dikirim ke cloud.
+      // Handover DULU (set closed_at + kirim laporan cloud), BARU cetak — agar
+      // angka struk == angka yang dikirim ke cloud (jendela [buka, closed_at)
+      // sama). Cetak lewat antrian durable, tetap tercetak walau printer off.
       await _cashierRepo.handoverShift(
         currentShiftId: shift.id,
         handoverToUserId: handoverTo,
         countedCash: newOpeningCash,
         notes: notes,
+      );
+      await _printShiftReport(
+        shift,
+        title: 'GANTI SHIFT',
+        handoverToName: handoverName,
+        countedCash: newOpeningCash,
       );
       _setState(_state.copyWith(isProcessing: false));
       await loadData();
