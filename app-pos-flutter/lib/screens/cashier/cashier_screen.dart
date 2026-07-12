@@ -4364,7 +4364,10 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
     final d = DateTime.now().difference(widget.activeShift.openedAt);
     final h = d.inHours;
     final m = d.inMinutes % 60;
-    return h > 0 ? '${h}j ${m}m' : '${m}m';
+    final base = h > 0 ? '${h}j ${m}m' : '${m}m';
+    // Peringatan: shift wajar ditutup harian. >24 jam = kemungkinan lupa tutup
+    // (akumulasi bikin total/durasi tampak tak masuk akal, mis. 200 jam).
+    return h >= 24 ? '$base ⚠ segera tutup' : base;
   }
 
   String _timeStr(DateTime dt) =>

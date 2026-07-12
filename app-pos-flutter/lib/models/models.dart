@@ -808,10 +808,13 @@ class CashierShift {
   factory CashierShift.fromMap(Map<String, dynamic> map) => CashierShift(
         id: map['id'] as String,
         openedBy: map['opened_by'] as String,
-        openedAt: DateTime.parse(map['opened_at'] as String),
+        // .toLocal(): data lama/hasil restore bisa tersimpan UTC ('...Z') →
+        // tanpa ini jam buka tampil salah (mis. −7 jam WIB) & durasi/format
+        // tak konsisten. Untuk waktu lokal (tanpa Z) .toLocal() adalah no-op.
+        openedAt: DateTime.parse(map['opened_at'] as String).toLocal(),
         openingCash: (map['opening_cash'] as num).toDouble(),
         closedAt: map['closed_at'] != null
-            ? DateTime.parse(map['closed_at'] as String)
+            ? DateTime.parse(map['closed_at'] as String).toLocal()
             : null,
         closedBy: map['closed_by'] as String?,
         closingCash: map['closing_cash'] != null
