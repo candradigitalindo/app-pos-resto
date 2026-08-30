@@ -23,6 +23,16 @@ class CashierState {
   final List<OrderAdditionalCharge> orderCharges;
   final Map<String, int> cart;
   final Map<String, String> cartNotes;
+
+  /// Add-on terpilih per produk di keranjang. Keranjang dikunci per produk,
+  /// jadi satu produk membawa satu set add-on per sesi keranjang; untuk dua
+  /// racikan berbeda dari menu yang sama, kirim yang pertama lalu tambahkan
+  /// yang kedua ke order yang sama.
+  final Map<String, List<SelectedAddon>> cartAddons;
+
+  /// Jumlah add-on aktif per produk — dipakai grid menu untuk menandai menu
+  /// mana yang membuka dialog pemilih saat ditekan.
+  final Map<String, int> addonCounts;
   final Map<String, Product> productCache;
   final int pax; // jumlah tamu untuk order baru
   final String? customerName; // identitas customer (opsional)
@@ -44,6 +54,8 @@ class CashierState {
     this.orderCharges = const [],
     this.cart = const {},
     this.cartNotes = const {},
+    this.cartAddons = const {},
+    this.addonCounts = const {},
     this.productCache = const {},
     this.pax = 1,
     this.customerName,
@@ -57,7 +69,8 @@ class CashierState {
 
   double get cartTotal => cart.entries.fold(0.0, (sum, e) {
         final p = productCache[e.key];
-        return sum + (p?.price ?? 0) * e.value;
+        final addons = SelectedAddon.totalOf(cartAddons[e.key] ?? const []);
+        return sum + ((p?.price ?? 0) + addons) * e.value;
       });
 
   int get cartItemCount => cart.values.fold(0, (sum, qty) => sum + qty);
@@ -80,6 +93,8 @@ class CashierState {
     List<OrderAdditionalCharge>? orderCharges,
     Map<String, int>? cart,
     Map<String, String>? cartNotes,
+    Map<String, List<SelectedAddon>>? cartAddons,
+    Map<String, int>? addonCounts,
     Map<String, Product>? productCache,
     int? pax,
     String? customerName,
@@ -109,6 +124,8 @@ class CashierState {
       orderCharges: orderCharges ?? this.orderCharges,
       cart: cart ?? this.cart,
       cartNotes: cartNotes ?? this.cartNotes,
+      cartAddons: cartAddons ?? this.cartAddons,
+      addonCounts: addonCounts ?? this.addonCounts,
       productCache: productCache ?? this.productCache,
       pax: pax ?? this.pax,
       customerName: clearCustomer ? null : (customerName ?? this.customerName),
@@ -165,10 +182,12 @@ class CashierController extends ChangeNotifier {
         _productRepo.getCategories(),
         _tableRepo.getTables(),
         _cashierRepo.getActiveShift(),
+        _productRepo.addonCountByProduct(),
       ]);
       final categories = results[0] as List<Category>;
       final tables = results[1] as List<RestaurantTable>;
       final shift = results[2] as CashierShift?;
+      final addonCounts = results[3] as Map<String, int>;
 
       // Default "Semua" (selectedCategory == null) → tampilkan SEMUA item saat
       // pertama buka. Kategori tersimpan bila pengguna memilihnya.
@@ -188,6 +207,7 @@ class CashierController extends ChangeNotifier {
         products: products,
         selectedCategory: selectedCategory,
         productCache: productCache,
+        addonCounts: addonCounts,
         activeShift: shift,
         clearActiveShift: shift == null,
         isLoading: false,
@@ -371,12 +391,27 @@ class CashierController extends ChangeNotifier {
 
   // ── Cart Management ───────────────────────────────────────────────────────
 
-  void addToCart(Product product) {
+  /// Tambah satu unit ke keranjang. [addons] hanya berlaku saat produk PERTAMA
+  /// kali masuk keranjang — penambahan unit berikutnya mengikuti racikan yang
+  /// sudah dipilih, supaya harga satu baris keranjang tidak ambigu.
+  void addToCart(Product product, {List<SelectedAddon>? addons}) {
     final updated = Map<String, int>.from(_state.cart);
+    final isNewLine = !updated.containsKey(product.id);
     updated[product.id] = (updated[product.id] ?? 0) + 1;
     final cache = Map<String, Product>.from(_state.productCache);
     cache[product.id] = product;
-    _setState(_state.copyWith(cart: updated, productCache: cache));
+
+    Map<String, List<SelectedAddon>>? picks;
+    if (isNewLine && addons != null && addons.isNotEmpty) {
+      picks = Map<String, List<SelectedAddon>>.from(_state.cartAddons);
+      picks[product.id] = addons;
+    }
+
+    _setState(_state.copyWith(
+      cart: updated,
+      productCache: cache,
+      cartAddons: picks,
+    ));
   }
 
   void removeFromCart(String productId) {
@@ -385,12 +420,39 @@ class CashierController extends ChangeNotifier {
       updated.remove(productId);
       final notes = Map<String, String>.from(_state.cartNotes)
         ..remove(productId);
-      _setState(_state.copyWith(cart: updated, cartNotes: notes));
+      final picks = Map<String, List<SelectedAddon>>.from(_state.cartAddons)
+        ..remove(productId);
+      _setState(_state.copyWith(
+        cart: updated,
+        cartNotes: notes,
+        cartAddons: picks,
+      ));
     } else {
       updated[productId] = updated[productId]! - 1;
       _setState(_state.copyWith(cart: updated));
     }
   }
+
+  /// Ganti racikan add-on satu baris keranjang (dari tombol edit di keranjang).
+  void updateCartAddons(String productId, List<SelectedAddon> addons) {
+    final picks = Map<String, List<SelectedAddon>>.from(_state.cartAddons);
+    if (addons.isEmpty) {
+      picks.remove(productId);
+    } else {
+      picks[productId] = addons;
+    }
+    _setState(_state.copyWith(cartAddons: picks));
+  }
+
+  /// Harga satuan baris keranjang = harga menu + seluruh add-on terpilih.
+  double cartUnitPrice(Product product) =>
+      product.price +
+      SelectedAddon.totalOf(_state.cartAddons[product.id] ?? const []);
+
+  /// Pilihan add-on yang tersedia untuk sebuah produk. Dipanggil hanya saat
+  /// menu ditekan, jadi tidak membebani penggambaran grid.
+  Future<List<ProductAddon>> addonsFor(String productId) =>
+      _productRepo.getAddons(productId);
 
   void updateCartNote(String productId, String note) {
     final notes = Map<String, String>.from(_state.cartNotes);
@@ -462,6 +524,7 @@ class CashierController extends ChangeNotifier {
                 productId: e.key,
                 qty: e.value,
                 notes: _state.cartNotes[e.key],
+                addons: _state.cartAddons[e.key] ?? const [],
               ))
           .toList();
 
@@ -486,6 +549,7 @@ class CashierController extends ChangeNotifier {
       _setState(_state.copyWith(
         cart: {},
         cartNotes: {},
+        cartAddons: {},
         pax: 1, // reset untuk order berikutnya
         clearCustomer: true,
         isProcessing: false,
@@ -509,6 +573,7 @@ class CashierController extends ChangeNotifier {
                 productId: e.key,
                 qty: e.value,
                 notes: _state.cartNotes[e.key],
+                addons: _state.cartAddons[e.key] ?? const [],
               ))
           .toList();
 
@@ -521,6 +586,7 @@ class CashierController extends ChangeNotifier {
       _setState(_state.copyWith(
         cart: {},
         cartNotes: {},
+        cartAddons: {},
         isProcessing: false,
       ));
       return true;
@@ -1006,6 +1072,7 @@ class CashierController extends ChangeNotifier {
         clearSelectedTable: true,
         cart: {},
         cartNotes: {},
+        cartAddons: {},
         isProcessing: false,
       ));
       await loadData();

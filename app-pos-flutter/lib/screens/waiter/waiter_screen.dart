@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../controllers/waiter_controller.dart';
 import '../../models/models.dart';
 import '../../theme/theme.dart';
+import '../../widgets/addon_picker_dialog.dart';
 import '../../utils/currency.dart';
 import '../../widgets/menu_avatar.dart';
 import '../../widgets/pax_input_dialog.dart';
@@ -87,6 +88,51 @@ class _WaiterScreenState extends State<WaiterScreen> {
           .toList();
     }
     return result;
+  }
+
+  /// Tambah menu ke keranjang; menu ber-add-on membuka dialog pemilih dulu.
+  /// Baris yang sudah ada di keranjang langsung bertambah unit mengikuti
+  /// racikan yang dipilih sebelumnya.
+  Future<void> _addProductToCart(Product product) async {
+    final state = _controller.state;
+    final hasAddons = (state.addonCounts[product.id] ?? 0) > 0;
+    if (state.cart.containsKey(product.id) || !hasAddons) {
+      _controller.addToCart(product);
+      return;
+    }
+
+    final options = await _controller.addonsFor(product.id);
+    if (!mounted) return;
+    if (options.isEmpty) {
+      _controller.addToCart(product);
+      return;
+    }
+
+    final picked = await showAddonPicker(
+      context,
+      productName: product.name,
+      basePrice: product.price,
+      addons: options,
+      accent: AppColors.moduleWaiter,
+    );
+    // Batal = batal menambah item, bukan menambah tanpa add-on.
+    if (picked == null || !mounted) return;
+    _controller.addToCart(product, addons: picked);
+  }
+
+  Future<void> _editCartAddons(Product product) async {
+    final options = await _controller.addonsFor(product.id);
+    if (!mounted || options.isEmpty) return;
+    final picked = await showAddonPicker(
+      context,
+      productName: product.name,
+      basePrice: product.price,
+      addons: options,
+      initial: _controller.state.cartAddons[product.id] ?? const [],
+      accent: AppColors.moduleWaiter,
+    );
+    if (picked == null || !mounted) return;
+    _controller.updateCartAddons(product.id, picked);
   }
 
   void _showNoteDialog(String productId, String? current) {
@@ -421,6 +467,7 @@ class _WaiterScreenState extends State<WaiterScreen> {
               onAdd: (p) => _controller.addToCart(p),
               onRemove: (id) => _controller.removeFromCart(id),
               onEditNote: (id, current) => _showNoteDialog(id, current),
+              onEditAddons: _editCartAddons,
               onSubmit: () => _controller.createOrder(),
             ),
           ],
@@ -541,7 +588,9 @@ class _WaiterScreenState extends State<WaiterScreen> {
                         return _WaiterProductTile(
                           product: product,
                           inCart: inCart,
-                          onTap: () => _controller.addToCart(product),
+                          hasAddons:
+                              (state.addonCounts[product.id] ?? 0) > 0,
+                          onTap: () => _addProductToCart(product),
                         );
                       },
                     );
@@ -715,16 +764,24 @@ class _WaiterScreenState extends State<WaiterScreen> {
                           children: state.cart.entries.map((entry) {
                             final product = state.productCache[entry.key];
                             if (product == null) return const SizedBox.shrink();
+                            final addons = state.cartAddons[entry.key] ??
+                                const <SelectedAddon>[];
                             return _CartItem(
                               name: product.name,
                               qty: entry.value,
-                              price: product.price,
+                              price: product.price +
+                                  SelectedAddon.totalOf(addons),
                               notes: state.cartNotes[entry.key],
+                              addonLabel: SelectedAddon.labelOf(addons),
                               onAdd: () => _controller.addToCart(product),
                               onRemove: () =>
                                   _controller.removeFromCart(product.id),
                               onEditNote: () => _showNoteDialog(
                                   entry.key, state.cartNotes[entry.key]),
+                              onEditAddons:
+                                  (state.addonCounts[entry.key] ?? 0) > 0
+                                      ? () => _editCartAddons(product)
+                                      : null,
                             );
                           }).toList(),
                         ),
@@ -1231,6 +1288,7 @@ class _CartPanel extends StatelessWidget {
   final void Function(Product) onAdd;
   final void Function(String) onRemove;
   final void Function(String productId, String? current) onEditNote;
+  final void Function(Product) onEditAddons;
   final VoidCallback onSubmit;
   final double width;
 
@@ -1239,6 +1297,7 @@ class _CartPanel extends StatelessWidget {
     required this.onAdd,
     required this.onRemove,
     required this.onEditNote,
+    required this.onEditAddons,
     required this.onSubmit,
     required this.width,
   });
@@ -1293,15 +1352,21 @@ class _CartPanel extends StatelessWidget {
                     children: state.cart.entries.map((entry) {
                       final product = state.productCache[entry.key];
                       if (product == null) return const SizedBox.shrink();
+                      final addons =
+                          state.cartAddons[entry.key] ?? const <SelectedAddon>[];
                       return _CartItem(
                         name: product.name,
                         qty: entry.value,
-                        price: product.price,
+                        price: product.price + SelectedAddon.totalOf(addons),
                         notes: state.cartNotes[entry.key],
+                        addonLabel: SelectedAddon.labelOf(addons),
                         onAdd: () => onAdd(product),
                         onRemove: () => onRemove(product.id),
                         onEditNote: () =>
                             onEditNote(entry.key, state.cartNotes[entry.key]),
+                        onEditAddons: (state.addonCounts[entry.key] ?? 0) > 0
+                            ? () => onEditAddons(product)
+                            : null,
                       );
                     }).toList(),
                   ),
@@ -1350,18 +1415,24 @@ class _CartItem extends StatelessWidget {
   final int qty;
   final double price;
   final String? notes;
+
+  /// Ringkasan add-on baris ini; harganya sudah termasuk di [price].
+  final String addonLabel;
   final VoidCallback? onAdd;
   final VoidCallback? onRemove;
   final VoidCallback? onEditNote;
+  final VoidCallback? onEditAddons; // null bila menu tak punya add-on
 
   const _CartItem({
     required this.name,
     required this.qty,
     required this.price,
     this.notes,
+    this.addonLabel = '',
     this.onAdd,
     this.onRemove,
     this.onEditNote,
+    this.onEditAddons,
   });
 
   @override
@@ -1404,6 +1475,20 @@ class _CartItem extends StatelessWidget {
                     style: AppType.caption.copyWith(
                         color: AppColors.moduleWaiter,
                         fontWeight: FontWeight.w700)),
+                if (addonLabel.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: GestureDetector(
+                      onTap: onEditAddons,
+                      child: Text(
+                        '+ $addonLabel',
+                        style: AppType.caption.copyWith(
+                          color: AppColors.textSecondary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
                 if (hasNotes)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
@@ -1412,6 +1497,20 @@ class _CartItem extends StatelessWidget {
                       style: AppType.caption.copyWith(
                         color: AppColors.textSecondary,
                         fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ),
+                if (addonLabel.isEmpty && onEditAddons != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: GestureDetector(
+                      onTap: onEditAddons,
+                      child: Text(
+                        '+ Tambahan',
+                        style: AppType.caption.copyWith(
+                          color: AppColors.moduleWaiter,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
@@ -1515,11 +1614,15 @@ class _WaiterTableCard extends StatelessWidget {
 class _WaiterProductTile extends StatelessWidget {
   final Product product;
   final int inCart;
+
+  /// Menu ini punya add-on — ditandai agar waiter tahu akan muncul dialog.
+  final bool hasAddons;
   final VoidCallback onTap;
 
   const _WaiterProductTile({
     required this.product,
     required this.inCart,
+    this.hasAddons = false,
     required this.onTap,
   });
 
@@ -1562,6 +1665,24 @@ class _WaiterProductTile extends StatelessWidget {
                               fontSize: 12,
                               fontWeight: FontWeight.w800,
                             )),
+                      ),
+                    ),
+                  if (hasAddons)
+                    Positioned(
+                      top: 6,
+                      left: 6,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: const BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius: AppRadius.rXs,
+                          boxShadow: AppShadows.card,
+                        ),
+                        child: const Icon(
+                          Icons.tune_rounded,
+                          size: 13,
+                          color: AppColors.moduleWaiter,
+                        ),
                       ),
                     ),
                 ],

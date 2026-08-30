@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../controllers/products_controller.dart';
 import '../../models/models.dart';
 import '../../theme/theme.dart';
+import 'product_addons_screen.dart';
 import '../../utils/currency.dart';
 import '../../widgets/menu_avatar.dart';
 import '../../widgets/ui/ui.dart';
@@ -129,6 +130,37 @@ class _ProductsScreenState extends State<ProductsScreen> {
                     hint: 'Deskripsi produk...', maxLines: 3),
               ],
             ),
+            // Add-on butuh produk yang sudah tersimpan (punya id), jadi hanya
+            // muncul saat mengedit — bukan saat membuat produk baru.
+            if (product != null) ...[
+              const SizedBox(height: AppSpacing.sm),
+              _FormSection(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.tune_rounded,
+                        color: AppColors.moduleProduk),
+                    title: Text('Add-on Menu', style: AppType.body),
+                    subtitle: Text(
+                      'Pilihan tambahan seperti "Extra keju"',
+                      style: AppType.caption
+                          .copyWith(color: AppColors.textTertiary),
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded,
+                        color: AppColors.textTertiary),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              ProductAddonsScreen(product: product),
+                        ),
+                      ).then((_) => _controller.loadData());
+                    },
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: AppSpacing.lg),
             AppButton(
               label: product == null ? 'Tambah Produk' : 'Simpan Perubahan',

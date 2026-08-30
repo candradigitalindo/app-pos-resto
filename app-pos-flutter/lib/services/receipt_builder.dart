@@ -11,6 +11,11 @@ class ReceiptItem {
   final double price;
   final double total;
   final String? notes;
+
+  /// Ringkasan add-on baris ini, mis. "Extra keju, Pedas". Harganya sudah
+  /// termasuk di [price] — dicetak sebagai rincian agar tamu tahu tambahan
+  /// apa yang membuat harganya berbeda dari harga menu di daftar.
+  final String addons;
   final String ordererName; // siapa yang memesan item ini (untuk pengelompokan)
 
   const ReceiptItem({
@@ -19,6 +24,7 @@ class ReceiptItem {
     required this.price,
     required this.total,
     this.notes,
+    this.addons = '',
     this.ordererName = '',
   });
 }
@@ -111,6 +117,7 @@ class ReceiptData {
                 price: i.price,
                 total: i.qty * i.price,
                 notes: i.notes.isNotEmpty ? i.notes : null,
+                addons: i.addonLabel,
                 ordererName: i.waiterName,
               ))
           .toList(),
@@ -505,6 +512,11 @@ class ReceiptBuilder {
       buf.addAll(_Esc.line('${item.qty}x ${item.productName}'));
       buf.addAll(_Esc.boldOff());
       buf.addAll(_Esc.size(0, 0));
+      if (item.addonLabel.isNotEmpty) {
+        buf.addAll(_Esc.boldOn());
+        buf.addAll(_Esc.line('   + ${item.addonLabel}'));
+        buf.addAll(_Esc.boldOff());
+      }
       if (item.notes.isNotEmpty) {
         buf.addAll(_Esc.boldOn());
         buf.addAll(_Esc.line('   >> ${item.notes}'));
@@ -570,6 +582,9 @@ class ReceiptBuilder {
       buf.addAll(_Esc.boldOff());
       if (cat != null && cat.isNotEmpty) {
         buf.addAll(_Esc.line('    [$cat]'));
+      }
+      if (item.addonLabel.isNotEmpty) {
+        buf.addAll(_Esc.line('    + ${item.addonLabel}'));
       }
       if (item.notes.isNotEmpty) {
         buf.addAll(_Esc.line('    - ${item.notes}'));
@@ -663,6 +678,9 @@ class ReceiptBuilder {
       buf.addAll(_Esc.line(_rightAlign(left, _formatAmount(item.total))));
       if (item.quantity > 1) {
         buf.addAll(_Esc.line('    @ ${_formatAmount(item.price)}'));
+      }
+      if (item.addons.isNotEmpty) {
+        buf.addAll(_Esc.line('    + ${item.addons}'));
       }
       if (item.notes != null && item.notes!.isNotEmpty) {
         buf.addAll(_Esc.line('    - ${item.notes}'));

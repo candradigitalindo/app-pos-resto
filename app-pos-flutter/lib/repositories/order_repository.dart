@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 
 import '../database/database.dart';
@@ -43,11 +45,11 @@ class OrderRepository {
         productName: product.name,
         categoryId: product.categoryId,
         qty: input.qty,
-        price: product.price,
+        price: product.price + SelectedAddon.totalOf(input.addons),
         destination: await _determineDestination(product),
         itemStatus: 'pending',
         notes: input.notes ?? '',
-        addons: input.addons ?? '',
+        addons: _encodeAddons(input.addons),
         waiterName: waiterName ?? '',
         isAdditional: 0,
         createdAt: now,
@@ -306,11 +308,11 @@ class OrderRepository {
         productName: product.name,
         categoryId: product.categoryId,
         qty: input.qty,
-        price: product.price,
+        price: product.price + SelectedAddon.totalOf(input.addons),
         destination: await _determineDestination(product),
         itemStatus: 'pending',
         notes: input.notes ?? '',
-        addons: input.addons ?? '',
+        addons: _encodeAddons(input.addons),
         waiterName: waiterName,
         isAdditional: 1,
         createdAt: now,
@@ -427,6 +429,13 @@ class OrderRepository {
     }
     return enqueued;
   }
+
+  /// Rincian add-on disimpan sebagai JSON di `order_items.addons`. Nama dan
+  /// harga ikut dibekukan di baris pesanan supaya struk lama tidak ikut berubah
+  /// ketika master add-on diedit atau dihapus. String kosong untuk baris tanpa
+  /// add-on — bukan '[]' — agar baris lama & baru terbaca seragam.
+  String _encodeAddons(List<SelectedAddon> addons) =>
+      addons.isEmpty ? '' : jsonEncode(addons.map((a) => a.toJson()).toList());
 
   /// Timestamp untuk payload cloud: SELALU UTC + 'Z' (zona eksplisit) agar
   /// server tidak salah menafsir waktu lokal sebagai UTC. Penyimpanan DB lokal
@@ -2088,12 +2097,16 @@ class OrderItemInput {
   final String productId;
   final int qty;
   final String? notes;
-  final String? addons;
+
+  /// Add-on yang dipilih untuk baris ini. Harganya DILIPAT ke harga satuan item
+  /// saat baris dibuat, sehingga subtotal, pajak, dan seluruh laporan tidak
+  /// perlu tahu soal add-on sama sekali.
+  final List<SelectedAddon> addons;
 
   const OrderItemInput({
     required this.productId,
     required this.qty,
     this.notes,
-    this.addons,
+    this.addons = const [],
   });
 }

@@ -7,6 +7,7 @@ import '../../models/models.dart';
 import '../../services/cloud_sync_service.dart';
 import '../../theme/theme.dart';
 import '../../utils/currency.dart';
+import '../../widgets/addon_picker_dialog.dart';
 import '../../widgets/menu_avatar.dart';
 import '../../widgets/pax_input_dialog.dart';
 import '../../widgets/pin_auth_dialog.dart';
@@ -1506,20 +1507,72 @@ class _CashierScreenState extends State<CashierScreen> {
     );
   }
 
+  /// Tambah menu ke keranjang. Menu yang punya add-on membuka dialog pemilih
+  /// lebih dulu; menu yang barisnya SUDAH ada di keranjang langsung bertambah
+  /// unit mengikuti racikan yang sudah dipilih (ubah lewat tombol edit di
+  /// baris keranjang) supaya harga satu baris tidak ambigu.
+  Future<void> _addProductToCart(Product product) async {
+    final state = _controller.state;
+    final hasAddons = (state.addonCounts[product.id] ?? 0) > 0;
+    if (state.cart.containsKey(product.id) || !hasAddons) {
+      _controller.addToCart(product);
+      return;
+    }
+
+    final options = await _controller.addonsFor(product.id);
+    if (!mounted) return;
+    if (options.isEmpty) {
+      _controller.addToCart(product);
+      return;
+    }
+
+    final picked = await showAddonPicker(
+      context,
+      productName: product.name,
+      basePrice: product.price,
+      addons: options,
+    );
+    // Batal di dialog = batal menambah item, bukan menambah tanpa add-on.
+    if (picked == null || !mounted) return;
+    _controller.addToCart(product, addons: picked);
+  }
+
+  /// Ubah racikan add-on satu baris keranjang yang belum dikirim ke dapur.
+  Future<void> _editCartAddons(Product product) async {
+    final options = await _controller.addonsFor(product.id);
+    if (!mounted || options.isEmpty) return;
+    final picked = await showAddonPicker(
+      context,
+      productName: product.name,
+      basePrice: product.price,
+      addons: options,
+      initial: _controller.state.cartAddons[product.id] ?? const [],
+    );
+    if (picked == null || !mounted) return;
+    _controller.updateCartAddons(product.id, picked);
+  }
+
   List<Widget> _buildCartItemWidgets(CashierState state) {
     return [
       ...state.cart.entries.map((entry) {
         final product = state.productCache[entry.key];
         if (product == null) return const SizedBox.shrink();
+        final addons = state.cartAddons[entry.key] ?? const <SelectedAddon>[];
         return _CartItemTile(
           name: product.name,
           qty: entry.value,
-          price: product.price,
+          // Harga baris = harga menu + add-on, sama dengan yang nanti disimpan
+          // di order_items.price.
+          price: product.price + SelectedAddon.totalOf(addons),
           notes: state.cartNotes[entry.key],
+          addonLabel: SelectedAddon.labelOf(addons),
           onAdd: () => _controller.addToCart(product),
           onRemove: () => _controller.removeFromCart(product.id),
           onEditNote: () =>
               _showNoteDialog(entry.key, state.cartNotes[entry.key]),
+          onEditAddons: (state.addonCounts[entry.key] ?? 0) > 0
+              ? () => _editCartAddons(product)
+              : null,
         );
       }),
       if (state.orderItems.isNotEmpty) ...[
@@ -1536,6 +1589,8 @@ class _CashierScreenState extends State<CashierScreen> {
               qty: item.qty,
               price: item.price,
               status: item.itemStatus,
+              addonLabel: item.addonLabel,
+              notes: item.notes.isEmpty ? null : item.notes,
               onDelete: () => _showItemDeleteOptions(item),
             )),
       ],
@@ -1779,7 +1834,8 @@ class _CashierScreenState extends State<CashierScreen> {
             return _ProductTile(
               product: product,
               inCart: inCart,
-              onTap: () => _controller.addToCart(product),
+              hasAddons: (state.addonCounts[product.id] ?? 0) > 0,
+              onTap: () => _addProductToCart(product),
             );
           },
         );
@@ -2911,11 +2967,16 @@ class _SyncButtonState extends State<_SyncButton>
 class _ProductTile extends StatelessWidget {
   final Product product;
   final int inCart;
+
+  /// Menu ini punya add-on — ditandai agar kasir tahu sebelum menekan bahwa
+  /// akan muncul dialog pilihan tambahan.
+  final bool hasAddons;
   final VoidCallback onTap;
 
   const _ProductTile({
     required this.product,
     required this.inCart,
+    this.hasAddons = false,
     required this.onTap,
   });
 
@@ -2975,6 +3036,24 @@ class _ProductTile extends StatelessWidget {
                               ),
                             ),
                           ),
+                        if (hasAddons)
+                          Positioned(
+                            top: 6,
+                            left: 6,
+                            child: Container(
+                              padding: const EdgeInsets.all(3),
+                              decoration: const BoxDecoration(
+                                color: AppColors.surface,
+                                borderRadius: AppRadius.rSm,
+                                boxShadow: AppShadows.card,
+                              ),
+                              child: const Icon(
+                                Icons.tune_rounded,
+                                size: 13,
+                                color: AppColors.moduleKasir,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -3015,9 +3094,14 @@ class _CartItemTile extends StatelessWidget {
   final double price;
   final String? status;
   final String? notes;
+
+  /// Ringkasan add-on baris ini, mis. "Extra keju, Pedas". Kosong = tanpa
+  /// tambahan. Harganya sudah termasuk di [price].
+  final String addonLabel;
   final VoidCallback? onAdd;
   final VoidCallback? onRemove;
   final VoidCallback? onEditNote;
+  final VoidCallback? onEditAddons; // null bila menu tak punya add-on
   final VoidCallback? onDelete; // hapus/void item (butuh PIN manager/SVP)
 
   const _CartItemTile({
@@ -3026,9 +3110,11 @@ class _CartItemTile extends StatelessWidget {
     required this.price,
     this.status,
     this.notes,
+    this.addonLabel = '',
     this.onAdd,
     this.onRemove,
     this.onEditNote,
+    this.onEditAddons,
     this.onDelete,
   });
 
@@ -3083,6 +3169,21 @@ class _CartItemTile extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+                if (addonLabel.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: GestureDetector(
+                      onTap: onEditAddons,
+                      child: Text(
+                        '+ $addonLabel',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textSecondary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
                 if (notes != null && notes!.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
@@ -3092,6 +3193,23 @@ class _CartItemTile extends StatelessWidget {
                         fontSize: 11,
                         color: AppColors.textSecondary,
                         fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ),
+                // Baris tanpa add-on terpilih tetap bisa diracik lewat pintasan
+                // ini — tanpa perlu menghapus lalu menambah ulang itemnya.
+                if (addonLabel.isEmpty && onEditAddons != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: GestureDetector(
+                      onTap: onEditAddons,
+                      child: const Text(
+                        '+ Tambahan',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.moduleKasir,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),

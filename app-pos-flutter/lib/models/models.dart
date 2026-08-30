@@ -1,6 +1,8 @@
 // Data models for POS Resto
 // Mapped from Go backend internal/db/models.go
 
+import 'dart:convert';
+
 // ==================== USER ====================
 
 class User {
@@ -342,6 +344,33 @@ class OrderItem {
 
   double get subtotal => qty * price;
 
+  /// Add-on terpilih pada baris ini. Sejak fitur modifier, kolom `addons`
+  /// menyimpan JSON list; baris lama berisi teks bebas → list kosong (teksnya
+  /// tetap terbaca lewat [addonLabel]) sehingga struk lama tidak rusak.
+  List<SelectedAddon> get selectedAddons {
+    final raw = addons.trim();
+    if (raw.isEmpty || !raw.startsWith('[')) return const [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      return decoded
+          .whereType<Map>()
+          .map((m) => SelectedAddon.fromJson(m.cast<String, dynamic>()))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Label add-on siap cetak. Mengembalikan teks bebas apa adanya untuk baris
+  /// lama yang belum berformat JSON.
+  String get addonLabel {
+    final raw = addons.trim();
+    if (raw.isEmpty) return '';
+    if (!raw.startsWith('[')) return raw;
+    return SelectedAddon.labelOf(selectedAddons);
+  }
+
   Map<String, dynamic> toMap() => {
         'id': id,
         'order_id': orderId,
@@ -375,6 +404,116 @@ class OrderItem {
         createdAt: DateTime.parse(map['created_at'] as String),
         updatedAt: DateTime.parse(map['updated_at'] as String),
       );
+}
+
+// ==================== PRODUCT ADDON ====================
+
+/// Pilihan tambahan pada sebuah produk (mis. "Extra keju" +5.000).
+/// [groupName] hanya untuk pengelompokan tampilan di dialog pemilih;
+/// pemilihannya bebas (multi-pilih), bukan grup wajib pilih-satu.
+class ProductAddon {
+  final String id;
+  final String productId;
+  final String groupName;
+  final String name;
+  final double price;
+  final int sortOrder;
+  final int isActive;
+  final int isDeleted;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  const ProductAddon({
+    required this.id,
+    required this.productId,
+    this.groupName = '',
+    required this.name,
+    this.price = 0,
+    this.sortOrder = 0,
+    this.isActive = 1,
+    this.isDeleted = 0,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  ProductAddon copyWith({
+    String? groupName,
+    String? name,
+    double? price,
+    int? sortOrder,
+    int? isActive,
+  }) =>
+      ProductAddon(
+        id: id,
+        productId: productId,
+        groupName: groupName ?? this.groupName,
+        name: name ?? this.name,
+        price: price ?? this.price,
+        sortOrder: sortOrder ?? this.sortOrder,
+        isActive: isActive ?? this.isActive,
+        isDeleted: isDeleted,
+        createdAt: createdAt,
+        updatedAt: DateTime.now(),
+      );
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'product_id': productId,
+        'group_name': groupName,
+        'name': name,
+        'price': price,
+        'sort_order': sortOrder,
+        'is_active': isActive,
+        'is_deleted': isDeleted,
+        'created_at': createdAt.toIso8601String(),
+        'updated_at': updatedAt.toIso8601String(),
+      };
+
+  factory ProductAddon.fromMap(Map<String, dynamic> map) => ProductAddon(
+        id: map['id'] as String,
+        productId: map['product_id'] as String,
+        groupName: map['group_name'] as String? ?? '',
+        name: map['name'] as String,
+        price: (map['price'] as num?)?.toDouble() ?? 0,
+        sortOrder: (map['sort_order'] as num?)?.toInt() ?? 0,
+        isActive: (map['is_active'] as num?)?.toInt() ?? 1,
+        isDeleted: (map['is_deleted'] as num?)?.toInt() ?? 0,
+        createdAt: DateTime.parse(map['created_at'] as String),
+        updatedAt: DateTime.parse(map['updated_at'] as String),
+      );
+}
+
+/// Add-on yang SUDAH dipilih untuk satu baris pesanan. Disimpan sebagai JSON
+/// di `order_items.addons` — nama & harga ikut dibekukan agar struk lama tidak
+/// berubah ketika master add-on diedit atau dihapus di kemudian hari.
+class SelectedAddon {
+  final String id;
+  final String name;
+  final double price;
+
+  const SelectedAddon({
+    required this.id,
+    required this.name,
+    required this.price,
+  });
+
+  factory SelectedAddon.fromAddon(ProductAddon a) =>
+      SelectedAddon(id: a.id, name: a.name, price: a.price);
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'price': price};
+
+  factory SelectedAddon.fromJson(Map<String, dynamic> m) => SelectedAddon(
+        id: m['id'] as String? ?? '',
+        name: m['name'] as String? ?? '',
+        price: (m['price'] as num?)?.toDouble() ?? 0,
+      );
+
+  /// Ringkasan satu baris untuk struk/tiket dapur, mis. "Extra keju, Pedas".
+  static String labelOf(List<SelectedAddon> list) =>
+      list.map((a) => a.name).join(', ');
+
+  static double totalOf(List<SelectedAddon> list) =>
+      list.fold<double>(0, (s, a) => s + a.price);
 }
 
 // ==================== CUSTOMER ====================

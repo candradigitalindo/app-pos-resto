@@ -30,7 +30,7 @@ class AppDatabase {
 
     return openDatabase(
       path,
-      version: 10,
+      version: 11,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -111,7 +111,40 @@ class AppDatabase {
         "WHERE password_hash LIKE '%dummyhash%'",
       );
     }
+    if (oldVersion < 11) {
+      // Add-on/modifier menu (mis. "Extra keju +5.000"). Tabel lama memakai
+      // INTEGER AUTOINCREMENT — tak bisa disinkron ke cloud yang mengidentifikasi
+      // entitas via local_id ULID. Tabel lama SELALU kosong (belum pernah ada
+      // UI pengisinya), jadi aman dibuang & dibuat ulang alih-alih dimigrasi.
+      await db.execute('DROP TABLE IF EXISTS product_addons');
+      await db.execute(_productAddonsSql);
+      await db.execute(_productAddonsIndexSql);
+    }
   }
+
+  // Add-on/modifier per produk. Harga add-on DILIPAT ke harga item saat
+  // pesanan dibuat (lihat OrderRepository), sehingga subtotal, pajak, dan
+  // seluruh laporan bekerja tanpa perubahan; rincian pilihannya disimpan
+  // sebagai JSON di order_items.addons untuk struk & tiket dapur.
+  static const String _productAddonsSql = '''
+    CREATE TABLE IF NOT EXISTS product_addons (
+      id TEXT PRIMARY KEY CHECK (length(id) = 26),
+      product_id TEXT NOT NULL,
+      group_name TEXT NOT NULL DEFAULT '',
+      name TEXT NOT NULL,
+      price REAL NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      is_deleted INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    )
+  ''';
+
+  static const String _productAddonsIndexSql =
+      'CREATE INDEX IF NOT EXISTS idx_addons_product '
+      'ON product_addons(product_id, is_deleted, sort_order)';
 
   // Antrian cetak dapur/bar (durable + retry). Struk kasir TIDAK lewat sini.
   static const String _kitchenPrintJobsSql = '''
@@ -256,18 +289,8 @@ class AppDatabase {
     ''');
 
     // Product Addons
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS product_addons (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        price REAL NOT NULL DEFAULT 0,
-        is_active INTEGER NOT NULL DEFAULT 1,
-        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
-      )
-    ''');
+    await db.execute(_productAddonsSql);
+    await db.execute(_productAddonsIndexSql);
 
     // Orders
     await db.execute('''
