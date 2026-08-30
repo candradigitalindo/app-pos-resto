@@ -900,31 +900,58 @@ class _StationScreenState extends State<StationScreen> {
             ],
           ),
         ),
-        // Cetak tagihan (printer lokal station) + tambah item ke order ini
+        // Aksi order: pindah/gabung meja + cetak tagihan + tambah item.
         SafeArea(
           top: false,
           child: Padding(
             padding: EdgeInsets.fromLTRB(context.pagePadX, AppSpacing.sm,
                 context.pagePadX, AppSpacing.sm),
-            child: Row(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: AppButton(
-                    label: 'Cetak Tagihan',
-                    icon: Icons.receipt_long_outlined,
-                    variant: AppButtonVariant.neutral,
-                    onPressed: _printBill,
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: AppButton(
+                        label: 'Pindah Meja',
+                        icon: Icons.swap_horiz_rounded,
+                        variant: AppButtonVariant.neutral,
+                        onPressed: _moveOrderTable,
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: AppButton(
+                        label: 'Gabung Meja',
+                        icon: Icons.call_merge_rounded,
+                        variant: AppButtonVariant.neutral,
+                        onPressed: _mergeTable,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(
-                  child: AppButton(
-                    label: 'Tambah Item',
-                    icon: Icons.add_shopping_cart_rounded,
-                    variant: AppButtonVariant.tonal,
-                    accent: _accent,
-                    onPressed: _controller.startAddItems,
-                  ),
+                const SizedBox(height: AppSpacing.sm),
+                Row(
+                  children: [
+                    Expanded(
+                      child: AppButton(
+                        label: 'Cetak Tagihan',
+                        icon: Icons.receipt_long_outlined,
+                        variant: AppButtonVariant.neutral,
+                        onPressed: _printBill,
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: AppButton(
+                        label: 'Tambah Item',
+                        icon: Icons.add_shopping_cart_rounded,
+                        variant: AppButtonVariant.tonal,
+                        accent: _accent,
+                        onPressed: _controller.startAddItems,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -1130,6 +1157,71 @@ class _StationScreenState extends State<StationScreen> {
     if (!mounted) return;
     showAppSnack(context, ok ? okMsg : (_controller.errorMessage ?? 'Gagal'),
         isError: !ok);
+  }
+
+  // ── Pindah / Gabung Meja (paritas waiter utama) ─────────────────────────────
+
+  /// Pindahkan SELURUH order aktif ke meja kosong lain.
+  Future<void> _moveOrderTable() async {
+    final empty = _controller.tables
+        .where((t) => t['active_order'] == null)
+        .toList();
+    if (empty.isEmpty) {
+      showAppSnack(context, 'Tidak ada meja kosong', isError: true);
+      return;
+    }
+    final target = await showAppModal<String>(
+      context,
+      title: 'Pindah Order ke Meja',
+      icon: Icons.swap_horiz_rounded,
+      accent: _accent,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: empty
+            .map((t) => ListTile(
+                  leading: const Icon(Icons.table_restaurant_rounded),
+                  title: Text('Meja ${t['table_number']}'),
+                  onTap: () =>
+                      Navigator.pop(ctx, t['table_number'] as String),
+                ))
+            .toList(),
+      ),
+    );
+    if (target == null || !mounted) return;
+    final ok = await _controller.moveOrderToTable(target);
+    _snackResult(ok, 'Order dipindah ke meja $target');
+  }
+
+  /// Gabung order meja lain ke order aktif saat ini.
+  Future<void> _mergeTable() async {
+    final orders = await _controller.mergeableOrders();
+    if (!mounted) return;
+    if (orders.isEmpty) {
+      showAppSnack(context, 'Tidak ada meja lain untuk digabung',
+          isError: true);
+      return;
+    }
+    final source = await showAppModal<String>(
+      context,
+      title: 'Gabung dari Meja',
+      icon: Icons.call_merge_rounded,
+      accent: _accent,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: orders
+            .map((o) => ListTile(
+                  leading: const Icon(Icons.table_restaurant_rounded),
+                  title: Text('Meja ${o['table_number']}'),
+                  subtitle: Text(CurrencyHelper.format(
+                      (o['total_amount'] as num?)?.toDouble() ?? 0)),
+                  onTap: () => Navigator.pop(ctx, o['id'] as String),
+                ))
+            .toList(),
+      ),
+    );
+    if (source == null || !mounted) return;
+    final ok = await _controller.mergeFrom(source);
+    _snackResult(ok, 'Meja digabung');
   }
 
   // ── Printer station (struk tagihan + pengaturan) ────────────────────────────

@@ -185,6 +185,42 @@ class StationController extends ChangeNotifier {
     }
   }
 
+  // ── Operasi ORDER utuh (pindah/gabung meja) — paritas waiter utama ─────────
+
+  /// Pindahkan SELURUH order aktif ke meja lain. Sukses → kembali ke denah
+  /// meja (label detail lama sudah tidak relevan).
+  Future<bool> moveOrderToTable(String tableNumber) async {
+    final o = currentOrder;
+    if (o == null) return false;
+    try {
+      await _api.moveOrderTable(
+          orderId: o['id'] as String, tableNumber: tableNumber);
+      goBackToTables();
+      await loadTables();
+      return true;
+    } catch (e) {
+      errorMessage = 'Gagal: ${e.toString().replaceFirst('Exception: ', '')}';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Order aktif meja LAIN yang bisa digabung ke order aktif saat ini.
+  Future<List<Map<String, dynamic>>> mergeableOrders() {
+    final o = currentOrder;
+    if (o == null) return Future.value(const []);
+    return _api.getMergeableOrders(o['id'] as String);
+  }
+
+  /// Gabung order [sourceOrderId] ke order aktif saat ini (detail tetap
+  /// terbuka menampilkan item gabungan).
+  Future<bool> mergeFrom(String sourceOrderId) {
+    final o = currentOrder;
+    if (o == null) return Future.value(false);
+    return _itemOp(() => _api.mergeOrders(
+        targetOrderId: o['id'] as String, sourceOrderId: sourceOrderId));
+  }
+
   /// Muat ulang detail order + daftar meja. Bila order habis (semua item
   /// pindah/void), kembali ke daftar meja.
   Future<void> _refreshDetail() async {

@@ -258,16 +258,31 @@ class CashierRepository {
       'qris': {'count': 0, 'total': 0},
       'transfer': {'count': 0, 'total': 0},
     };
-    var salesCount = 0;
     var salesTotal = 0.0;
     for (final r in payRows) {
       final m = r['payment_method'] as String;
       final cnt = (r['cnt'] as num).toInt();
       final total = (r['total'] as num).toDouble();
       methods[m] = {'count': cnt, 'total': total};
-      salesCount += cnt;
       salesTotal += total;
     }
+
+    // Jumlah TRANSAKSI = jumlah order yang selesai dalam jendela shift, dari
+    // tabel transactions (TEPAT 1 baris per order lunas/kompliment/diskon
+    // 100%) — BUKAN jumlah baris payments, yang bisa >1 per order pada split
+    // bill/gabung bayar (menggelembungkan hitungan) dan 0 pada order diskon
+    // 100%/kompliment (tabel payments meng-CHECK amount > 0, jadi order
+    // semacam itu tak pernah punya baris payments sama sekali).
+    final salesCountRows = await db.rawQuery(
+      '''
+      SELECT COUNT(*) AS cnt
+      FROM transactions t
+      JOIN orders o ON o.id = t.order_id
+      WHERE t.transaction_date >= ? AND t.transaction_date < ? AND o.voided_at IS NULL
+    ''',
+      [since, until],
+    );
+    final salesCount = (salesCountRows.first['cnt'] as num?)?.toInt() ?? 0;
 
     // Kas masuk / keluar selama shift
     final moveRows = await db.rawQuery(
@@ -321,16 +336,20 @@ class CashierRepository {
 
     // ── Metrik pengawasan: diskon, kompliment, void selama shift ────────────
 
-    // Diskon: charge 'Diskon' pada order yang DIBAYAR di shift ini & tidak
-    // di-void. Di-agregat per order dulu agar split-payment tidak menggandakan.
+    // Diskon: charge 'Diskon' pada order yang SELESAI (ada baris transactions,
+    // termasuk diskon 100%/kompliment tanpa baris payments) di shift ini & tidak
+    // di-void. Basis transactions (bukan payments) juga mencegah order yang
+    // dibayar parsial lintas shift terhitung dobel — transactions dicatat TEPAT
+    // sekali, saat order benar-benar lunas. Di-agregat per order dulu agar
+    // split-payment tidak menggandakan.
     final discRows = await db.rawQuery(
       '''
       SELECT COUNT(*) AS cnt, COALESCE(SUM(t.disc), 0) AS total FROM (
         SELECT c.order_id, SUM(-c.applied_amount) AS disc
         FROM order_additional_charges c
         WHERE c.name = 'Diskon'
-          AND c.order_id IN (SELECT DISTINCT order_id FROM payments
-                             WHERE created_at >= ? AND created_at < ?)
+          AND c.order_id IN (SELECT tr.order_id FROM transactions tr
+                             WHERE tr.transaction_date >= ? AND tr.transaction_date < ?)
           AND c.order_id NOT IN (SELECT id FROM orders WHERE voided_at IS NOT NULL)
         GROUP BY c.order_id
       ) t
@@ -348,6 +367,7 @@ class CashierRepository {
       JOIN orders o ON o.id = c.order_id
       WHERE c.name = 'Kompliment'
         AND o.complimented_at >= ? AND o.complimented_at < ?
+        AND o.voided_at IS NULL
     ''',
       [since, until],
     );

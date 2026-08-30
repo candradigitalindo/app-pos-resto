@@ -212,9 +212,9 @@ class _CashierScreenState extends State<CashierScreen> {
     final order = _controller.state.currentOrder;
     if (order == null) return;
     final items = _controller.state.orderItems;
-    final byCtrl = TextEditingController();
+    final pinCtrl = TextEditingController();
     final reasonCtrl = TextEditingController();
-    var byError = false;
+    String? pinError;
 
     showDialog(
       context: context,
@@ -274,18 +274,19 @@ class _CashierScreenState extends State<CashierScreen> {
               ),
               const SizedBox(height: 18),
               TextField(
-                controller: byCtrl,
+                controller: pinCtrl,
                 autofocus: true,
-                textCapitalization: TextCapitalization.words,
+                obscureText: true,
+                keyboardType: TextInputType.number,
                 decoration: InputDecoration(
-                  labelText: 'Diberikan oleh *',
-                  hintText: 'Nama manager / pemberi kompliment',
-                  prefixIcon: const Icon(Icons.badge_outlined, size: 20),
+                  labelText: 'PIN Manager/SVP *',
+                  hintText: 'Otorisasi kompliment',
+                  prefixIcon: const Icon(Icons.lock_outline, size: 20),
                   border: const OutlineInputBorder(),
-                  errorText: byError ? 'Wajib diisi' : null,
+                  errorText: pinError,
                 ),
                 onChanged: (_) {
-                  if (byError) setS(() => byError = false);
+                  if (pinError != null) setS(() => pinError = null);
                 },
               ),
               const SizedBox(height: 12),
@@ -305,9 +306,18 @@ class _CashierScreenState extends State<CashierScreen> {
             primaryLabel: 'Gratiskan',
             primaryIcon: Icons.card_giftcard,
             onPrimary: () async {
-              final by = byCtrl.text.trim();
-              if (by.isEmpty) {
-                setS(() => byError = true);
+              final pin = pinCtrl.text.trim();
+              if (pin.isEmpty) {
+                setS(() => pinError = 'Wajib diisi');
+                return;
+              }
+              // Otorisasi sama dengan void: PIN void bersama atau PIN user
+              // ber-role admin/manager/svp. Nama pemberi = pemilik PIN, bukan
+              // teks bebas — jejak kompliment jadi akuntabel.
+              final by = await _controller.complimentAuthorizer(pin);
+              if (by == null) {
+                setS(() =>
+                    pinError = 'PIN salah / tidak berwenang (Manager/SVP)');
                 return;
               }
               final ok = await _controller.complimentCurrentOrder(
@@ -1024,7 +1034,6 @@ class _CashierScreenState extends State<CashierScreen> {
                               final cash = double.tryParse(rawDigits) ?? 0;
                               _controller.openShift(
                                 openingCash: cash,
-                                openedBy: 'Kasir',
                               );
                             },
                           ),
@@ -4381,7 +4390,13 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
     final qrisIn = totals?['qris'] ?? 0;
     final transferIn = totals?['transfer'] ?? 0;
     final totalPendapatan = cashIn + cardIn + qrisIn + transferIn;
-    final kasLaci = widget.activeShift.openingCash + cashIn;
+    // Kas di Laci = ekspektasi kas fisik (modal + tunai + kas masuk − kas
+    // keluar), SAMA dengan "KAS SEHARUSNYA" di struk & payload cloud
+    // (CashierRepository.getShiftReport → expected_cash). Formula lama
+    // (openingCash + cashIn saja) mengabaikan kas masuk/keluar sehingga
+    // berbeda dari struk begitu ada catatan kas non-penjualan.
+    final kasLaci = (_report?['expected_cash'] as num?)?.toDouble() ??
+        (widget.activeShift.openingCash + cashIn);
 
     final cashIns = _movements.where((m) => m.isCashIn).toList();
     final cashOuts = _movements.where((m) => !m.isCashIn).toList();
@@ -4820,6 +4835,7 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
   List<CashMovement> _movements = [];
   bool _loading = true;
   bool _submitting = false;
+  bool _cashEmpty = false;
   String _handoverName = '';
   final _cashCtrl = TextEditingController();
 
@@ -4833,13 +4849,24 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
       widget.getShiftReport(),
     ]).then((results) {
       if (mounted) {
+        final report = results[3] as Map<String, dynamic>;
         setState(() {
           _totals = results[0] as Map<String, double>;
           _users = results[1] as List<User>;
           _movements = results[2] as List<CashMovement>;
-          _report = results[3] as Map<String, dynamic>;
+          _report = report;
           _loading = false;
         });
+        // Pra-isi dengan kas seharusnya (modal + tunai + kas masuk − keluar)
+        // agar saldo tetap terbawa benar bila kasir tak mengubah nilainya —
+        // sebelumnya field kosong tersubmit sebagai 0 (modal shift baru
+        // hilang & struk mencetak selisih "Kurang" palsu sebesar ekspektasi).
+        // Ekspektasi negatif (mis. banyak refund void) di-clamp ke 0: kas
+        // fisik dihitung tak mungkin minus, dan formatInput menstrip tanda
+        // minus sehingga -50.000 akan tampil keliru sebagai 50.000.
+        final expected = (report['expected_cash'] as num?)?.toDouble() ?? 0;
+        _cashCtrl.text =
+            CurrencyHelper.formatInput(expected < 0 ? 0 : expected.round());
       }
     }).catchError((_) {
       if (mounted) setState(() => _loading = false);
@@ -4874,7 +4901,10 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
     final qrisIn = totals?['qris'] ?? 0;
     final transferIn = totals?['transfer'] ?? 0;
     final totalPendapatan = cashIn + cardIn + qrisIn + transferIn;
-    final kasLaci = widget.activeShift.openingCash + cashIn;
+    // Sama dengan expected_cash di CashierRepository.getShiftReport (modal +
+    // tunai + kas masuk − kas keluar) — konsisten dengan struk & payload cloud.
+    final kasLaci = (_report?['expected_cash'] as num?)?.toDouble() ??
+        (widget.activeShift.openingCash + cashIn);
 
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
@@ -5249,11 +5279,15 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                 controller: _cashCtrl,
                 keyboardType: TextInputType.number,
                 inputFormatters: [RupiahInputFormatter()],
+                onChanged: (_) {
+                  if (_cashEmpty) setState(() => _cashEmpty = false);
+                },
                 decoration: InputDecoration(
                   labelText: 'Kas Awal Shift Baru',
                   prefixText: 'Rp ',
                   prefixIcon: const Icon(Icons.money,
                       color: AppColors.textTertiary, size: 20),
+                  errorText: _cashEmpty ? 'Wajib diisi' : null,
                   border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12)),
                   focusedBorder: OutlineInputBorder(
@@ -5289,6 +5323,15 @@ class _SwapShiftDialogState extends State<_SwapShiftDialog> {
                               if (name.isEmpty) return;
                               final raw =
                                   _cashCtrl.text.replaceAll('.', '');
+                              // Field sudah dipra-isi dengan kas seharusnya;
+                              // kosong hanya bila kasir sengaja menghapusnya —
+                              // wajibkan diisi, jangan diam-diam kirim 0
+                              // (modal shift baru & carry-over tidak boleh 0
+                              // tanpa sepengetahuan kasir).
+                              if (raw.isEmpty) {
+                                setState(() => _cashEmpty = true);
+                                return;
+                              }
                               final cash = double.tryParse(raw) ?? 0;
                               setState(() => _submitting = true);
                               Navigator.pop(context);

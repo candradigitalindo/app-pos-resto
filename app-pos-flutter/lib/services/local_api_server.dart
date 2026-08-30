@@ -60,6 +60,12 @@ class LocalApiServer {
       ..post('/api/orders/<id>/pay', _payOrder)
       ..post('/api/orders/<id>/split-pay', _splitPayOrder)
       ..post('/api/orders/<id>/discount', _discountOrder)
+      ..post('/api/orders/<id>/compliment', _complimentOrder)
+      ..post('/api/orders/<id>/move-table', _moveOrderTable)
+      ..get('/api/orders/<id>/mergeable', _getMergeableOrders)
+      ..post('/api/orders/<id>/merge', _mergeOrders)
+      ..get('/api/held-items', _getHeldItems)
+      ..post('/api/held-items/<itemId>/pull', _pullHeldItem)
       ..get('/api/shift/active', _getActiveShift)
       ..post('/api/shift/open', _openShift)
       ..post('/api/shift/close', _closeShift)
@@ -698,6 +704,123 @@ class LocalApiServer {
         note: (body['note'] as String?) ?? '',
       );
       broadcast('order_updated', {'order_id': id});
+      return _ok({'ok': true});
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// POST /api/orders/<id>/compliment {compliment_by, reason, created_by}
+  /// Gratiskan seluruh order (paritas tombol Kompliment kasir utama).
+  Future<Response> _complimentOrder(Request req, String id) async {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _badRequest('Body JSON tidak valid');
+    }
+    final by = body['compliment_by'] as String?;
+    if (by == null || by.isEmpty) return _badRequest('compliment_by wajib');
+    try {
+      await _orderRepo.complimentOrder(
+        orderId: id,
+        complimentBy: by,
+        reason: (body['reason'] as String?) ?? '',
+        createdBy: body['created_by'] as String?,
+      );
+      // Order kini paid (total 0) & meja bebas — event sama dengan pembayaran.
+      broadcast('order_paid', {'order_id': id});
+      return _ok({'ok': true});
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// POST /api/orders/<id>/move-table {table_number}
+  Future<Response> _moveOrderTable(Request req, String id) async {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _badRequest('Body JSON tidak valid');
+    }
+    final table = body['table_number'] as String?;
+    if (table == null || table.isEmpty) return _badRequest('table_number wajib');
+    try {
+      await _orderRepo.moveOrderToTable(orderId: id, newTableNumber: table);
+      broadcast('order_updated', {'order_id': id});
+      return _ok({'ok': true});
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// GET /api/orders/<id>/mergeable — order aktif meja LAIN yang bisa digabung
+  /// ke order <id> (aturan sama dengan kasir/waiter utama).
+  Future<Response> _getMergeableOrders(Request req, String id) async {
+    try {
+      final order = await _orderRepo.getOrderById(id);
+      if (order == null) return _notFound('Order tidak ditemukan');
+      final list = await _orderRepo.getMergeableOrders(order.tableNumber);
+      return _ok(list.map((o) => o.toMap()).toList());
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// POST /api/orders/<id>/merge {source_order_id} — gabung order meja lain
+  /// ke order <id>.
+  Future<Response> _mergeOrders(Request req, String id) async {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _badRequest('Body JSON tidak valid');
+    }
+    final source = body['source_order_id'] as String?;
+    if (source == null || source.isEmpty) {
+      return _badRequest('source_order_id wajib');
+    }
+    try {
+      await _orderRepo.mergeOrders(targetOrderId: id, sourceOrderId: source);
+      broadcast('order_updated', {'order_id': id});
+      return _ok({'ok': true});
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// GET /api/held-items — item yang sedang di Meja Titipan.
+  Future<Response> _getHeldItems(Request req) async {
+    try {
+      final items = await _orderRepo.getHeldItems();
+      return _ok(items.map((i) => i.toMap()).toList());
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// POST /api/held-items/<itemId>/pull {qty, target_order_id, by} — tarik
+  /// item titipan ke order tamu.
+  Future<Response> _pullHeldItem(Request req, String itemId) async {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _badRequest('Body JSON tidak valid');
+    }
+    final target = body['target_order_id'] as String?;
+    if (target == null || target.isEmpty) {
+      return _badRequest('target_order_id wajib');
+    }
+    try {
+      await _orderRepo.pullHeldItem(
+        itemId: itemId,
+        qty: (body['qty'] as num?)?.toInt(),
+        targetOrderId: target,
+        movedBy: (body['by'] as String?) ?? 'Station',
+      );
+      broadcast('order_items_added', {'order_id': target});
       return _ok({'ok': true});
     } catch (e) {
       return _serverError('$e');

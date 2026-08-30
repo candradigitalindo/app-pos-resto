@@ -278,12 +278,11 @@ class CashierController extends ChangeNotifier {
 
   Future<void> openShift({
     required double openingCash,
-    required String openedBy,
   }) async {
     _setState(_state.copyWith(isProcessing: true, clearError: true));
     try {
       await _cashierRepo.openShift(
-        openedBy: openedBy,
+        openedBy: await _currentCashierName(), // akun yang sedang login
         openingCash: openingCash,
       );
       _setState(_state.copyWith(isProcessing: false));
@@ -306,11 +305,15 @@ class CashierController extends ChangeNotifier {
       // yang sama). Kalau dibalik, cetak pakai jendela [buka, now) sedangkan
       // cloud pakai [buka, closed_at) → bisa beda bila ada transaksi di sela.
       // Cetak lewat antrian durable, jadi tetap tercetak walau printer sesaat off.
-      await _cashierRepo.closeShift(
+      final closed = await _cashierRepo.closeShift(
         shiftId: shift.id,
-        closedBy: shift.openedBy,
+        closedBy: await _currentCashierName(), // akun yang sedang login
       );
-      await _printShiftReport(shift, title: 'TUTUP KASIR');
+      await _printShiftReport(
+        shift,
+        title: 'TUTUP KASIR',
+        closedAt: closed.closedAt,
+      );
       _setState(_state.copyWith(
         isProcessing: false,
         clearActiveShift: true,
@@ -332,13 +335,12 @@ class CashierController extends ChangeNotifier {
     if (shift == null) return;
     _setState(_state.copyWith(isProcessing: true, clearError: true));
     try {
-      final handoverName = await _resolveUserName(handoverTo);
       // Tutup shift lama + buka shift baru terhubung (carry-over, handover_to,
       // previous_shift_id) lewat satu operasi; keduanya dikirim ke cloud.
       // Handover DULU (set closed_at + kirim laporan cloud), BARU cetak — agar
       // angka struk == angka yang dikirim ke cloud (jendela [buka, closed_at)
       // sama). Cetak lewat antrian durable, tetap tercetak walau printer off.
-      await _cashierRepo.handoverShift(
+      final newShift = await _cashierRepo.handoverShift(
         currentShiftId: shift.id,
         handoverToUserId: handoverTo,
         countedCash: newOpeningCash,
@@ -347,8 +349,15 @@ class CashierController extends ChangeNotifier {
       await _printShiftReport(
         shift,
         title: 'GANTI SHIFT',
-        handoverToName: handoverName,
+        // handoverTo = nama yang diketik/dipilih kasir (lihat _SwapShiftDialog),
+        // dicetak apa adanya — BUKAN hasil resolusi id→nama (yang selalu gagal
+        // karena tak ada id user di sini, sehingga baris "Serah ke" tak pernah
+        // tercetak sebelumnya).
+        handoverToName: handoverTo,
         countedCash: newOpeningCash,
+        // newShift.openedAt == closed_at shift lama (di-set dari `now` yang
+        // sama di handoverShift), jadi ini closed_at ASLI, bukan waktu cetak.
+        closedAt: newShift.openedAt,
       );
       _setState(_state.copyWith(isProcessing: false));
       await loadData();
@@ -754,6 +763,11 @@ class CashierController extends ChangeNotifier {
     return null;
   }
 
+  /// Nama otorisator KOMPLIMENT dari [pin] — aturan sama dengan void:
+  /// PIN void bersama (pengaturan outlet) atau PIN user admin/manager/svp.
+  /// null bila PIN salah / tidak berwenang.
+  Future<String?> complimentAuthorizer(String pin) => _voidAuthorizer(pin);
+
   /// VOID (hapus) satu item order aktif. Butuh PIN manager/SVP (atau PIN void
   /// bersama). Mengembalikan 'ok' | 'invalid_pin' | 'error'.
   Future<String> voidOrderItem({
@@ -1087,12 +1101,14 @@ class CashierController extends ChangeNotifier {
   }
 
   /// Cetak laporan TUTUP KASIR / GANTI SHIFT ke printer kasir.
-  /// Dipanggil sebelum shift ditutup/diganti agar data masih valid.
+  /// Dipanggil SETELAH shift ditutup/diganti (closed_at sudah tersimpan &
+  /// laporan sudah terkirim ke cloud), agar angka struk == angka cloud.
   Future<void> _printShiftReport(
     CashierShift shift, {
     required String title,
     String? handoverToName,
     double? countedCash,
+    DateTime? closedAt,
   }) async {
     try {
       final report = await _cashierRepo.getShiftReport(shift.id);
@@ -1123,7 +1139,7 @@ class CashierController extends ChangeNotifier {
         shift: shift,
         report: report,
         movements: movements,
-        closedAt: DateTime.now(),
+        closedAt: closedAt ?? DateTime.now(),
         handoverToName: handoverToName,
         countedCash: countedCash,
       );
@@ -1135,18 +1151,6 @@ class CashierController extends ChangeNotifier {
     }
   }
 
-  /// Resolusi nama user dari id (untuk label serah-terima shift).
-  Future<String> _resolveUserName(String userId) async {
-    try {
-      final users = await _cashierRepo.getCashierUsers();
-      for (final u in users) {
-        if (u.id == userId) {
-          return u.fullName.isNotEmpty ? u.fullName : u.username;
-        }
-      }
-    } catch (_) {}
-    return '';
-  }
 
   String _ordererName(Order order) =>
       (order.createdBy?.isNotEmpty ?? false) ? order.createdBy! : 'Kasir';

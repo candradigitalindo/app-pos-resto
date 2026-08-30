@@ -124,7 +124,15 @@ class StationApiClient {
   }
 
   /// Jalankan request; bila gagal koneksi, coba rediscover lalu ulangi sekali.
-  Future<T> _withRetry<T>(Future<T> Function() call) async {
+  /// [idempotent] = false untuk operasi tulis yang TIDAK boleh diulang
+  /// otomatis (bayar, buat order, tambah/void/pindah item, buka/tutup shift):
+  /// saat timeout, percobaan pertama bisa saja SUDAH diproses Main POS walau
+  /// responsnya hilang di jaringan — mengulang otomatis berarti data dobel
+  /// (order/item/shift ganda) atau error menyesatkan ('Tagihan sudah lunas'
+  /// padahal pembayaran sukses, struk tak tercetak). Rediscover tetap
+  /// dijalankan agar percobaan manual berikutnya langsung tersambung.
+  Future<T> _withRetry<T>(Future<T> Function() call,
+      {bool idempotent = true}) async {
     try {
       return await call();
     } on DioException catch (e) {
@@ -135,8 +143,26 @@ class StationApiClient {
         onUnauthorized?.call();
         throw Exception('Sesi station berakhir — silakan login ulang');
       }
-      if (_isConnError(e) && await rediscover()) {
-        return await call(); // ulangi sekali setelah pindah IP
+      if (_isConnError(e)) {
+        final reconnected = await rediscover();
+        if (reconnected && idempotent) {
+          return await call(); // ulangi sekali setelah pindah IP
+        }
+        if (!idempotent) {
+          throw Exception(
+              'Koneksi ke Main POS terputus saat memproses. JANGAN langsung '
+              'mengulang — periksa dulu apakah data sudah tercatat (bisa '
+              'saja permintaan pertama sebenarnya berhasil).');
+        }
+        rethrow;
+      }
+      // Teruskan pesan error asli dari server ({'error': ...}) — jauh lebih
+      // berguna bagi kasir (mis. 'Shift kasir belum dibuka') daripada teks
+      // DioException mentah.
+      final data = e.response?.data;
+      final serverMsg = data is Map ? data['error'] : null;
+      if (serverMsg is String && serverMsg.isNotEmpty) {
+        throw Exception(serverMsg.replaceFirst('Exception: ', ''));
       }
       rethrow;
     }
@@ -331,7 +357,7 @@ class StationApiClient {
     int pax = 1,
     String? waiterName,
   }) async {
-    return _withRetry(() async {
+    return _withRetry(idempotent: false, () async {
       final resp = await _dio.post('$_base/api/orders', data: {
         'table_number': tableNumber,
         'items': items,
@@ -349,7 +375,7 @@ class StationApiClient {
     required List<Map<String, dynamic>> items,
     String? waiterName,
   }) async {
-    return _withRetry(() async {
+    return _withRetry(idempotent: false, () async {
       await _dio.post('$_base/api/orders/$orderId/items', data: {
         'items': items,
         if (waiterName != null) 'waiter_name': waiterName,
@@ -360,7 +386,7 @@ class StationApiClient {
   /// Void item terkirim (per-unit). [qty] null → seluruh baris.
   Future<void> voidItem(String itemId,
       {int? qty, required String voidedBy, String reason = ''}) async {
-    return _withRetry(() async {
+    return _withRetry(idempotent: false, () async {
       await _dio.post('$_base/api/order-items/$itemId/void', data: {
         if (qty != null) 'qty': qty,
         'voided_by': voidedBy,
@@ -372,7 +398,7 @@ class StationApiClient {
   /// Titipkan item ke Meja Titipan (per-unit).
   Future<void> parkItem(String itemId,
       {int? qty, required String by}) async {
-    return _withRetry(() async {
+    return _withRetry(idempotent: false, () async {
       await _dio.post('$_base/api/order-items/$itemId/park', data: {
         if (qty != null) 'qty': qty,
         'by': by,
@@ -383,7 +409,7 @@ class StationApiClient {
   /// Pindahkan item ke order aktif meja lain (per-unit).
   Future<void> moveItem(String itemId,
       {int? qty, required String targetOrderId, required String by}) async {
-    return _withRetry(() async {
+    return _withRetry(idempotent: false, () async {
       await _dio.post('$_base/api/order-items/$itemId/move', data: {
         if (qty != null) 'qty': qty,
         'target_order_id': targetOrderId,
@@ -414,7 +440,7 @@ class StationApiClient {
     required double paidAmount,
     String? createdBy,
   }) async {
-    return _withRetry(() async {
+    return _withRetry(idempotent: false, () async {
       final resp = await _dio.post('$_base/api/orders/$orderId/pay', data: {
         'payment_method': paymentMethod,
         'paid_amount': paidAmount,
@@ -432,7 +458,7 @@ class StationApiClient {
     String? note,
     String? createdBy,
   }) async {
-    return _withRetry(() async {
+    return _withRetry(idempotent: false, () async {
       final resp =
           await _dio.post('$_base/api/orders/$orderId/split-pay', data: {
         'amount': amount,
@@ -455,6 +481,84 @@ class StationApiClient {
         'charge_type': chargeType,
         'value': value,
         'note': note,
+      });
+    });
+  }
+
+  /// Kompliment: gratiskan seluruh order (paritas kasir utama).
+  Future<void> complimentOrder({
+    required String orderId,
+    required String complimentBy,
+    String reason = '',
+    String? createdBy,
+  }) async {
+    return _withRetry(idempotent: false, () async {
+      await _dio.post('$_base/api/orders/$orderId/compliment', data: {
+        'compliment_by': complimentBy,
+        'reason': reason,
+        if (createdBy != null) 'created_by': createdBy,
+      });
+    });
+  }
+
+  /// Pindahkan order ke meja lain (paritas kasir/waiter utama).
+  Future<void> moveOrderTable({
+    required String orderId,
+    required String tableNumber,
+  }) async {
+    return _withRetry(idempotent: false, () async {
+      await _dio.post('$_base/api/orders/$orderId/move-table', data: {
+        'table_number': tableNumber,
+      });
+    });
+  }
+
+  /// Order aktif meja LAIN yang bisa digabung ke [orderId].
+  Future<List<Map<String, dynamic>>> getMergeableOrders(String orderId) async {
+    return _withRetry(() async {
+      final resp = await _dio.get('$_base/api/orders/$orderId/mergeable');
+      final data = resp.data is Map ? resp.data['data'] : null;
+      return data is List
+          ? data.map((e) => (e as Map).cast<String, dynamic>()).toList()
+          : <Map<String, dynamic>>[];
+    });
+  }
+
+  /// Gabung order meja lain ([sourceOrderId]) ke [targetOrderId].
+  Future<void> mergeOrders({
+    required String targetOrderId,
+    required String sourceOrderId,
+  }) async {
+    return _withRetry(idempotent: false, () async {
+      await _dio.post('$_base/api/orders/$targetOrderId/merge', data: {
+        'source_order_id': sourceOrderId,
+      });
+    });
+  }
+
+  /// Item yang sedang di Meja Titipan.
+  Future<List<Map<String, dynamic>>> getHeldItems() async {
+    return _withRetry(() async {
+      final resp = await _dio.get('$_base/api/held-items');
+      final data = resp.data is Map ? resp.data['data'] : null;
+      return data is List
+          ? data.map((e) => (e as Map).cast<String, dynamic>()).toList()
+          : <Map<String, dynamic>>[];
+    });
+  }
+
+  /// Tarik item titipan ke order tamu [targetOrderId].
+  Future<void> pullHeldItem(
+    String itemId, {
+    int? qty,
+    required String targetOrderId,
+    required String by,
+  }) async {
+    return _withRetry(idempotent: false, () async {
+      await _dio.post('$_base/api/held-items/$itemId/pull', data: {
+        if (qty != null) 'qty': qty,
+        'target_order_id': targetOrderId,
+        'by': by,
       });
     });
   }
@@ -482,7 +586,7 @@ class StationApiClient {
     required String openedBy,
     required double openingCash,
   }) async {
-    return _withRetry(() async {
+    return _withRetry(idempotent: false, () async {
       final resp = await _dio.post('$_base/api/shift/open', data: {
         'opened_by': openedBy,
         'opening_cash': openingCash,
@@ -496,7 +600,7 @@ class StationApiClient {
     required String shiftId,
     required String closedBy,
   }) async {
-    return _withRetry(() async {
+    return _withRetry(idempotent: false, () async {
       final resp = await _dio.post('$_base/api/shift/close', data: {
         'shift_id': shiftId,
         'closed_by': closedBy,

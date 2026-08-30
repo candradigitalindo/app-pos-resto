@@ -153,6 +153,30 @@ class OrderRepository {
 
     final db = await _db.database;
     final now = DateTime.now();
+    final refundMovementId = Ulid.generate();
+
+    // Refund tunai yang berasal dari SHIFT SEBELUMNYA (sudah ditutup & sudah
+    // melapor ke cloud): kas fisiknya sudah menjadi bagian dari carry-over /
+    // modal shift yang sedang berjalan. Bila tidak dikoreksi, kas seharusnya
+    // shift berjalan tidak berkurang walau uang tunai fisik keluar dari laci
+    // saat refund — kasir yang bertugas sekarang tampak "kurang setor".
+    // Refund atas pembayaran DALAM shift yang sama TIDAK perlu dicatat di
+    // sini: exclusion `o.voided_at IS NULL` pada perhitungan penjualan shift
+    // itu sendiri sudah otomatis mengeluarkan pembayarannya dari kas tunai
+    // (self-healing) — mencatatnya lagi di sini akan mengurangi dua kali.
+    final activeShift = await _getActiveShift();
+    double crossShiftCashRefund = 0;
+    if (activeShift != null) {
+      final cashRows = await db.rawQuery(
+        '''
+        SELECT COALESCE(SUM(amount), 0) AS total FROM payments
+        WHERE order_id = ? AND payment_method = 'cash' AND created_at < ?
+        ''',
+        [orderId, activeShift.openedAt.toLocal().toIso8601String()],
+      );
+      crossShiftCashRefund = (cashRows.first['total'] as num?)?.toDouble() ?? 0;
+    }
+
     await db.transaction((txn) async {
       // Tandai order void + kembalikan pembayaran
       await txn.update(
@@ -181,7 +205,37 @@ class OrderRepository {
         where: "order_id = ? AND status != 'cancelled'",
         whereArgs: [orderId],
       );
+      if (activeShift != null && crossShiftCashRefund > 0) {
+        await txn.insert('cashier_cash_movements', {
+          'id': refundMovementId,
+          'shift_id': activeShift.id,
+          'movement_type': 'out',
+          'amount': crossShiftCashRefund,
+          'counterpart_name': 'Refund void (shift sebelumnya)',
+          'note':
+              'Void order #${orderId.substring(0, 8).toUpperCase()} — dibayar tunai sebelum shift ini dibuka',
+          'created_at': now.toIso8601String(),
+        });
+      }
     });
+
+    if (activeShift != null && crossShiftCashRefund > 0) {
+      await _sync.enqueue(
+        entityType: 'cashier_cash_movement',
+        entityId: refundMovementId,
+        operation: 'create',
+        payload: {
+          'local_id': refundMovementId,
+          'shift_id': activeShift.id,
+          'movement_type': 'out',
+          'amount': crossShiftCashRefund,
+          'counterpart_name': 'Refund void (shift sebelumnya)',
+          'note':
+              'Void order #${orderId.substring(0, 8).toUpperCase()} — dibayar tunai sebelum shift ini dibuka',
+          'created_at': _isoUtc(now),
+        },
+      );
+    }
 
     // Sync status order (kini void) ke cloud
     await _enqueueOrder(orderId, 'upsert');
@@ -306,6 +360,72 @@ class OrderRepository {
       await _enqueueOrder(r['id'] as String, 'upsert');
     }
     return rows.length;
+  }
+
+  /// Backfill PENYELAMAT untuk pembayaran LUNAS yang kehilangan entri outbox:
+  /// transaksi ter-commit tetapi tidak punya baris sync_queue sama sekali
+  /// (mis. app tertutup/crash tepat setelah commit pembayaran, sebelum outbox
+  /// tertulis — enqueue berada di luar txn DB — atau enqueue error yang
+  /// tertelan catch). Tanpa ini pembayaran tsb TIDAK AKAN PERNAH sampai ke
+  /// cloud: enqueueUnsyncedActiveOrders sengaja melewati order 'paid', dan
+  /// retryFailed() hanya menyentuh baris antrian yang sudah ada.
+  ///
+  /// Jendela [days] membatasi pemindaian agar riwayat lama yang entri
+  /// sukses-nya sudah dipurge retensi (>= 90 hari) tidak dianggap 'hilang'.
+  /// Kiriman ulang pun aman: cloud meng-upsert idempoten per local_id.
+  /// Payload dibangun ulang dari tabel transactions/payments; nominal uang
+  /// diambil dari baris payments (kembalian tidak tercatat → change 0).
+  Future<int> enqueueUnsyncedPaidTransactions({int days = 7}) async {
+    final db = await _db.database;
+    final cutoff =
+        DateTime.now().subtract(Duration(days: days)).toIso8601String();
+    final rows = await db.rawQuery(
+      '''
+      SELECT t.* FROM transactions t
+      WHERE t.cancelled_at IS NULL AND t.transaction_date >= ?
+        AND NOT EXISTS (SELECT 1 FROM sync_queue q
+                        WHERE q.entity_type = 'transaction' AND q.entity_id = t.id)
+    ''',
+      [cutoff],
+    );
+    var enqueued = 0;
+    for (final row in rows) {
+      final tx = Transaction.fromMap(row);
+      final order = await getOrderById(tx.orderId);
+      if (order == null) continue; // order sudah dipurge — tak bisa dibangun
+      final items = await getOrderItems(order.id);
+      final payRows = await db.query(
+        'payments',
+        where: 'order_id = ?',
+        whereArgs: [order.id],
+        orderBy: 'created_at ASC',
+      );
+      final paymentsList = payRows
+          .map((r) => {
+                'payment_method': r['payment_method'],
+                'amount': (r['amount'] as num).toDouble(),
+                'payment_note': r['payment_note'],
+                'created_at': _isoUtcStr(r['created_at'] as String),
+              })
+          .toList();
+      final paidSum = paymentsList.fold<double>(
+          0, (s, p) => s + (p['amount'] as double));
+      await _enqueueTransaction(
+        transaction: tx,
+        order: order,
+        items: items,
+        paymentMethod: tx.paymentMethod,
+        paidAmount: paymentsList.isEmpty ? order.totalAmount : paidSum,
+        changeAmount: 0,
+        cashierId: tx.createdBy ?? '',
+        payments: paymentsList.isEmpty ? null : paymentsList,
+      );
+      // Status order (paid) ikut disusulkan agar cloud tidak menampilkan
+      // order ini sebagai belum lunas.
+      await _enqueueOrder(order.id, 'upsert');
+      enqueued++;
+    }
+    return enqueued;
   }
 
   /// Timestamp untuk payload cloud: SELALU UTC + 'Z' (zona eksplisit) agar
@@ -463,6 +583,9 @@ class OrderRepository {
     if (order == null) throw Exception('Order tidak ditemukan');
     if (order.isPaid) throw Exception('Order sudah dibayar');
     if (order.isVoided) throw Exception('Order sudah dibatalkan');
+    if (order.paidAmount > 0) {
+      throw Exception('Order sudah ada pembayaran sebagian, tidak bisa hapus item');
+    }
 
     final n = (qty == null || qty >= item.qty || qty < 1) ? item.qty : qty;
     final now = DateTime.now();
@@ -800,6 +923,12 @@ class OrderRepository {
     final order = await getOrderById(orderId);
     if (order == null) throw Exception('Order tidak ditemukan');
     if (order.isPaid) throw Exception('Tagihan sudah lunas');
+
+    // Sama seperti processPayment: tolak bila tak ada shift aktif. Tanpa ini,
+    // pembayaran (mis. dari kasir station yang statusnya basi) bisa tercatat
+    // di celah waktu antar shift dan tidak pernah masuk laporan shift mana pun.
+    final shift = await _getActiveShift();
+    if (shift == null) throw Exception('Shift kasir belum dibuka');
 
     // Items diambil sebelum txn untuk payload sync (jika lunas)
     final splitItems = await getOrderItems(orderId);
@@ -1184,6 +1313,14 @@ class OrderRepository {
     if (target.isVoided || source.isVoided) {
       throw Exception('Order sudah dibatalkan');
     }
+    // Order dengan pembayaran SEBAGIAN (split bill) tak boleh digabung: source
+    // akan ditutup (total & paid_amount dinolkan) tanpa memindahkan kreditnya
+    // ke target, sehingga uang yang sudah dibayar tamu hilang dari tagihan
+    // (tamu ditagih ulang) sekaligus tetap terhitung sebagai penjualan shift.
+    if (target.paidAmount > 0 || source.paidAmount > 0) {
+      throw Exception(
+          'Order dengan pembayaran sebagian tidak bisa digabung');
+    }
 
     final db = await _db.database;
     final now = DateTime.now().toIso8601String();
@@ -1210,10 +1347,15 @@ class OrderRepository {
       // Bebaskan meja source
       await txn.update('tables', {'status': 'available', 'updated_at': now},
           where: 'table_number = ?', whereArgs: [source.tableNumber]);
-      // Hapus charge lama (target & source) — pajak dihitung ulang.
+      // Hapus charge OTOMATIS target (pajak/service — dihitung ulang di bawah)
+      // TANPA menyentuh diskon/kompliment MANUAL (charge_id NULL) target, agar
+      // otorisasi diskon yang sudah diberikan tidak lenyap diam-diam saat
+      // gabung meja. Source ditutup — semua chargenya (termasuk manual) dibuang.
       await txn.delete('order_additional_charges',
-          where: 'order_id IN (?, ?)',
-          whereArgs: [targetOrderId, sourceOrderId]);
+          where: 'order_id = ? AND charge_id IS NOT NULL',
+          whereArgs: [targetOrderId]);
+      await txn.delete('order_additional_charges',
+          where: 'order_id = ?', whereArgs: [sourceOrderId]);
     });
 
     // Terapkan ulang pajak/biaya otomatis pada subtotal gabungan + recalc total.
@@ -1262,6 +1404,14 @@ class OrderRepository {
     }
     if (target.isPaid || target.isVoided) {
       throw Exception('Meja tujuan tidak aktif');
+    }
+    // Order asal dengan pembayaran SEBAGIAN tak boleh jadi sumber pindah/titip:
+    // bila jadi kosong, order asal ditutup (total dinolkan) TANPA memindahkan
+    // kredit paid_amount-nya ke tujuan — uang yang sudah dibayar tamu hilang
+    // dari tagihan (ditagih ulang) sekaligus tetap terhitung sbg penjualan shift.
+    if (source.paidAmount > 0) {
+      throw Exception(
+          'Order asal sudah ada pembayaran sebagian, tidak bisa dipindah');
     }
 
     final db = await _db.database;
@@ -1393,6 +1543,21 @@ class OrderRepository {
 
   /// Pindahkan [qty] unit item [itemId] ke order aktif [targetOrderId] (meja
   /// lain). [qty] null/penuh → seluruh baris; sebagian → split baris dulu.
+  /// Guard order asal untuk pindah/titip item — dipanggil SEBELUM _splitLine
+  /// agar operasi yang bakal ditolak tidak meninggalkan baris item terpecah.
+  /// Aturan sama dengan guard di transferItemsToOrder.
+  Future<void> _ensureTransferableSource(String sourceOrderId) async {
+    final source = await getOrderById(sourceOrderId);
+    if (source == null) throw Exception('Order tidak ditemukan');
+    if (source.isPaid || source.isVoided) {
+      throw Exception('Order asal tidak aktif');
+    }
+    if (source.paidAmount > 0) {
+      throw Exception(
+          'Order asal sudah ada pembayaran sebagian, tidak bisa dipindah');
+    }
+  }
+
   Future<void> transferItemQty({
     required String itemId,
     int? qty,
@@ -1401,6 +1566,9 @@ class OrderRepository {
   }) async {
     final orig = await _getOrderItem(itemId);
     if (orig == null) throw Exception('Item tidak ditemukan');
+    // Cek guard order asal SEBELUM _splitLine: split terlanjur tersimpan
+    // permanen walau transfer kemudian ditolak (baris item terpecah dua).
+    await _ensureTransferableSource(orig.orderId);
     final moveId = await _splitLine(itemId, qty ?? orig.qty);
     await transferItemsToOrder(
       itemIds: [moveId],
@@ -1422,6 +1590,8 @@ class OrderRepository {
     if (orig == null) throw Exception('Item tidak ditemukan');
     final srcOrder = await getOrderById(orig.orderId);
     final srcTable = srcOrder?.tableNumber ?? '-';
+    // Cek guard order asal SEBELUM _splitLine (split permanen walau ditolak).
+    await _ensureTransferableSource(orig.orderId);
     final moveId = await _splitLine(itemId, qty ?? orig.qty);
     await transferItemsToOrder(
       itemIds: [moveId],

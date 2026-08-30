@@ -128,6 +128,12 @@ class CloudSyncService {
     // sync order, atau yang terlewat) agar semua ikut terkirim.
     await _orderRepo.enqueueUnsyncedActiveOrders();
 
+    // Backfill PENYELAMAT: pembayaran LUNAS yang kehilangan entri outbox
+    // (mis. app tertutup tepat setelah commit pembayaran, sebelum enqueue).
+    // Tanpa ini order tsb selamanya tampil belum lunas di cloud — backfill
+    // order aktif di atas sengaja melewati order 'paid'.
+    await _orderRepo.enqueueUnsyncedPaidTransactions();
+
     final pushed = await pushNow();
     // Pull hanya jika push tidak gagal jaringan (hindari spam saat offline)
     if ((pushed['failed'] ?? 0) == 0 || (pushed['sent'] ?? 0) == 0) {
