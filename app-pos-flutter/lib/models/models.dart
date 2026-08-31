@@ -554,6 +554,11 @@ class Customer {
 
 class AdditionalCharge {
   final int? id;
+
+  /// Pengenal stabil untuk cloud. Kolom `id` bertipe INTEGER AUTOINCREMENT dan
+  /// sudah dirujuk baris pesanan historis, jadi tak bisa dipakai sebagai
+  /// local_id sinkronisasi. Null pada baris lama yang belum termigrasi.
+  final String? syncId;
   final String? outletId;
   final String name;
   final String chargeType; // percentage, fixed
@@ -564,6 +569,7 @@ class AdditionalCharge {
 
   const AdditionalCharge({
     this.id,
+    this.syncId,
     this.outletId,
     required this.name,
     required this.chargeType,
@@ -575,6 +581,7 @@ class AdditionalCharge {
 
   Map<String, dynamic> toMap() => {
         'id': id,
+        'sync_id': syncId,
         'outlet_id': outletId,
         'name': name,
         'charge_type': chargeType,
@@ -587,6 +594,7 @@ class AdditionalCharge {
   factory AdditionalCharge.fromMap(Map<String, dynamic> map) =>
       AdditionalCharge(
         id: map['id'] as int?,
+        syncId: map['sync_id'] as String?,
         outletId: map['outlet_id'] as String?,
         name: map['name'] as String,
         chargeType: map['charge_type'] as String,

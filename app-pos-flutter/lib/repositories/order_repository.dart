@@ -1771,6 +1771,26 @@ class OrderRepository {
     return results.map((m) => AdditionalCharge.fromMap(m)).toList();
   }
 
+  /// Payload biaya tambahan untuk cloud. Cloud memakainya untuk menghitung
+  /// total pesanan online PERSIS seperti kasir — tanpa ini nominal QRIS yang
+  /// dibayar tamu bisa berbeda dari tagihan yang dihitung POS.
+  Map<String, dynamic> _chargePayload({
+    required String syncId,
+    required String name,
+    required String chargeType,
+    required double value,
+    required bool isActive,
+  }) =>
+      {
+        'local_id': syncId,
+        'id': syncId,
+        'name': name,
+        'charge_type': chargeType,
+        'value': value,
+        'is_active': isActive ? 1 : 0,
+        'version': 1,
+      };
+
   Future<void> createAdditionalCharge({
     required String name,
     required String chargeType,
@@ -1778,7 +1798,9 @@ class OrderRepository {
     required bool isActive,
   }) async {
     final now = DateTime.now().toIso8601String();
+    final syncId = Ulid.generate();
     await _db.insert('additional_charges', {
+      'sync_id': syncId,
       'name': name,
       'charge_type': chargeType,
       'value': value,
@@ -1786,6 +1808,18 @@ class OrderRepository {
       'created_at': now,
       'updated_at': now,
     });
+    await _sync.enqueue(
+      entityType: 'additional_charge',
+      entityId: syncId,
+      operation: 'create',
+      payload: _chargePayload(
+        syncId: syncId,
+        name: name,
+        chargeType: chargeType,
+        value: value,
+        isActive: isActive,
+      ),
+    );
   }
 
   Future<void> updateAdditionalCharge({
@@ -1795,9 +1829,13 @@ class OrderRepository {
     required double value,
     required bool isActive,
   }) async {
+    // Baris lama (pra-migrasi) bisa belum punya sync_id — beri satu di sini
+    // agar perubahannya tetap sampai ke cloud.
+    final syncId = await _ensureChargeSyncId(id);
     await _db.update(
       'additional_charges',
       {
+        'sync_id': syncId,
         'name': name,
         'charge_type': chargeType,
         'value': value,
@@ -1807,6 +1845,60 @@ class OrderRepository {
       where: 'id = ?',
       whereArgs: [id],
     );
+    await _sync.enqueue(
+      entityType: 'additional_charge',
+      entityId: syncId,
+      operation: 'update',
+      payload: _chargePayload(
+        syncId: syncId,
+        name: name,
+        chargeType: chargeType,
+        value: value,
+        isActive: isActive,
+      ),
+    );
+  }
+
+  Future<String> _ensureChargeSyncId(int id) async {
+    final rows = await _db.query('additional_charges',
+        columns: ['sync_id'], where: 'id = ?', whereArgs: [id], limit: 1);
+    final existing = rows.isEmpty ? null : rows.first['sync_id'] as String?;
+    if (existing != null && existing.isNotEmpty) return existing;
+    return Ulid.generate();
+  }
+
+  /// Kirim ulang SELURUH biaya tambahan ke cloud.
+  ///
+  /// Dipanggil siklus sync agar cloud selalu punya daftar yang sama dengan
+  /// kasir — termasuk baris yang dibuat sebelum fitur ini ada, dan baris pajak
+  /// yang ditulis langsung oleh syncTaxFromCloud tanpa lewat method di atas.
+  /// Idempoten: cloud meng-upsert per local_id.
+  Future<int> enqueueAllAdditionalCharges() async {
+    final db = await _db.database;
+    final rows = await db.query('additional_charges');
+    var sent = 0;
+    for (final r in rows) {
+      var syncId = r['sync_id'] as String?;
+      if (syncId == null || syncId.isEmpty) {
+        syncId = Ulid.generate();
+        await db.update('additional_charges', {'sync_id': syncId},
+            where: 'id = ?', whereArgs: [r['id']]);
+      }
+      await _sync.enqueue(
+        entityType: 'additional_charge',
+        entityId: syncId,
+        operation: 'update',
+        payload: _chargePayload(
+          syncId: syncId,
+          name: r['name'] as String,
+          chargeType: r['charge_type'] as String,
+          value: (r['value'] as num).toDouble(),
+          isActive: (r['is_active'] as num).toInt() == 1,
+        ),
+      );
+      sent++;
+    }
+    return sent;
   }
 
   // ==================== ORDER CHARGES ====================

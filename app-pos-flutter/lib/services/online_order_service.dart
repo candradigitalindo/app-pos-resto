@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
+import '../repositories/cashier_repository.dart';
 import '../repositories/order_repository.dart';
 import '../repositories/product_repository.dart';
 import '../utils/ulid.dart';
@@ -28,6 +29,7 @@ class OnlineOrderService {
   final _outletService = OutletService();
   final _orderRepo = OrderRepository();
   final _productRepo = ProductRepository();
+  final _cashierRepo = CashierRepository();
   final _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 12),
     receiveTimeout: const Duration(seconds: 12),
@@ -71,6 +73,12 @@ class OnlineOrderService {
           outlet.cloudApiKey.isEmpty) {
         return 0;
       }
+
+      // Pesanan online sudah dibayar tamu, jadi pembayarannya harus tercatat
+      // di shift kasir. Tanpa shift terbuka, pembayaran akan tertolak dan
+      // ordernya jadi tagihan yang salah — lebih baik tunda: pesanan tetap
+      // menunggu di cloud dan ditarik saat kasir membuka shift.
+      if (await _cashierRepo.getActiveShift() == null) return 0;
 
       final base = _normalizeBaseUrl(outlet.cloudApiUrl);
       final options = Options(headers: {
@@ -168,27 +176,65 @@ class OnlineOrderService {
     final orderer = customerName.isEmpty ? 'Pesan Online' : customerName;
 
     final existing = await _orderRepo.getOrderByTable(tableNumber);
+    String localOrderId;
     if (existing != null && !existing.isPaid && !existing.isVoided) {
       await _orderRepo.addItemToOrder(
         orderId: existing.id,
         items: items,
         waiterName: orderer,
       );
-      return existing.id;
+      localOrderId = existing.id;
+    } else {
+      final created = await _orderRepo.createOrder(
+        tableNumber: tableNumber,
+        items: items,
+        pax: 1,
+        customerName: customerName.isEmpty ? null : customerName,
+        customerPhone: (order['customer_phone'] as String? ?? '').trim().isEmpty
+            ? null
+            : order['customer_phone'] as String,
+        createdBy: orderer,
+        waiterName: orderer,
+      );
+      localOrderId = created.id;
     }
 
-    final created = await _orderRepo.createOrder(
-      tableNumber: tableNumber,
-      items: items,
-      pax: 1,
-      customerName: customerName.isEmpty ? null : customerName,
-      customerPhone: (order['customer_phone'] as String? ?? '').trim().isEmpty
-          ? null
-          : order['customer_phone'] as String,
-      createdBy: orderer,
-      waiterName: orderer,
-    );
-    return created.id;
+    await _recordOnlinePayment(localOrderId, order, orderer);
+    return localOrderId;
+  }
+
+  /// Catat pembayaran QRIS yang SUDAH diterima penyedia ke order lokal.
+  ///
+  /// Nominal yang dicatat adalah yang benar-benar dibayar tamu, BUKAN total
+  /// yang dihitung POS. Kalau konfigurasi biaya sempat berbeda antara cloud dan
+  /// POS, selisihnya muncul sebagai sisa tagihan yang terlihat kasir — jauh
+  /// lebih baik daripada menandai lunas atas uang yang tidak masuk, atau
+  /// menagih ulang tamu yang sudah membayar penuh.
+  ///
+  /// Memakai splitBillPayment karena method itu sudah menangani pembayaran
+  /// sebagian, meng-clamp ke sisa tagihan, dan menutup transaksi begitu lunas.
+  Future<void> _recordOnlinePayment(
+    String localOrderId,
+    Map<String, dynamic> order,
+    String orderer,
+  ) async {
+    final paid = (order['paid_amount'] as num?)?.toDouble() ?? 0;
+    if (paid <= 0) return;
+
+    try {
+      await _orderRepo.splitBillPayment(
+        orderId: localOrderId,
+        amount: paid,
+        paymentMethod: 'qris',
+        note: 'Pesan online — dibayar QRIS',
+        createdBy: orderer,
+      );
+    } catch (e) {
+      // Ordernya sudah terbentuk dan tiket dapur sudah tercetak; kegagalan
+      // mencatat pembayaran TIDAK boleh membatalkan itu. Kasir akan melihat
+      // tagihan ini belum lunas dan bisa menyelesaikannya manual.
+      debugPrint('Gagal mencatat pembayaran online $localOrderId: $e');
+    }
   }
 
   /// Cocokkan add-on kiriman cloud dengan master add-on MILIK POS.

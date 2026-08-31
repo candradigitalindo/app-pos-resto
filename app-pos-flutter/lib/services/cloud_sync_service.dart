@@ -135,6 +135,13 @@ class CloudSyncService {
     // order aktif di atas sengaja melewati order 'paid'.
     await _orderRepo.enqueueUnsyncedPaidTransactions();
 
+    // Daftar biaya tambahan (pajak, service charge) dikirim ulang tiap siklus.
+    // Cloud memakainya untuk menghitung total pesanan online persis seperti
+    // kasir; kalau sampai melenceng, tamu membayar nominal QRIS yang berbeda
+    // dari tagihannya. Barisnya cuma segelintir dan enqueue menimpa entri
+    // pending untuk entity yang sama, jadi ini murah dan menutup celah drift.
+    await _orderRepo.enqueueAllAdditionalCharges();
+
     final pushed = await pushNow();
     // Pull hanya jika push tidak gagal jaringan (hindari spam saat offline)
     if ((pushed['failed'] ?? 0) == 0 || (pushed['sent'] ?? 0) == 0) {

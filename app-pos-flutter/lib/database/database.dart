@@ -1,6 +1,8 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
+import '../utils/ulid.dart';
+
 class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
   static Database? _database;
@@ -30,7 +32,7 @@ class AppDatabase {
 
     return openDatabase(
       path,
-      version: 11,
+      version: 12,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -119,6 +121,26 @@ class AppDatabase {
       await db.execute('DROP TABLE IF EXISTS product_addons');
       await db.execute(_productAddonsSql);
       await db.execute(_productAddonsIndexSql);
+    }
+    if (oldVersion < 12) {
+      // Pengenal stabil untuk disinkron ke cloud. Kolom `id` bertipe INTEGER
+      // AUTOINCREMENT dan sudah dirujuk order_additional_charges.charge_id di
+      // baris pesanan historis, jadi TIDAK boleh diganti tipe — cukup tambah
+      // kolom pendamping dan isi untuk baris yang sudah ada.
+      //
+      // Cloud butuh daftar biaya ini untuk menghitung total pesanan online
+      // dengan cara yang sama persis dengan kasir; tanpa itu nominal QRIS
+      // yang dibayar tamu bisa berbeda dari tagihan yang dihitung POS.
+      await db.execute('ALTER TABLE additional_charges ADD COLUMN sync_id TEXT');
+      final rows = await db.query('additional_charges', columns: ['id']);
+      for (final r in rows) {
+        await db.update(
+          'additional_charges',
+          {'sync_id': Ulid.generate()},
+          where: 'id = ?',
+          whereArgs: [r['id']],
+        );
+      }
     }
   }
 
@@ -362,6 +384,7 @@ class AppDatabase {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS additional_charges (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sync_id TEXT,
         outlet_id TEXT,
         name TEXT NOT NULL,
         charge_type TEXT NOT NULL CHECK (charge_type IN ('percentage', 'fixed')),
