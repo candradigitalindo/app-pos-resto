@@ -5,12 +5,14 @@ import 'package:flutter/material.dart';
 import '../../controllers/cashier_controller.dart';
 import '../../models/models.dart';
 import '../../services/cloud_sync_service.dart';
+import '../../services/qris_service.dart';
 import '../../theme/theme.dart';
 import '../../utils/currency.dart';
 import '../../widgets/addon_picker_dialog.dart';
 import '../../widgets/menu_avatar.dart';
 import '../../widgets/pax_input_dialog.dart';
 import '../../widgets/pin_auth_dialog.dart';
+import '../../widgets/qris_payment_dialog.dart';
 import '../../widgets/ui/ui.dart';
 
 class CashierScreen extends StatefulWidget {
@@ -136,11 +138,44 @@ class _CashierScreenState extends State<CashierScreen> {
           controller: controller,
           onPay: (method, amount) async {
             Navigator.pop(ctx);
+            // QRIS terintegrasi: uang harus terkonfirmasi penyedia SEBELUM
+            // pembayaran dicatat. Bila outlet belum tersambung gateway,
+            // alurnya jatuh ke QRIS manual seperti sebelumnya.
+            if (method == 'qris' && !await _confirmQrisPaid(order.id, amount)) {
+              return;
+            }
             await _controller.processPayment(method, amount);
           },
         ),
       ),
     );
+  }
+
+  /// Terbitkan QR dan tunggu penyedia mengonfirmasi pembayaran.
+  ///
+  /// Mengembalikan true bila boleh lanjut mencatat pembayaran. Outlet yang
+  /// BELUM tersambung gateway tetap boleh lanjut — QRIS-nya dianggap manual
+  /// seperti sebelum fitur ini ada, jadi kasir tidak pernah terkunci hanya
+  /// karena cloud belum dikonfigurasi.
+  Future<bool> _confirmQrisPaid(String orderId, double amount) async {
+    final info = await QrisService.instance.info();
+    if (info == null || info['enabled'] != true) return true;
+    if (!mounted) return false;
+
+    final order = _controller.state.currentOrder;
+    final paid = await showQrisPaymentDialog(
+      context,
+      orderId: orderId,
+      amount: amount,
+      description: 'Meja ${order?.tableNumber ?? '-'}',
+    );
+    if (paid == true) return true;
+
+    if (mounted) {
+      showAppSnack(context, 'Pembayaran QRIS belum terkonfirmasi — tidak dicatat',
+          isError: true);
+    }
+    return false;
   }
 
   /// Pilih transaksi (sudah dibayar) untuk di-void.

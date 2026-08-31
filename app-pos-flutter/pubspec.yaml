@@ -49,6 +49,7 @@ dependencies:
   # via MethodChannel native (hindari konflik win32 device_info_plus<->network_info_plus).
   battery_plus: ^6.0.3
   package_info_plus: ^10.2.0
+  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:
