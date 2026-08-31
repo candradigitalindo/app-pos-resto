@@ -222,6 +222,7 @@ class OnlineOrderService {
     if (paid <= 0) return;
 
     try {
+      final sebelum = await _orderRepo.getOrderById(localOrderId);
       await _orderRepo.splitBillPayment(
         orderId: localOrderId,
         amount: paid,
@@ -229,6 +230,23 @@ class OnlineOrderService {
         note: 'Pesan online — dibayar QRIS',
         createdBy: orderer,
       );
+
+      // splitBillPayment meng-clamp ke sisa tagihan. Untuk kasir yang menerima
+      // tunai itu benar (kembaliannya diberikan langsung), tetapi uang QRIS
+      // SUDAH masuk ke penyedia — kelebihannya nyata dan tidak boleh hilang
+      // tanpa jejak. Selisih hanya mungkin muncul bila konfigurasi biaya di
+      // cloud dan POS sempat berbeda, mis. tarif diubah tepat sebelum siklus
+      // sync berikutnya.
+      final sisaSebelum =
+          (sebelum?.remaining ?? paid).clamp(0.0, double.infinity);
+      if (paid > sisaSebelum + 0.01) {
+        debugPrint(
+          'SELISIH pesanan online $localOrderId: tamu membayar $paid, '
+          'tagihan POS hanya $sisaSebelum — kelebihan '
+          '${paid - sisaSebelum} TIDAK tercatat di laporan shift. '
+          'Periksa apakah tarif biaya di POS dan cloud sudah sama.',
+        );
+      }
     } catch (e) {
       // Ordernya sudah terbentuk dan tiket dapur sudah tercetak; kegagalan
       // mencatat pembayaran TIDAK boleh membatalkan itu. Kasir akan melihat
