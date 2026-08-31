@@ -11,6 +11,7 @@ import '../repositories/order_repository.dart';
 import '../repositories/sync_queue_repository.dart';
 import '../utils/ulid.dart';
 import 'device_heartbeat_service.dart';
+import 'online_order_service.dart';
 import 'outlet_service.dart';
 
 /// Mengirim outbox (sync_queue) ke cloud-pos via endpoint BatchSync.
@@ -139,6 +140,10 @@ class CloudSyncService {
     if ((pushed['failed'] ?? 0) == 0 || (pushed['sent'] ?? 0) == 0) {
       await pullUpdates();
       await syncTaxFromCloud();
+      // Tarik pesanan mandiri tamu (QR dine-in) menjadi order meja. Menelan
+      // seluruh kegagalannya sendiri — pesanan online tidak boleh sampai
+      // menggagalkan sinkronisasi data kasir.
+      await OnlineOrderService.instance.pullPendingOrders();
     }
 
     // Catat waktu siklus selesai agar bisa dipantau di UI
