@@ -7,6 +7,7 @@ import '../models/models.dart';
 import '../services/print_queue_service.dart';
 import '../services/printer_service.dart';
 import '../services/receipt_builder.dart';
+import '../utils/charge_math.dart';
 import '../utils/ulid.dart';
 import 'sync_queue_repository.dart';
 
@@ -2114,18 +2115,15 @@ class OrderRepository {
           .where((c) =>
               c.isManual && c.name == 'Diskon' && c.appliedAmount < 0)
           .fold(0.0, (s, c) => s + (-c.appliedAmount));
-      final netBase = (subtotal - discountAbs).clamp(0.0, double.infinity);
+      // Rumusnya ada di ChargeMath agar bisa diuji berdampingan dengan
+      // kembarannya di cloud (CalculateOrderTotal) — nominal QRIS pesanan
+      // online harus sama persis dengan tagihan yang dihitung di sini.
+      final netBase = ChargeMath.base(subtotal, discountAbs);
 
       for (final chargeMap in charges) {
         final charge = AdditionalCharge.fromMap(chargeMap);
-        double applied = 0;
-        if (netBase > 0) {
-          if (charge.chargeType == 'percentage') {
-            applied = netBase * charge.value / 100;
-          } else {
-            applied = charge.value;
-          }
-        }
+        final applied =
+            ChargeMath.applied(charge.chargeType, charge.value, netBase);
 
         await db.insert('order_additional_charges', {
           'order_id': orderId,
