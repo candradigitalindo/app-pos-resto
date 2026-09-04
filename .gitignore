@@ -23,3 +23,9 @@ uploads/
 # ── OS / editor ────────────────────────────────
 .DS_Store
 *.swp
+
+# ── Repo terpisah & perkakas lokal ─────────────
+# cloud-nusantara punya repo sendiri (candradigitalindo/cloud-nusantara).
+# Sengaja diabaikan agar tidak tersimpan sebagai gitlink kosong di sini.
+cloud-nusantara/
+.claude/

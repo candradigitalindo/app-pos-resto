@@ -1,1 +1,0 @@
-const t=new Intl.NumberFormat("id-ID",{style:"currency",currency:"IDR",minimumFractionDigits:0,maximumFractionDigits:0}),i=new Intl.NumberFormat("id-ID",{minimumFractionDigits:0,maximumFractionDigits:0});function n(r){return r==null||isNaN(r)?"Rp 0":t.format(r)}function m(r){return r==null||isNaN(r)?"0":i.format(r)}const a=n;export{a,m as b,n as f};
