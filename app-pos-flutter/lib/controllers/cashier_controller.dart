@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' hide Category;
 
 import '../models/models.dart';
@@ -6,6 +8,7 @@ import '../repositories/order_repository.dart';
 import '../repositories/product_repository.dart';
 import '../repositories/table_repository.dart';
 import '../services/auth_service.dart';
+import '../services/cash_drawer_service.dart';
 import '../services/outlet_service.dart';
 import '../services/print_queue_service.dart';
 import '../services/printer_service.dart';
@@ -673,6 +676,10 @@ class CashierController extends ChangeNotifier {
       _printReceiptBackground(
           result, orderSnapshot, orderItemsSnapshot, charges);
 
+      // Laci kasir: buka otomatis setelah lunas (ikut Pengaturan Printer).
+      unawaited(CashDrawerService.instance.openAfterPayment(
+          paymentMethod: method));
+
       _setState(_state.copyWith(
         currentOrder: null,
         clearCurrentOrder: true,
@@ -762,6 +769,9 @@ class CashierController extends ChangeNotifier {
           itemsSnapshot,
           charges,
         );
+        // Laci kasir: bagian terakhir split/gabung bayar → tagihan lunas.
+        unawaited(CashDrawerService.instance.openAfterPayment(
+            paymentMethod: method));
         _setState(_state.copyWith(
           currentOrder: null,
           clearCurrentOrder: true,

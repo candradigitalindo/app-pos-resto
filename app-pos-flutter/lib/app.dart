@@ -9,6 +9,8 @@ import 'services/auth_service.dart';
 import 'services/data_retention_service.dart';
 import 'services/device_role_service.dart';
 import 'services/station_api_client.dart';
+import 'services/station_kitchen_source.dart';
+import 'screens/kitchen/kitchen_screen.dart';
 import 'screens/login/login_screen.dart';
 import 'screens/dashboard/dashboard_screen.dart';
 import 'screens/role/role_selector_screen.dart';
@@ -359,6 +361,15 @@ class _StationGateState extends State<StationGate> {
         role == 'svp';
     if (isCashier) {
       return CashierStationScreen(user: _user!, onLogout: _logout);
+    }
+    // Dapur/Bar TIDAK dilempar ke layar waiter (dulu begitu, sehingga orang
+    // dapur bisa membuat pesanan atas nama waiter). Mereka mendapat layar
+    // Dapur/Bar yang sama dengan perangkat utama, datanya dari Main POS.
+    if (role == 'kitchen' || role == 'bar') {
+      return KitchenScreen(
+        source: StationKitchenSource(),
+        onExit: _logout,
+      );
     }
     return StationScreen(
       user: _user!,

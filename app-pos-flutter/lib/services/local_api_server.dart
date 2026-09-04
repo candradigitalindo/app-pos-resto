@@ -53,6 +53,8 @@ class LocalApiServer {
       ..post('/api/orders', _createOrder)
       ..post('/api/orders/<id>/items', _addItems)
       // Operasi item terkirim dari station: void / titip / pindah (per-unit)
+      ..get('/api/kitchen/orders', _getKitchenOrders)
+      ..post('/api/order-items/<itemId>/status', _updateItemStatus)
       ..post('/api/order-items/<itemId>/void', _voidItem)
       ..post('/api/order-items/<itemId>/park', _parkItem)
       ..post('/api/order-items/<itemId>/move', _moveItem)
@@ -70,6 +72,7 @@ class LocalApiServer {
       ..get('/api/shift/active', _getActiveShift)
       ..post('/api/shift/open', _openShift)
       ..post('/api/shift/close', _closeShift)
+      ..post('/api/shift/swap', _swapShift)
       ..get('/api/cashier/session-summary', _cashierSessionSummary)
       ..get('/ws', webSocketHandler(_onWsConnect));
 
@@ -688,6 +691,79 @@ class LocalApiServer {
     try {
       final shift =
           await _cashierRepo.closeShift(shiftId: shiftId, closedBy: closedBy);
+      return _ok({'shift': shift.toMap()});
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// GET /api/kitchen/orders
+  ///
+  /// Order aktif beserta ITEM-nya untuk layar Dapur/Bar di station. Formatnya
+  /// sengaja `[{order, items}]` supaya station bisa langsung memetakan ke
+  /// struktur yang sama dengan perangkat utama.
+  Future<Response> _getKitchenOrders(Request req) async {
+    try {
+      final data = await _orderRepo.getActiveOrdersWithItems();
+      final list = data.entries
+          .map((e) => {
+                'order': e.key.toMap(),
+                'items': e.value.map((i) => i.toMap()).toList(),
+              })
+          .toList();
+      return _ok({'orders': list});
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// POST /api/order-items/<itemId>/status {status}
+  ///
+  /// Ubah status masak item (pending → cooking → ready → served) dari layar
+  /// Dapur/Bar di station.
+  Future<Response> _updateItemStatus(Request req, String itemId) async {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _badRequest('Body JSON tidak valid');
+    }
+    final status = body['status'] as String?;
+    const allowed = {'pending', 'cooking', 'ready', 'served'};
+    if (status == null || !allowed.contains(status)) {
+      return _badRequest('status wajib: ${allowed.join(", ")}');
+    }
+    try {
+      await _orderRepo.updateItemStatus(itemId, status);
+      return _ok({'item_id': itemId, 'status': status});
+    } catch (e) {
+      return _serverError('$e');
+    }
+  }
+
+  /// POST /api/shift/swap {shift_id, handover_to, counted_cash?, notes?}
+  ///
+  /// Ganti shift dari station: tutup shift kasir yang sedang berjalan lalu buka
+  /// shift baru untuk kasir berikutnya dengan modal = kas yang diserahkan.
+  Future<Response> _swapShift(Request req) async {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _badRequest('Body JSON tidak valid');
+    }
+    final shiftId = body['shift_id'] as String?;
+    final handoverTo = body['handover_to'] as String?;
+    if (shiftId == null || handoverTo == null) {
+      return _badRequest('shift_id & handover_to wajib');
+    }
+    try {
+      final shift = await _cashierRepo.handoverShift(
+        currentShiftId: shiftId,
+        handoverToUserId: handoverTo,
+        countedCash: _asDouble(body['counted_cash']),
+        notes: body['notes'] as String?,
+      );
       return _ok({'shift': shift.toMap()});
     } catch (e) {
       return _serverError('$e');

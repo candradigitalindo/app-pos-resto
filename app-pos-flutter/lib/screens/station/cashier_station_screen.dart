@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../controllers/station_controller.dart';
 import '../../models/models.dart';
 import '../../services/auth_service.dart';
+import '../../services/cash_drawer_service.dart';
 import '../../services/printer_service.dart';
 import '../../services/receipt_builder.dart';
 import '../../services/station_api_client.dart';
@@ -414,6 +415,9 @@ class _CashierStationScreenState extends State<CashierStationScreen> {
   Future<void> _finishPaid(Map<String, dynamic> full,
       Map<String, dynamic> result, String method) async {
     await _printReceipt(full, result, method);
+    // Laci kasir station dibuka di PERANGKAT INI (laci menempel pada printer
+    // struk station), bukan di Main POS yang mencatat pembayarannya.
+    unawaited(CashDrawerService.instance.openAfterPayment(paymentMethod: method));
     _clearCart();
     if (!mounted) return;
     setState(() {
@@ -881,6 +885,148 @@ class _CashierStationScreenState extends State<CashierStationScreen> {
     }
   }
 
+  // ── Ganti shift (serah terima laci ke kasir berikutnya) ───────────────────
+
+  /// Ganti shift dari station: kasir berikutnya memasukkan PIN-nya, saldo laci
+  /// diserahkan, lalu Main POS menutup shift berjalan dan membuka shift baru
+  /// atas nama kasir tersebut. Ringkasan kerja kasir lama dicetak, lalu station
+  /// kembali ke layar login supaya kasir baru masuk dengan PIN-nya sendiri.
+  Future<void> _showSwapShiftDialog() async {
+    final shift = _shift;
+    final shiftId = shift?['id'] as String?;
+    if (shiftId == null) {
+      _snack('Shift belum dibuka di perangkat utama', isError: true);
+      return;
+    }
+    final pinCtrl = TextEditingController();
+    final cashCtrl = TextEditingController();
+    final noteCtrl = TextEditingController();
+
+    final ok = await showAppModal<bool>(
+      context,
+      title: 'Ganti Shift',
+      subtitle: 'Serah terima laci ke kasir berikutnya',
+      icon: Icons.people_alt_outlined,
+      accent: _accent,
+      maxWidth: 460,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Shift dibuka oleh ${shift?['opened_by'] ?? '-'}. Setelah diganti, '
+            'shift baru dibuka atas nama kasir yang PIN-nya dimasukkan di '
+            'bawah dan station kembali ke layar login.',
+            style: AppType.body.copyWith(color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          TextField(
+            controller: pinCtrl,
+            autofocus: true,
+            obscureText: true,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'PIN kasir berikutnya',
+              prefixIcon: Icon(Icons.lock_outline, size: 20),
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          TextField(
+            controller: cashCtrl,
+            keyboardType: TextInputType.number,
+            inputFormatters: [RupiahInputFormatter()],
+            decoration: const InputDecoration(
+              labelText: 'Uang tunai di laci (opsional)',
+              helperText: 'Kosongkan untuk memakai hitungan sistem',
+              prefixText: 'Rp ',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          TextField(
+            controller: noteCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Catatan (opsional)',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          Row(
+            children: [
+              Expanded(
+                child: AppButton.neutral('Batal',
+                    onPressed: () => Navigator.pop(ctx, false)),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: AppButton(
+                  label: 'Ganti Shift',
+                  icon: Icons.people_alt_outlined,
+                  accent: _accent,
+                  onPressed: () {
+                    if (pinCtrl.text.trim().isEmpty) return;
+                    Navigator.pop(ctx, true);
+                  },
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      // PIN kasir berikutnya diverifikasi ke Main POS; hanya peran yang boleh
+      // memegang kasir yang bisa menerima serah terima.
+      final user = await _api.authPin(pinCtrl.text.trim());
+      final role = (user?['role'] as String?)?.toLowerCase() ?? '';
+      const cashierRoles = {'cashier', 'admin', 'manager', 'svp'};
+      if (user == null || !cashierRoles.contains(role)) {
+        if (!mounted) return;
+        setState(() => _busy = false);
+        _snack(
+            user == null
+                ? 'PIN salah'
+                : 'Peran $role tidak bisa memegang kasir',
+            isError: true);
+        return;
+      }
+      final nextName = (user['full_name'] as String?)?.isNotEmpty == true
+          ? user['full_name'] as String
+          : (user['username'] as String? ?? 'Kasir');
+      final cash = cashCtrl.text.trim().isEmpty
+          ? null
+          : CurrencyHelper.parseInput(cashCtrl.text);
+
+      await _api.swapShift(
+        shiftId: shiftId,
+        handoverTo: nextName,
+        countedCash: cash,
+        notes: noteCtrl.text.trim(),
+      );
+
+      // Cetak ringkasan kerja kasir yang menyerahkan, lalu keluar ke login.
+      try {
+        final summary = await _api.getCashierSessionSummary(
+            _cashierName, _loginAt.toIso8601String());
+        await _printSession(summary);
+      } catch (e) {
+        debugPrint('Ringkasan sesi (ganti shift) error: $e');
+      }
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _snack('Shift diserahkan ke $nextName');
+      widget.onLogout();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _snack('Gagal ganti shift: ${_msg(e)}', isError: true);
+    }
+  }
+
   // ── Selesai kerja (logout + ringkasan sesi kasir) ──────────────────────────
   Future<void> _finishWork({bool auto = false}) async {
     _idleTimer?.cancel();
@@ -1041,145 +1187,25 @@ class _CashierStationScreenState extends State<CashierStationScreen> {
                 ),
                 SizedBox(width: edgeGap),
 
-                // Sinkron cloud dijalankan perangkat utama.
-                CashierHeaderButton(
-                  icon: Icons.cloud_off_rounded,
-                  label: 'Sinkron',
-                  width: _hbW,
-                  height: _hbH,
-                  enabled: false,
-                  onTap: () => _mainOnly('Sinkron cloud'),
-                ),
-
+                // SATU bingkai berisi semua tombol aksi — susunannya sama
+                // persis dengan kasir perangkat utama.
                 Expanded(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        cashierHeaderGroup([
-                          _headerBtn(
-                            icon: Icons.table_restaurant_outlined,
-                            label: _tableNumber.isNotEmpty
-                                ? 'Meja $_tableNumber'
-                                : 'Pilih Meja',
-                            onTap: _showTableSelector,
-                          ),
-                        ]),
-                        const SizedBox(width: 10),
-                        cashierHeaderGroup([
-                          _headerBtn(
-                              icon: Icons.swap_horiz,
-                              label: 'Ganti Shift',
-                              enabled: false,
-                              onTap: () => _mainOnly('Ganti shift')),
-                        ]),
-                        const SizedBox(width: 10),
-                        cashierHeaderGroup([
-                          _headerBtn(
-                              icon: Icons.account_balance_wallet_outlined,
-                              label: 'Kas',
-                              enabled: false,
-                              onTap: () => _mainOnly('Kas masuk/keluar')),
-                          cashierGroupDivider(),
-                          _headerBtn(
-                              icon: Icons.history,
-                              label: 'Riwayat',
-                              enabled: false,
-                              onTap: () => _mainOnly('Riwayat kas')),
-                          cashierGroupDivider(),
-                          _headerBtn(
-                              icon: Icons.remove_shopping_cart_outlined,
-                              label: 'Void',
-                              iconColor: AppColors.danger,
-                              enabled: false,
-                              onTap: () => _mainOnly('Void transaksi')),
-                          cashierGroupDivider(),
-                          _headerBtn(
-                              icon: Icons.history_toggle_off,
-                              label: 'Histori Void',
-                              iconColor: AppColors.danger,
-                              enabled: false,
-                              onTap: () => _mainOnly('Histori void')),
-                          cashierGroupDivider(),
-                          _headerBtn(
-                              icon: Icons.print_outlined,
-                              label: 'Cetak Ulang',
-                              enabled: false,
-                              onTap: () => _mainOnly('Cetak ulang struk')),
-                        ]),
-                      ],
-                    ),
-                  ),
-                ),
-
-                SizedBox(width: edgeGap),
-
-                Material(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: _reloadAll,
-                    child: SizedBox(
-                      width: _hbW,
-                      height: _hbH,
-                      child: const Column(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.refresh, color: _accent, size: 22),
-                          SizedBox(height: 4),
-                          Text('Muat Ulang',
-                              textAlign: TextAlign.center,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: _accent,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              )),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-
-                SizedBox(width: edgeGap),
-
-                // Tutup Kasir (laci uang) hanya di perangkat utama — tetap di
-                // posisi yang sama supaya tata letaknya tak berubah.
-                Material(
-                  color: AppColors.danger.withValues(alpha: 0.75),
-                  borderRadius: BorderRadius.circular(12),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => _mainOnly('Tutup kasir'),
-                    child: SizedBox(
-                      width: _hbW,
-                      height: _hbH,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.logout,
-                              color: Colors.white.withValues(alpha: 0.8),
-                              size: 22),
-                          const SizedBox(height: 4),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 3),
-                            child: Text('Tutup Kasir',
-                                textAlign: TextAlign.center,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.8),
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                )),
-                          ),
-                        ],
-                      ),
-                    ),
+                  child: LayoutBuilder(
+                    builder: (context, c) {
+                      // Sama seperti kasir utama: bingkai memenuhi lebar bila
+                      // muat, dan baru bisa digulir saat layar sempit.
+                      const count = 3; // tombol yang tersedia di station
+                      const dividers = count - 1;
+                      final natural = _hbW * count + dividers;
+                      final fits = c.maxWidth >= natural;
+                      final w = fits ? (c.maxWidth - dividers) / count : _hbW;
+                      final frame = cashierHeaderGroup(_headerActions(w));
+                      if (fits) return frame;
+                      return SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: frame,
+                      );
+                    },
                   ),
                 ),
               ],
@@ -1190,19 +1216,67 @@ class _CashierStationScreenState extends State<CashierStationScreen> {
     );
   }
 
+  /// Isi bingkai header. Station hanya menampilkan tombol yang BENAR-BENAR
+  /// berfungsi di sini — fungsi khusus perangkat utama (sinkron cloud, kas,
+  /// riwayat kas, void transaksi, histori void, cetak ulang, tutup kasir)
+  /// tidak ditampilkan sama sekali supaya tidak membingungkan kasir.
+  /// Buka laci kasir station MANUAL (paritas dengan kasir utama).
+  Future<void> _openCashDrawer() async {
+    try {
+      await CashDrawerService.instance.open();
+      _snack('Laci kasir dibuka');
+    } catch (e) {
+      _snack('Gagal buka laci: ${_msg(e)}', isError: true);
+    }
+  }
+
+  List<Widget> _headerActions(double w) => [
+        _headerBtn(
+          icon: Icons.table_restaurant_outlined,
+          label: _tableNumber.isNotEmpty ? 'Meja $_tableNumber' : 'Pilih Meja',
+          onTap: _showTableSelector,
+          width: w,
+        ),
+        cashierGroupDivider(),
+        _headerBtn(
+          icon: Icons.people_alt_outlined,
+          label: 'Ganti Shift',
+          onTap: _showSwapShiftDialog,
+          width: w,
+        ),
+        cashierGroupDivider(),
+        _headerBtn(
+          icon: Icons.point_of_sale_outlined,
+          label: 'Buka Laci',
+          onTap: _openCashDrawer,
+          width: w,
+        ),
+        cashierGroupDivider(),
+        CashierHeaderButton(
+          icon: Icons.refresh,
+          label: 'Muat Ulang',
+          onTap: _reloadAll,
+          background: Colors.white,
+          iconColor: _accent,
+          width: w,
+          height: _hbH,
+        ),
+      ];
+
   Widget _headerBtn({
     required IconData icon,
     required String label,
     required VoidCallback onTap,
     Color? iconColor,
     bool enabled = true,
+    double? width,
   }) =>
       CashierHeaderButton(
         icon: icon,
         label: label,
         onTap: onTap,
         iconColor: iconColor,
-        width: _hbW,
+        width: width ?? _hbW,
         height: _hbH,
         enabled: enabled,
       );

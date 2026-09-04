@@ -42,11 +42,16 @@ Widget cashierGroupDivider() => Container(
 /// Tombol di dalam grup header. [enabled] false = fungsi tak tersedia di
 /// perangkat ini (mis. aksi laci uang di station): tampil redup, ketukan
 /// diteruskan ke [onTap] agar layar bisa menjelaskan alasannya.
+///
+/// [background] mengisi segmen dengan warna sendiri (mis. putih untuk "Muat
+/// Ulang", merah untuk "Tutup Kasir") sehingga tombol berwarna tetap bisa
+/// duduk di dalam SATU bingkai header bersama tombol lain.
 class CashierHeaderButton extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
   final Color? iconColor;
+  final Color? background;
   final double width;
   final double height;
   final bool enabled;
@@ -57,6 +62,7 @@ class CashierHeaderButton extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.iconColor,
+    this.background,
     this.width = kCashierHeaderBtnW,
     this.height = kCashierHeaderBtnH,
     this.enabled = true,
@@ -66,31 +72,33 @@ class CashierHeaderButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = iconColor ?? Colors.white;
     final shown = enabled ? color : color.withValues(alpha: 0.45);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: SizedBox(
-        width: width,
-        height: height,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: shown, size: 22),
-            const SizedBox(height: 4),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 3),
-              child: Text(label,
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: shown,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  )),
-            ),
-          ],
+    return Material(
+      color: background ?? Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          width: width,
+          height: height,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: shown, size: 22),
+              const SizedBox(height: 4),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3),
+                child: Text(label,
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: shown,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    )),
+              ),
+            ],
+          ),
         ),
       ),
     );

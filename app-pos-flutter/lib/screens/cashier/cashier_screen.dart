@@ -6,6 +6,7 @@ import '../../controllers/cashier_controller.dart';
 import '../../models/models.dart';
 import '../../repositories/cashier_repository.dart';
 import '../../services/app_events.dart';
+import '../../services/cash_drawer_service.dart';
 import '../../services/cloud_sync_service.dart';
 import '../../services/qris_service.dart';
 import '../../theme/theme.dart';
@@ -573,8 +574,6 @@ class _CashierScreenState extends State<CashierScreen>
   }
 
   // Satu container group dengan border
-  Widget _headerGroup(List<Widget> children) => cashierHeaderGroup(children);
-
   // Tombol di dalam group
   // Ukuran tombol aksi header — SERAGAM & sebesar jari (target sentuh ~84×60).
   static const double _headerBtnW = kCashierHeaderBtnW;
@@ -585,25 +584,124 @@ class _CashierScreenState extends State<CashierScreen>
   double _hbW = _headerBtnW;
   double _hbH = _headerBtnH;
 
+  /// Buka laci kasir MANUAL (mis. tukar uang / laci tak terbuka saat bayar).
+  /// Sengaja tidak menghiraukan sakelar "otomatis" di Pengaturan: ini aksi
+  /// eksplisit kasir, bukan otomatisasi.
+  Future<void> _openCashDrawer() async {
+    try {
+      await CashDrawerService.instance.open();
+      if (mounted) showAppSnack(context, 'Laci kasir dibuka');
+    } catch (e) {
+      if (mounted) {
+        showAppSnack(
+            context,
+            'Gagal buka laci: '
+            '${e.toString().replaceFirst('Exception: ', '')}',
+            isError: true);
+      }
+    }
+  }
+
+  /// Isi bingkai header — urutan & warna tombolnya jadi acuan Kasir Station.
+  List<Widget> _headerActions(CashierState state, double w) => [
+        _syncButton(width: w),
+        _groupDivider(),
+        _headerBtn(
+          icon: Icons.table_restaurant_outlined,
+          label: state.currentOrder != null
+              ? 'Meja ${state.currentOrder!.tableNumber}'
+              : state.selectedTable != null
+                  ? 'Meja ${state.selectedTable!.tableNumber}'
+                  : 'Pilih Meja',
+          onTap: _showTableSelector,
+          width: w,
+        ),
+        _groupDivider(),
+        _headerBtn(
+            icon: Icons.people_alt_outlined,
+            label: 'Ganti Shift',
+            onTap: _showSwapShiftDialog,
+            width: w),
+        _groupDivider(),
+        _headerBtn(
+            icon: Icons.account_balance_wallet_outlined,
+            label: 'Kas',
+            onTap: () => _showCashMovementDialog('in'),
+            width: w),
+        _groupDivider(),
+        _headerBtn(
+            icon: Icons.point_of_sale_outlined,
+            label: 'Buka Laci',
+            onTap: _openCashDrawer,
+            width: w),
+        _groupDivider(),
+        _headerBtn(
+            icon: Icons.history,
+            label: 'Riwayat',
+            onTap: _showMovementsHistory,
+            width: w),
+        _groupDivider(),
+        _headerBtn(
+            icon: Icons.remove_shopping_cart_outlined,
+            label: 'Void',
+            onTap: _showVoidTransactionPicker,
+            iconColor: AppColors.danger,
+            width: w),
+        _groupDivider(),
+        _headerBtn(
+            icon: Icons.history_toggle_off,
+            label: 'Histori Void',
+            onTap: _showVoidHistory,
+            iconColor: AppColors.danger,
+            width: w),
+        _groupDivider(),
+        _headerBtn(
+            icon: Icons.print_outlined,
+            label: 'Cetak Ulang',
+            onTap: _showReprintPicker,
+            width: w),
+        _groupDivider(),
+        CashierHeaderButton(
+          icon: Icons.refresh,
+          label: 'Muat Ulang',
+          onTap: () => _controller.loadData(),
+          background: Colors.white,
+          iconColor: AppColors.moduleKasir,
+          width: w,
+          height: _hbH,
+        ),
+        _groupDivider(),
+        CashierHeaderButton(
+          icon: Icons.logout,
+          label: 'Tutup Kasir',
+          onTap: _showCloseShiftDialog,
+          background: AppColors.danger,
+          iconColor: Colors.white,
+          width: w,
+          height: _hbH,
+        ),
+      ];
+
   Widget _headerBtn({
     required IconData icon,
     required String label,
     required VoidCallback onTap,
     Color? iconColor,
+    double? width,
   }) {
     return CashierHeaderButton(
       icon: icon,
       label: label,
       onTap: onTap,
       iconColor: iconColor,
-      width: _hbW,
+      width: width ?? _hbW,
       height: _hbH,
     );
   }
 
   /// Tombol Sinkron di header (ukuran seragam 84×60): status + tap untuk
   /// sinkron ke cloud, dengan animasi berputar saat proses.
-  Widget _syncButton() {
+  Widget _syncButton({double? width}) {
     // Dengarkan status siklus dari service (true saat auto-sync timer maupun
     // manual) agar tombol ikut berputar walau sync dipicu otomatis.
     return ValueListenableBuilder<bool>(
@@ -614,7 +712,7 @@ class _CashierScreenState extends State<CashierScreen>
           syncing: syncing,
           status: s,
           onTap: _doSync,
-          width: _hbW,
+          width: width ?? _hbW,
           height: _hbH,
         ),
       ),
@@ -1106,134 +1204,29 @@ class _CashierScreenState extends State<CashierScreen>
                 ),
                 SizedBox(width: edgeGap),
 
-                // ── Tombol Sinkron: status + tap untuk sinkron ke cloud ──
-                _syncButton(),
-
-                // ── Grup tombol — mulai dari kiri, scroll bila layar sempit ──
+                // ── SATU bingkai untuk semua tombol aksi ────────────────────
+                // Sebelumnya tombol terpecah jadi beberapa grup + dua tombol
+                // lepas di kanan; kini semuanya duduk dalam satu bingkai
+                // bersambung yang dipisah garis tipis, warna tiap tombol tetap
+                // (Void merah, Muat Ulang putih, Tutup Kasir merah).
                 Expanded(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        _headerGroup([
-                          _headerBtn(
-                            icon: Icons.table_restaurant_outlined,
-                            label: state.currentOrder != null
-                                ? 'Meja ${state.currentOrder!.tableNumber}'
-                                : state.selectedTable != null
-                                    ? 'Meja ${state.selectedTable!.tableNumber}'
-                                    : 'Pilih Meja',
-                            onTap: _showTableSelector,
-                          ),
-                        ]),
-                        const SizedBox(width: 10),
-                        _headerGroup([
-                          _headerBtn(
-                              icon: Icons.swap_horiz,
-                              label: 'Ganti Shift',
-                              onTap: _showSwapShiftDialog),
-                        ]),
-                        const SizedBox(width: 10),
-                        _headerGroup([
-                          _headerBtn(
-                              icon: Icons.account_balance_wallet_outlined,
-                              label: 'Kas',
-                              onTap: () => _showCashMovementDialog('in')),
-                          _groupDivider(),
-                          _headerBtn(
-                              icon: Icons.history,
-                              label: 'Riwayat',
-                              onTap: _showMovementsHistory),
-                          _groupDivider(),
-                          _headerBtn(
-                              icon: Icons.remove_shopping_cart_outlined,
-                              label: 'Void',
-                              onTap: _showVoidTransactionPicker,
-                              iconColor: AppColors.danger),
-                          _groupDivider(),
-                          _headerBtn(
-                              icon: Icons.history_toggle_off,
-                              label: 'Histori Void',
-                              onTap: _showVoidHistory,
-                              iconColor: AppColors.danger),
-                          _groupDivider(),
-                          _headerBtn(
-                              icon: Icons.print_outlined,
-                              label: 'Cetak Ulang',
-                              onTap: _showReprintPicker),
-                        ]),
-                      ],
-                    ),
-                  ),
-                ),
-
-                SizedBox(width: edgeGap),
-
-                // ── Refresh (ukuran seragam, mengecil di HP) ──
-                Material(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => _controller.loadData(),
-                    child: SizedBox(
-                      width: _hbW,
-                      height: _hbH,
-                      child: const Column(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.refresh,
-                              color: AppColors.moduleKasir, size: 22),
-                          SizedBox(height: 4),
-                          Text('Muat Ulang',
-                              textAlign: TextAlign.center,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: AppColors.moduleKasir,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              )),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-
-                SizedBox(width: edgeGap),
-
-                // ── Tutup Kasir (paling ujung, merah) — mengecil di HP ──
-                Material(
-                  color: AppColors.danger,
-                  borderRadius: BorderRadius.circular(12),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: _showCloseShiftDialog,
-                    child: SizedBox(
-                      width: _hbW,
-                      height: _hbH,
-                      child: const Column(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.logout, color: Colors.white, size: 22),
-                          SizedBox(height: 4),
-                          Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 3),
-                            child: Text('Tutup Kasir',
-                                textAlign: TextAlign.center,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                )),
-                          ),
-                        ],
-                      ),
-                    ),
+                  child: LayoutBuilder(
+                    builder: (context, c) {
+                      // Bingkai memenuhi lebar bila muat (rapi, tanpa sisa
+                      // ruang di kanan); bila sempit (HP) baru bisa digulir.
+                      const count = 10; // jumlah tombol dalam bingkai
+                      const dividers = count - 1;
+                      final natural = _hbW * count + dividers;
+                      final fits = c.maxWidth >= natural;
+                      final w = fits ? (c.maxWidth - dividers) / count : _hbW;
+                      final frame =
+                          cashierHeaderGroup(_headerActions(state, w));
+                      if (fits) return frame;
+                      return SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: frame,
+                      );
+                    },
                   ),
                 ),
               ],
@@ -1659,10 +1652,9 @@ class _SyncButtonState extends State<_SyncButton>
     return Opacity(
       opacity: disabled ? 0.55 : 1,
       child: Material(
-        color: Colors.white.withValues(alpha: disabled ? 0.06 : 0.15),
-        borderRadius: BorderRadius.circular(12),
+        // Duduk di dalam bingkai header bersama → tanpa latar & sudut sendiri.
+        color: Colors.transparent,
         child: InkWell(
-          borderRadius: BorderRadius.circular(12),
           // Nonaktif → tetap bisa ditekan agar memunculkan petunjuk aktivasi,
           // tapi tampil redup. Saat sedang sinkron → tidak bisa ditekan.
           onTap: widget.syncing ? null : widget.onTap,
