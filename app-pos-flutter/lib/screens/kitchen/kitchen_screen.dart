@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../controllers/kitchen_controller.dart';
 import '../../models/models.dart';
+import '../../services/app_events.dart';
 import '../../theme/theme.dart';
 import '../../widgets/ui/ui.dart';
 
@@ -34,7 +35,8 @@ class KitchenScreen extends StatefulWidget {
   State<KitchenScreen> createState() => _KitchenScreenState();
 }
 
-class _KitchenScreenState extends State<KitchenScreen> {
+class _KitchenScreenState extends State<KitchenScreen>
+    with AppEventsRefresh<KitchenScreen> {
   late final KitchenController _controller;
 
   // 'antrian' (per meja) atau 'batch' (gabung item sama). Default Batch.
@@ -46,7 +48,12 @@ class _KitchenScreenState extends State<KitchenScreen> {
     _controller = KitchenController();
     _controller.addListener(_onStateChanged);
     _controller.loadOrders();
+    // Pesanan baru dari kasir/waiter/station langsung muncul di layar dapur.
+    listenDataChanges();
   }
+
+  @override
+  void onDataChanged() => _controller.loadOrders();
 
   @override
   void deactivate() {
@@ -56,6 +63,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
 
   @override
   void dispose() {
+    cancelDataChanges();
     _controller.dispose();
     super.dispose();
   }

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../database/database.dart';
+import '../services/app_events.dart';
 import '../models/models.dart';
 import '../services/print_queue_service.dart';
 import '../services/printer_service.dart';
@@ -106,6 +107,7 @@ class OrderRepository {
       waiterName: waiterName ?? '',
     );
 
+    notifyDataChanged('order_created');
     return order;
   }
 
@@ -242,6 +244,7 @@ class OrderRepository {
 
     // Sync status order (kini void) ke cloud
     await _enqueueOrder(orderId, 'upsert');
+    notifyDataChanged('order_updated');
   }
 
   Future<Order?> getOrderByTable(String tableNumber) async {
@@ -340,6 +343,8 @@ class OrderRepository {
       isAdditional: true,
       waiterName: waiterName,
     );
+
+    notifyDataChanged('order_items_added');
   }
 
   /// Backfill: masukkan semua order aktif (belum bayar, belum void) yang belum
@@ -573,6 +578,7 @@ class OrderRepository {
         );
       }
     }
+    notifyDataChanged('order_updated');
   }
 
   /// VOID (hapus) satu item dari order yang belum lunas. Otorisasi manager/SVP
@@ -616,6 +622,7 @@ class OrderRepository {
     await _reapplyAutoChargesAndRecalc(item.orderId);
     // Kirim status order terbaru (item & total) ke cloud.
     await _enqueueOrder(item.orderId, 'upsert');
+    notifyDataChanged('order_updated');
   }
 
   /// Pisahkan [qty] unit dari baris [itemId] menjadi baris BARU pada order yang
@@ -810,6 +817,7 @@ class OrderRepository {
 
     // Sync status order terbaru (kini 'paid') ke cloud
     await _enqueueOrder(orderId, 'upsert');
+    notifyDataChanged('order_paid');
 
     return {
       'order_id': orderId,
@@ -1072,6 +1080,7 @@ class OrderRepository {
 
     // Sync status order terbaru ke cloud
     await _enqueueOrder(orderId, 'upsert');
+    notifyDataChanged('order_paid');
 
     return {
       'order_id': orderId,
@@ -1150,6 +1159,7 @@ class OrderRepository {
     // Sync order (total kini sudah didiskon) ke cloud — selaras app-pos
     // yang memanggil enqueueOrderSync setelah diskon diterapkan.
     await _enqueueOrder(orderId, 'upsert');
+    notifyDataChanged('order_updated');
   }
 
   // ==================== COMPLIMENT ORDER ====================
@@ -1246,6 +1256,7 @@ class OrderRepository {
 
     // Sync status order (compliment, total 0) ke cloud
     await _enqueueOrder(orderId, 'upsert');
+    notifyDataChanged('order_paid');
   }
 
   // ==================== MOVE TABLE ====================
@@ -1300,6 +1311,7 @@ class OrderRepository {
 
     // Sync order (nomor meja baru) ke cloud
     await _enqueueOrder(orderId, 'upsert');
+    notifyDataChanged('order_updated');
   }
 
   /// Gabung order [sourceOrderId] ke [targetOrderId]: pindahkan semua item ke
@@ -1372,6 +1384,7 @@ class OrderRepository {
     await _applyAutoCharges(targetOrderId);
     await _enqueueOrder(targetOrderId, 'upsert');
     await _enqueueOrder(sourceOrderId, 'upsert');
+    notifyDataChanged('order_updated');
   }
 
   /// Order aktif (belum bayar, belum void, bukan hasil-gabung) di meja LAIN —
@@ -1477,6 +1490,7 @@ class OrderRepository {
 
     await _enqueueOrder(sourceOrderId, 'upsert');
     await _enqueueOrder(targetOrderId, 'upsert');
+    notifyDataChanged('order_updated');
   }
 
   // ==================== MEJA TITIPAN (parked check) ====================

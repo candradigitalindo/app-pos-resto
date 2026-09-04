@@ -683,6 +683,10 @@ class StationApiClient {
     _wsShouldReconnect = false;
     _wsReconnectTimer?.cancel();
     _wsReconnectTimer = null;
+    // Lepas callback-nya juga: kalau tidak, klien singleton ini masih memegang
+    // closure milik layar/controller yang sudah di-dispose, dan sambungan ulang
+    // berikutnya memanggilnya → "used after being disposed".
+    _wsOnEvent = null;
     _closeWs();
   }
 }

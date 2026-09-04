@@ -15,6 +15,7 @@ import '../repositories/order_repository.dart';
 import '../repositories/product_repository.dart';
 import '../repositories/table_repository.dart';
 import '../utils/ulid.dart';
+import 'app_events.dart';
 
 /// HTTP + WebSocket server yang berjalan di Main POS.
 /// Waiter station terhubung ke server ini via WiFi lokal cafe.
@@ -110,6 +111,10 @@ class LocalApiServer {
   /// Broadcast event ke semua waiter station yang terhubung.
   /// Dipanggil dari controller setelah mutasi data.
   void broadcast(String event, Map<String, dynamic> data) {
+    // Layar di perangkat ini SELALU diberi tahu — termasuk saat mode Station
+    // tidak aktif (tak ada klien WebSocket), karena perubahan bisa datang dari
+    // kasir/waiter di perangkat ini sendiri.
+    AppEvents.instance.emit(event);
     if (_wsClients.isEmpty) return;
     final msg = jsonEncode({
       'event': event,
@@ -673,6 +678,12 @@ class LocalApiServer {
     final closedBy = body['closed_by'] as String?;
     if (shiftId == null || closedBy == null) {
       return _badRequest('shift_id & closed_by wajib');
+    }
+    // Syarat sama dengan perangkat utama: tagihan berjalan harus lunas dulu.
+    final unpaid = await _cashierRepo.unpaidTables();
+    if (unpaid.isNotEmpty) {
+      return _badRequest('${CashierRepository.unpaidBlockMessage(unpaid)} '
+          'Selesaikan dulu sebelum tutup kasir.');
     }
     try {
       final shift =
